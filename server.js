@@ -24,7 +24,7 @@ const { abrirBanco } = require("./db");
 const { criarLimitador } = require("./limitador");
 const { agendarBackups } = require("./backup");
 
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.1.2";
 const PORTA = Number(process.env.PORT) || 5193;
 const HOST = process.env.HOST || "127.0.0.1";
 const RAIZ = __dirname;
@@ -690,10 +690,31 @@ function podeServir(rel) {
   return PUBLICO.includes(partes[0]);
 }
 
+/* O pedido sai de `res.req`, que o próprio Node mantém, em vez de ser passado
+   como argumento. São 31 chamadas de `responder()` neste arquivo: threading o
+   `req` por todas seria 31 oportunidades de esquecer uma — e a que faltasse
+   perderia o cabeçalho de segurança em silêncio, justamente numa rota. */
 function cabecalhosBase(res, extra = {}) {
+  const req = res.req || null;
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=(), interest-cohort=()");
+
+  /* HSTS — SÓ QUANDO A CONEXÃO VEIO POR HTTPS.
+     O `criar_site.sh` deixa este cabeçalho para o app justamente porque só o
+     app sabe por onde a requisição entrou, lendo o X-Forwarded-Proto que o
+     nginx põe. O comentário de lá afirmava isso desde o começo, e ninguém
+     tinha implementado: o cabeçalho não existia em lugar nenhum.
+
+     `includeSubDomains` fica de fora de propósito — este app responde por um
+     domínio só, e assinar por subdomínios que não são dele é decisão de quem
+     administra o domínio inteiro, não de um site dentro dele.
+     `preload` também fica de fora: entrar na lista dos navegadores é fácil e
+     sair leva meses, então não é coisa que um script de instalação decide. */
+  if (req && String(req.headers["x-forwarded-proto"] || "").toLowerCase() === "https") {
+    res.setHeader("Strict-Transport-Security", "max-age=31536000");
+  }
+
   for (const [k, v] of Object.entries(extra)) res.setHeader(k, v);
 }
 

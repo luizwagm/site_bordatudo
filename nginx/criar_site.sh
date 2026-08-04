@@ -555,8 +555,26 @@ if [ "$COM_TLS" -eq 1 ]; then
   # ausência. Dizer isso aqui evita o susto e a caçada.
   for dom in "$DOMINIO" ${TRABALHO:+$TRABALHO}; do
     if ! temCertificado "$dom"; then
-      aviso "    atenção: até o certificado sair, use http://${dom} — o https vai"
-      aviso "    mostrar aviso de segurança com o nome de outro site desta máquina."
+      aviso "    atenção: ${dom} está sem certificado."
+      aviso "    Em https:// o navegador mostra aviso de segurança com o nome de"
+      aviso "    OUTRO site desta máquina — é o primeiro bloco 443 respondendo,"
+      aviso "    não invasão."
+      # HSTS É ESTADO DO NAVEGADOR, e ele não sabe que o certificado ainda não
+      # saiu. Se o domínio-pai mandou `includeSubDomains` alguma vez, o
+      # navegador RECUSA http:// neste nome e não oferece "prosseguir mesmo
+      # assim". Mandar "use http:// enquanto isso" nesse caso é conselho que
+      # não funciona — e foi o que eu disse antes de descobrir.
+      # Contar pontos aqui daria falso positivo em `empresa.com.br`, que tem
+      # três rótulos e é RAIZ. `ehDominioRaiz` já sabe disso, e é a mesma
+      # função que decide o `www.` — uma regra só para os dois casos.
+      if ehDominioRaiz "$dom"; then
+        aviso "    Enquanto isso, use http://${dom}"
+      else
+        aviso "    E http:// pode não funcionar: se o domínio-pai usa HSTS com"
+        aviso "    includeSubDomains, o navegador força https e não deixa passar."
+        aviso "    Neste caso só resta emitir o certificado — o desafio do certbot"
+        aviso "    não é afetado, porque HSTS vale só no navegador."
+      fi
     fi
   done
 
