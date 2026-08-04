@@ -306,7 +306,7 @@ SSL
     # Login passa pelo limitador da borda: mais barato barrar aqui do que
     # acordar o Node. A trava do próprio app continua valendo.
     location = /api/login {
-        limit_req zone=cw_login burst=4 nodelay;
+        limit_req zone=${APP}_login burst=4 nodelay;
         proxy_pass http://127.0.0.1:${PORTA};
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -354,7 +354,14 @@ msg "5/8  nginx"
 
 # A zona do limitador vai para conf.d e existe SEMPRE, independente de qual
 # bloco de site esteja ativo. Ver o comentário dentro do arquivo.
-install -m 644 "$DESTINO/nginx/bordatudo-limites.conf" /etc/nginx/conf.d/bordatudo-limites.conf
+# O NOME DA ZONA E GLOBAL NO NGINX, e este servidor hospeda varios sites.
+# Dois arquivos declarando `zone=cw_login` fazem o nginx recusar a
+# configuracao INTEIRA — derruba o site novo E impede recarregar os que ja
+# estavam no ar. Aconteceu ao clonar este projeto de outro: a substituicao
+# trocou o nome do app mas nao o prefixo da zona.
+# Por isso a zona e DERIVADA de $APP na instalacao, e nao escrita a mao.
+sed "s/__APP__/${APP}/g" "$DESTINO/nginx/${APP}-limites.conf" > "/etc/nginx/conf.d/${APP}-limites.conf"
+chmod 644 "/etc/nginx/conf.d/${APP}-limites.conf"
 
 if temCertificado "$DOMINIO"; then
   escrever_conf "$DOMINIO" principal sim; echo "    ${DOMINIO}: HTTPS (certificado já existe)"

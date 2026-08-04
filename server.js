@@ -24,7 +24,7 @@ const { abrirBanco } = require("./db");
 const { criarLimitador } = require("./limitador");
 const { agendarBackups } = require("./backup");
 
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.1";
 const PORTA = Number(process.env.PORT) || 5193;
 const HOST = process.env.HOST || "127.0.0.1";
 const RAIZ = __dirname;
