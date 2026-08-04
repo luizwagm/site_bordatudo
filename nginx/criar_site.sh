@@ -396,16 +396,53 @@ confirmarBlocoAtivo() {
   printf '%s' "$montada" | grep -qE "server_name[^;]*\b${dom//./\\.}\b" && return 0
 
   aviso ""
-  aviso "  ✖ o bloco de ${dom} está no disco mas o nginx NÃO o carrega."
-  aviso "    O arquivo foi escrito e o link criado, mas ele está fora da"
-  aviso "    configuração montada — por isso quem responde é o site padrão."
+  aviso "  ✖ o nginx NÃO carrega o bloco de ${dom}."
+  aviso "    Quem responde por esse nome é o site padrão da máquina."
   aviso ""
-  aviso "    A causa quase sempre é o include do nginx.conf não alcançar a pasta:"
-  aviso "      grep -n include /etc/nginx/nginx.conf"
-  aviso "      ls -la /etc/nginx/sites-enabled/"
+
+  # MOSTRAR AS PROVAS, NÃO SÓ O VEREDITO.
+  #
+  # A primeira versão disto só dizia "não carrega" e listava causas prováveis.
+  # Quando um dos dois domínios passou e o outro não — mesma pasta, mesma
+  # função, mesmo link — a lista de causas não servia para nada: nenhuma delas
+  # explica dois resultados diferentes. Faltava OLHAR o estado.
+  local ligado="/etc/nginx/sites-enabled/${dom}.conf"
+  local fonte="/etc/nginx/sites-available/${dom}.conf"
+
+  aviso "    o que existe no disco:"
+  if [ -e "$fonte" ]; then
+    aviso "      arquivo ..... $fonte ($(wc -l < "$fonte") linhas)"
+  else
+    aviso "      arquivo ..... AUSENTE em $fonte"
+  fi
+  if [ -L "$ligado" ]; then
+    aviso "      link ........ $ligado -> $(readlink "$ligado")"
+    [ -e "$ligado" ] || aviso "      ATENÇÃO: o link existe mas aponta para o nada (quebrado)"
+  elif [ -e "$ligado" ]; then
+    aviso "      link ........ $ligado existe, mas NÃO é link simbólico"
+  else
+    aviso "      link ........ AUSENTE em $ligado"
+  fi
+
   aviso ""
-  aviso "    Se o include apontar só para conf.d, ligue o bloco lá:"
-  aviso "      ln -sfn /etc/nginx/sites-available/${dom}.conf /etc/nginx/conf.d/${dom}.conf"
+  aviso "    onde este nome aparece na configuração montada:"
+  local achados
+  achados=$(printf '%s' "$montada" | grep -nE "server_name[^;]*${dom//./\\.}" || true)
+  if [ -n "$achados" ]; then
+    printf '%s\n' "$achados" | head -5 | sed 's/^/        /'
+    aviso "      (aparece, mas não casou a conferência — pode ser outro bloco"
+    aviso "       de outro site reivindicando o mesmo nome, e o primeiro vence)"
+  else
+    aviso "        não aparece em lugar nenhum"
+  fi
+
+  aviso ""
+  aviso "    de onde o nginx lê:"
+  grep -nE "^\s*include" /etc/nginx/nginx.conf 2>/dev/null | sed 's/^/        /'
+
+  aviso ""
+  aviso "    Se o include não alcançar sites-enabled, ligue o bloco em conf.d:"
+  aviso "      ln -sfn ${fonte} /etc/nginx/conf.d/${dom}.conf"
   aviso "      nginx -t && systemctl reload nginx"
   return 1
 }
