@@ -1,0 +1,19 @@
+node_modules/
+
+# O BANCO É O CONTEÚDO DO SITE e vive só no servidor. Versioná-lo faria o
+# `git pull` do deploy sobrescrever o que o cliente escreveu no painel.
+data/
+backups/
+
+# Fotos enviadas pelo painel. Mesmo motivo: nascem no servidor.
+assets/img/uploads/
+
+# Saída da conferência visual do recorte da logo — se regenera com
+# `node src/conferir-logo.cjs`.
+src/conferencia-logo.png
+src/zoom.png
+
+.qa-admin.mjs
+*.log
+Thumbs.db
+.DS_Store

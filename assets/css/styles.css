@@ -1,0 +1,797 @@
+/* ==========================================================================
+   BORDA TUDO — sistema de design
+
+   O logotipo desta empresa não é um desenho de bordado: é um bordado
+   FOTOGRAFADO. Dá para ver a direção do ponto, o brilho do cetim e a felpa da
+   toalha atrás. Isso é raro, e é o ativo mais forte da marca — o logotipo
+   prova o serviço antes de qualquer texto.
+
+   Então o site não ilustra bordado. Ele é construído com a GRAMÁTICA do
+   bordado: a linha que atravessa, o ponto que emenda, o aro que segura o
+   tecido, a trama por baixo de tudo.
+
+   Cores medidas nos pixels do logotipo, não estimadas a olho:
+       marinho  croma mediano  78    laranja  croma mediano 168
+       toalha   croma mediano   5    prata    croma mediano  29
+   ========================================================================== */
+
+/* ==========================================================================
+   1. FICHAS TÉCNICAS (tokens)
+   ========================================================================== */
+:root {
+  /* --- cor ---------------------------------------------------------------
+     O laranja tem TRÊS valores e não é capricho: medido contra o algodão dá
+     4,2:1 e reprova em AA para texto. Então o laranja da marca serve de traço
+     e de ícone; o de botão escurece até 5,1:1; e o vivo só existe sobre
+     marinho, onde chega a 5,8:1. Trocar um pelo outro quebra acessibilidade. */
+  --tinta: #1e275f;            /* marinho do bordado — 13,1:1 sobre algodão */
+  --tinta-fundo: #0d1240;      /* marinho de sombra — rodapé e faixas */
+  --tinta-suave: #3a4479;
+  --linha: #d9440e;            /* laranja da marca — TRAÇO E ÍCONE, nunca texto claro */
+  --linha-botao: #c03b0c;      /* laranja escurecido — fundo de botão, 5,1:1 com branco */
+  --linha-viva: #f86519;       /* laranja de brilho — SÓ sobre marinho */
+  --prata: #adaec1;            /* cabeças da máquina — detalhe técnico */
+  --prata-fundo: #e6e7ee;
+  --algodao: #f7f5f2;          /* fundo da página */
+  --algodao-fundo: #efece7;
+  --papel: #ffffff;
+  --carvao: #2b2b30;
+
+  /* --- tipografia --------------------------------------------------------
+     Pilha do sistema, sem fonte baixada. Duas razões, nesta ordem: fonte de
+     terceiro é requisição a outro domínio antes de qualquer consentimento, o
+     que a LGPD não perdoa num site que ainda vai pedir aceite de cookie; e
+     cada arquivo de fonte adia a primeira pintura, que é metade da nota de
+     desempenho. O caráter vem do TRATAMENTO — escala, entrelinha e espaço
+     entre letras —, não do arquivo. */
+  --fonte: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+           "Helvetica Neue", Arial, sans-serif;
+  --fonte-tecnica: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas,
+                   "Liberation Mono", monospace;
+
+  /* Escala fluida: cada degrau cresce com a viewport, sem salto de breakpoint.
+     O mínimo é o valor em 320px e o máximo, em 1440px. */
+  --t-nano: clamp(.69rem, .66rem + .12vw, .76rem);
+  --t-mini: clamp(.8rem, .77rem + .14vw, .88rem);
+  --t-base: clamp(1rem, .96rem + .2vw, 1.12rem);
+  --t-medio: clamp(1.13rem, 1.05rem + .35vw, 1.35rem);
+  --t-titulo: clamp(1.45rem, 1.25rem + .95vw, 2.1rem);
+  --t-secao: clamp(1.85rem, 1.45rem + 1.9vw, 3.1rem);
+  --t-heroi: clamp(2.3rem, 1.6rem + 3.3vw, 4.4rem);
+
+  /* --- ritmo -------------------------------------------------------------
+     Escala de 4px. Número redondo emenda com número redondo; meia medida cria
+     desalinhamento que ninguém sabe explicar depois. */
+  --e1: .25rem;  --e2: .5rem;   --e3: .75rem;  --e4: 1rem;
+  --e5: 1.5rem;  --e6: 2rem;    --e7: 3rem;    --e8: 4rem;
+  --e9: 6rem;    --e10: 8rem;
+
+  --largura: 1200px;
+  --largura-texto: 68ch;       /* acima disso o olho perde a linha ao voltar */
+
+  --raio: 4px;                 /* quase reto: tecido não tem canto arredondado */
+  --raio-aro: 999px;
+
+  --sombra-baixa: 0 1px 2px rgb(13 18 64 / .06), 0 2px 8px rgb(13 18 64 / .05);
+  --sombra-media: 0 2px 6px rgb(13 18 64 / .08), 0 12px 32px rgb(13 18 64 / .09);
+  --sombra-alta: 0 4px 12px rgb(13 18 64 / .1), 0 24px 64px rgb(13 18 64 / .14);
+
+  --transicao: 200ms cubic-bezier(.2, .7, .3, 1);
+  --topo-altura: 76px;
+}
+
+/* ==========================================================================
+   2. BASE
+   ========================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+
+/* NÃO usar `* { margin: 0 }`.
+   O painel grava HTML de verdade — parágrafo, lista, negrito — e um reset
+   universal zera o espaço entre parágrafos que a pessoa acabou de escrever.
+   O HTML "funciona", a tela mente, e a conclusão vira "o editor está
+   quebrado". Aqui o reset é nominal, e o espaçamento volta dentro de `.rico`. */
+body, h1, h2, h3, h4, p, ul, ol, figure, blockquote, dl, dd {
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--topo-altura) + var(--e5));
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+body {
+  font-family: var(--fonte);
+  font-size: var(--t-base);
+  line-height: 1.65;
+  color: var(--tinta);
+  background: var(--algodao);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+img, svg, video { max-width: 100%; height: auto; display: block; }
+a { color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
+
+:focus-visible {
+  outline: 3px solid var(--linha);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+::selection { background: var(--linha-viva); color: #fff; }
+
+/* Pular para o conteúdo — primeiro item do teclado, invisível até receber foco. */
+.pular {
+  position: absolute; left: var(--e4); top: -100vh; z-index: 200;
+  background: var(--tinta); color: #fff; padding: var(--e3) var(--e5);
+  border-radius: var(--raio); font-weight: 700; text-decoration: none;
+}
+.pular:focus { top: var(--e4); }
+
+.so-leitor {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ==========================================================================
+   3. OS QUATRO DISPOSITIVOS DE ASSINATURA
+
+   São eles que impedem o site de parecer template. Nenhum é enfeite solto:
+   cada um vem de um objeto real do ofício.
+   ========================================================================== */
+
+/* --- 3.1 PONTO-CORRENTE ---------------------------------------------------
+   O divisor entre seções não é uma régua: é costura. A proporção traço/vão
+   segue o ponto corrente de máquina (cheio longo, vão curto), e o pespontinho
+   de baixo, deslocado, dá o relevo de duas agulhas. */
+.ponto-corrente {
+  height: 6px;
+  border: 0;
+  background:
+    repeating-linear-gradient(90deg,
+      var(--tinta) 0 14px, transparent 14px 20px) 0 0 / 20px 2px no-repeat,
+    repeating-linear-gradient(90deg,
+      var(--linha) 7px 21px, transparent 21px 27px) 0 4px / 20px 2px no-repeat;
+  background-repeat: repeat-x;
+  opacity: .55;
+}
+.ponto-corrente--claro {
+  background:
+    repeating-linear-gradient(90deg, #fff 0 14px, transparent 14px 20px) 0 0 / 20px 2px repeat-x,
+    repeating-linear-gradient(90deg, var(--linha-viva) 7px 21px, transparent 21px 27px) 0 4px / 20px 2px repeat-x;
+  opacity: .4;
+}
+
+/* Moldura costurada: usada em cartão de destaque. O traço interno tracejado
+   imita o alinhavo que segura a peça antes de bordar. */
+.costurado {
+  position: relative;
+  background: var(--papel);
+  border: 1px solid var(--prata-fundo);
+  border-radius: var(--raio);
+}
+.costurado::after {
+  content: "";
+  position: absolute; inset: 6px;
+  border: 1px dashed color-mix(in srgb, var(--tinta) 26%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* --- 3.2 O FIO ------------------------------------------------------------
+   A logo tem uma linha laranja que sai da máquina, contorna o nome e termina
+   na agulha. O site continua esse gesto: um fio atravessa as seções e se
+   desenha conforme a página rola, amarrando tudo num traço só. */
+.fio {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 0;
+}
+.fio path {
+  fill: none;
+  stroke: var(--linha);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  opacity: .5;
+  stroke-dasharray: var(--comprimento, 2000);
+  stroke-dashoffset: var(--comprimento, 2000);
+  transition: stroke-dashoffset 1.4s cubic-bezier(.4, 0, .2, 1);
+}
+.fio.bordando path { stroke-dashoffset: 0; }
+.fio--claro path { stroke: var(--linha-viva); opacity: .65; }
+
+/* --- 3.3 TECIDO -----------------------------------------------------------
+   A trama do algodão, em gradiente puro. Sem imagem: não custa requisição,
+   não pesa no carregamento e escala sem borrar. Duas direções cruzadas com
+   opacidade mínima — de perto se lê como tecido, de longe some. */
+.tecido {
+  background-image:
+    repeating-linear-gradient(0deg,
+      rgb(30 39 95 / .028) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(90deg,
+      rgb(30 39 95 / .028) 0 1px, transparent 1px 3px);
+}
+.tecido--escuro {
+  background-image:
+    repeating-linear-gradient(0deg, rgb(255 255 255 / .035) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(90deg, rgb(255 255 255 / .035) 0 1px, transparent 1px 3px);
+}
+
+/* --- 3.4 BASTIDOR ---------------------------------------------------------
+   O aro que prende o tecido para bordar. É o objeto mais reconhecível do
+   ofício e ninguém na região usa como moldura. Aro duplo, com o parafuso de
+   aperto no topo — o detalhe que faz o desenho ser um bastidor e não um
+   círculo qualquer. */
+.bastidor {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: var(--raio-aro);
+  padding: 10px;
+  background: linear-gradient(160deg, var(--prata-fundo), #cfd2dd);
+  box-shadow: var(--sombra-media), inset 0 0 0 1px rgb(13 18 64 / .1);
+}
+.bastidor::before {
+  content: "";
+  position: absolute; top: -9px; left: 50%; transform: translateX(-50%);
+  width: 34px; height: 18px;
+  border-radius: 4px 4px 2px 2px;
+  background: linear-gradient(180deg, #d6d8e2, var(--prata));
+  box-shadow: inset 0 -1px 0 rgb(13 18 64 / .18), 0 1px 2px rgb(13 18 64 / .2);
+}
+.bastidor::after {   /* o parafuso */
+  content: "";
+  position: absolute; top: -3px; left: 50%; transform: translateX(-50%);
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--tinta-suave);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .35);
+}
+.bastidor > img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  border-radius: var(--raio-aro);
+  box-shadow: inset 0 0 0 1px rgb(13 18 64 / .08);
+}
+
+/* ==========================================================================
+   4. ESTRUTURA
+   ========================================================================== */
+.envolve {
+  width: min(100% - var(--e5) * 2, var(--largura));
+  margin-inline: auto;
+}
+.envolve--estreito { width: min(100% - var(--e5) * 2, 860px); margin-inline: auto; }
+
+.secao { position: relative; padding-block: clamp(var(--e7), 6vw, var(--e9)); }
+.secao--escura {
+  background: var(--tinta-fundo);
+  color: #fff;
+}
+.secao--escura .secao__rotulo { color: var(--linha-viva); }
+.secao--macia { background: var(--algodao-fundo); }
+
+.secao__cabeca { max-width: var(--largura-texto); margin-bottom: var(--e6); }
+.secao__cabeca--centro { margin-inline: auto; text-align: center; }
+
+/* O rótulo é o "código da peça": pequeno, espaçado, monoespaçado. Fala com
+   quem compra por ficha técnica — que é o público principal deste site. */
+.secao__rotulo {
+  display: inline-flex; align-items: center; gap: var(--e2);
+  font-family: var(--fonte-tecnica);
+  font-size: var(--t-nano);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--linha);
+  margin-bottom: var(--e3);
+}
+.secao__rotulo::before {
+  content: ""; width: 22px; height: 2px; background: currentColor; opacity: .8;
+}
+
+.secao__titulo {
+  font-size: var(--t-secao);
+  line-height: 1.08;
+  letter-spacing: -.022em;
+  font-weight: 800;
+  text-wrap: balance;
+}
+.secao__lead {
+  margin-top: var(--e4);
+  font-size: var(--t-medio);
+  color: color-mix(in srgb, currentColor 78%, transparent);
+  max-width: var(--largura-texto);
+  text-wrap: pretty;
+}
+
+/* ==========================================================================
+   5. TEXTO VINDO DO PAINEL
+
+   Tudo que a pessoa escreve no gerenciador cai aqui dentro. É o único lugar
+   onde as margens voltam a existir — ver o comentário do reset lá em cima.
+   ========================================================================== */
+.rico > * + * { margin-top: .9em; }
+.rico p { text-wrap: pretty; }
+.rico strong, .rico b { font-weight: 700; color: inherit; }
+.rico em { font-style: italic; }
+.rico a {
+  color: var(--linha-botao);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+}
+.secao--escura .rico a { color: var(--linha-viva); }
+.rico ul, .rico ol { padding-left: 1.35em; }
+.rico li + li { margin-top: .4em; }
+.rico ul { list-style: none; padding-left: 0; }
+.rico ul > li {
+  position: relative; padding-left: 1.6em;
+}
+/* O marcador da lista é um ponto de costura, não um bolinha. */
+.rico ul > li::before {
+  content: "";
+  position: absolute; left: 0; top: .62em;
+  width: 11px; height: 2px;
+  background: var(--linha);
+  box-shadow: 3px 3px 0 -.5px var(--linha);
+}
+.secao--escura .rico ul > li::before { background: var(--linha-viva); box-shadow: 3px 3px 0 -.5px var(--linha-viva); }
+
+/* ==========================================================================
+   6. BOTÕES
+   ========================================================================== */
+.botao {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--e2);
+  padding: var(--e3) var(--e5);
+  min-height: 48px;                       /* alvo de toque confortável */
+  border: 1px solid transparent;
+  border-radius: var(--raio);
+  font-weight: 700;
+  font-size: var(--t-mini);
+  letter-spacing: .03em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform var(--transicao), box-shadow var(--transicao),
+              background-color var(--transicao), color var(--transicao);
+}
+.botao:hover { transform: translateY(-2px); }
+.botao:active { transform: translateY(0); }
+
+/* Fundo no laranja ESCURECIDO. O laranja da marca com texto branco dá 4,2:1 e
+   reprova em AA; este dá 5,1:1. */
+.botao--principal { background: var(--linha-botao); color: #fff; box-shadow: var(--sombra-baixa); }
+.botao--principal:hover { background: #a93409; box-shadow: var(--sombra-media); }
+
+.botao--tinta { background: var(--tinta); color: #fff; }
+.botao--tinta:hover { background: var(--tinta-fundo); }
+
+/* Contorno costurado: o tracejado só aparece no repouso e "fecha" no hover,
+   como um alinhavo virando ponto definitivo. */
+.botao--contorno {
+  background: transparent; color: var(--tinta);
+  border-style: dashed; border-color: color-mix(in srgb, var(--tinta) 45%, transparent);
+}
+.botao--contorno:hover { border-style: solid; border-color: var(--tinta); background: rgb(30 39 95 / .05); }
+.secao--escura .botao--contorno { color: #fff; border-color: rgb(255 255 255 / .45); }
+.secao--escura .botao--contorno:hover { border-color: #fff; background: rgb(255 255 255 / .1); }
+
+.botao--zap { background: #128c7e; color: #fff; }
+.botao--zap:hover { background: #0d7568; }
+
+.grupo-botoes { display: flex; flex-wrap: wrap; gap: var(--e3); }
+
+/* ==========================================================================
+   7. CABEÇALHO
+   ========================================================================== */
+.topo {
+  position: fixed; inset: 0 0 auto; z-index: 100;
+  padding-block: var(--e3);
+  transition: background-color var(--transicao), box-shadow var(--transicao),
+              padding var(--transicao);
+}
+/* O contêiner flutuante do desktop: o cabeçalho não encosta nas bordas, fica
+   numa placa. Só a partir de 1001px — no celular a placa desperdiça largura. */
+.topo__interno {
+  display: flex; align-items: center; gap: var(--e5);
+  justify-content: space-between;
+}
+@media (min-width: 1001px) {
+  .topo__interno {
+    width: min(100% - var(--e6) * 2, var(--largura));
+    margin-inline: auto;
+    padding: var(--e2) var(--e5);
+    background: rgb(255 255 255 / .82);
+    backdrop-filter: blur(14px) saturate(1.4);
+    border: 1px solid rgb(30 39 95 / .08);
+    border-radius: 8px;
+    box-shadow: var(--sombra-baixa);
+  }
+  .topo.rolou .topo__interno { box-shadow: var(--sombra-media); background: rgb(255 255 255 / .95); }
+}
+@media (max-width: 1000px) {
+  .topo { background: rgb(247 245 242 / .92); backdrop-filter: blur(12px); }
+  .topo.rolou { box-shadow: var(--sombra-baixa); }
+}
+
+.marca { display: flex; align-items: center; gap: var(--e3); text-decoration: none; flex-shrink: 0; }
+.marca img { height: 46px; width: auto; }
+.marca__nome { display: none; }
+
+.nav { display: flex; align-items: center; gap: var(--e5); }
+.nav a {
+  text-decoration: none; font-size: var(--t-mini); font-weight: 600;
+  color: var(--tinta); position: relative; padding-block: var(--e2);
+}
+/* O sublinhado do menu é um ponto de costura que corre. */
+.nav a::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  background: repeating-linear-gradient(90deg, var(--linha) 0 5px, transparent 5px 8px);
+  transform: scaleX(0); transform-origin: left;
+  transition: transform var(--transicao);
+}
+.nav a:hover::after, .nav a[aria-current="page"]::after { transform: scaleX(1); }
+
+.topo__acoes { display: flex; align-items: center; gap: var(--e3); }
+
+.menu-botao {
+  display: none; background: none; border: 0; cursor: pointer;
+  width: 44px; height: 44px; padding: 10px;
+}
+.menu-botao span {
+  display: block; height: 2px; background: var(--tinta); border-radius: 2px;
+  transition: transform var(--transicao), opacity var(--transicao);
+}
+.menu-botao span + span { margin-top: 5px; }
+.menu-botao[aria-expanded="true"] span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.menu-botao[aria-expanded="true"] span:nth-child(2) { opacity: 0; }
+.menu-botao[aria-expanded="true"] span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+@media (max-width: 1000px) {
+  .menu-botao { display: block; }
+  .nav {
+    position: fixed; inset: var(--topo-altura) 0 auto;
+    flex-direction: column; align-items: stretch; gap: 0;
+    background: var(--papel);
+    padding: var(--e4) var(--e5) var(--e6);
+    box-shadow: var(--sombra-alta);
+    transform: translateY(-130%);
+    transition: transform var(--transicao);
+    max-height: calc(100dvh - var(--topo-altura)); overflow-y: auto;
+  }
+  .nav.aberto { transform: translateY(0); }
+  .nav a { padding: var(--e4) 0; border-bottom: 1px solid var(--prata-fundo); font-size: var(--t-base); }
+  .nav a::after { display: none; }
+  .topo__acoes .botao--principal { display: none; }
+}
+
+/* ==========================================================================
+   8. HERÓI
+   ========================================================================== */
+.heroi {
+  position: relative;
+  padding-top: calc(var(--topo-altura) + clamp(var(--e6), 7vw, var(--e9)));
+  padding-bottom: clamp(var(--e7), 7vw, var(--e9));
+  background: linear-gradient(165deg, var(--tinta-fundo) 0%, var(--tinta) 58%, #26306b 100%);
+  color: #fff;
+  overflow: hidden;
+}
+.heroi__grade {
+  position: relative; z-index: 2;
+  display: grid; gap: clamp(var(--e6), 5vw, var(--e8));
+  grid-template-columns: 1fr;
+  align-items: center;
+}
+@media (min-width: 900px) { .heroi__grade { grid-template-columns: 1.08fr .92fr; } }
+
+.heroi__titulo {
+  font-size: var(--t-heroi);
+  line-height: 1.02;
+  letter-spacing: -.03em;
+  font-weight: 800;
+  text-wrap: balance;
+}
+/* A palavra destacada ganha o fio por baixo — o mesmo gesto da logo. */
+.heroi__titulo mark {
+  background: none; color: var(--linha-viva);
+  position: relative; white-space: nowrap;
+}
+.heroi__titulo mark::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: .04em; height: 3px;
+  background: repeating-linear-gradient(90deg, var(--linha-viva) 0 9px, transparent 9px 14px);
+  opacity: .85;
+}
+.heroi__lead {
+  margin-top: var(--e5);
+  font-size: var(--t-medio);
+  color: rgb(255 255 255 / .84);
+  max-width: 56ch;
+  text-wrap: pretty;
+}
+.heroi .grupo-botoes { margin-top: var(--e6); }
+
+/* Selos de confiança: número grande em fonte técnica, rótulo pequeno. Fala a
+   língua de quem compra por ficha. */
+.selos {
+  display: grid; gap: var(--e4);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin-top: var(--e7);
+  padding-top: var(--e5);
+  border-top: 1px solid rgb(255 255 255 / .16);
+}
+.selo__numero {
+  font-family: var(--fonte-tecnica);
+  font-size: var(--t-titulo);
+  font-weight: 700;
+  color: var(--linha-viva);
+  line-height: 1;
+}
+.selo__texto { font-size: var(--t-nano); color: rgb(255 255 255 / .7); margin-top: var(--e2); }
+
+/* A peça de vitrine no herói, dentro do bastidor. */
+.heroi__figura { position: relative; }
+.heroi__figura .bastidor { max-width: 460px; margin-inline: auto; }
+
+/* ==========================================================================
+   9. CARTÕES
+   ========================================================================== */
+.grade {
+  display: grid; gap: var(--e5);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+}
+.grade--4 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+
+.cartao {
+  position: relative;
+  display: flex; flex-direction: column;
+  padding: var(--e5);
+  background: var(--papel);
+  border: 1px solid var(--prata-fundo);
+  border-radius: var(--raio);
+  transition: transform var(--transicao), box-shadow var(--transicao), border-color var(--transicao);
+}
+/* A borda superior é uma costura que só aparece ao passar o mouse. */
+.cartao::before {
+  content: ""; position: absolute; inset: -1px -1px auto; height: 3px;
+  background: repeating-linear-gradient(90deg, var(--linha) 0 10px, transparent 10px 15px);
+  transform: scaleX(0); transform-origin: left;
+  transition: transform 320ms cubic-bezier(.2, .7, .3, 1);
+  border-radius: var(--raio) var(--raio) 0 0;
+}
+.cartao:hover { transform: translateY(-4px); box-shadow: var(--sombra-media); border-color: transparent; }
+.cartao:hover::before { transform: scaleX(1); }
+
+.cartao__icone {
+  width: 46px; height: 46px; margin-bottom: var(--e4);
+  color: var(--linha);
+}
+.cartao__icone svg { width: 100%; height: 100%; }
+.cartao__titulo { font-size: var(--t-medio); font-weight: 700; line-height: 1.25; }
+.cartao__texto { margin-top: var(--e3); font-size: var(--t-mini); color: var(--tinta-suave); }
+
+/* Ficha técnica dentro do cartão — o dado que o fabricante procura. */
+.ficha {
+  margin-top: var(--e4); padding-top: var(--e3);
+  border-top: 1px dashed var(--prata);
+  display: grid; gap: var(--e1);
+  font-family: var(--fonte-tecnica); font-size: var(--t-nano);
+  color: var(--tinta-suave);
+}
+.ficha div { display: flex; justify-content: space-between; gap: var(--e3); }
+.ficha dt, .ficha b { color: var(--tinta); font-weight: 600; }
+
+/* ==========================================================================
+   10. PASSOS
+   ========================================================================== */
+.passos { counter-reset: passo; display: grid; gap: var(--e5); }
+@media (min-width: 760px) { .passos { grid-template-columns: repeat(3, 1fr); } }
+.passo { position: relative; padding-top: var(--e6); }
+.passo::before {
+  counter-increment: passo; content: counter(passo, decimal-leading-zero);
+  position: absolute; top: 0; left: 0;
+  font-family: var(--fonte-tecnica); font-size: var(--t-titulo); font-weight: 700;
+  color: var(--linha); opacity: .35; line-height: 1;
+}
+/* A linha que liga um passo ao outro é o fio — some no empilhamento. */
+@media (min-width: 760px) {
+  .passo:not(:last-child)::after {
+    content: ""; position: absolute; top: .7em; left: 3.2em; right: calc(var(--e5) * -1 + .6em);
+    height: 2px;
+    background: repeating-linear-gradient(90deg, var(--linha) 0 6px, transparent 6px 11px);
+    opacity: .4;
+  }
+}
+.passo__titulo { font-size: var(--t-medio); font-weight: 700; }
+.passo__texto { margin-top: var(--e2); font-size: var(--t-mini); color: var(--tinta-suave); }
+.secao--escura .passo__texto { color: rgb(255 255 255 / .74); }
+
+/* ==========================================================================
+   11. VITRINE
+   ========================================================================== */
+.filtros { display: flex; flex-wrap: wrap; gap: var(--e2); margin-bottom: var(--e6); }
+.filtro {
+  padding: var(--e2) var(--e4); min-height: 40px;
+  background: transparent; border: 1px dashed color-mix(in srgb, var(--tinta) 35%, transparent);
+  border-radius: var(--raio); cursor: pointer;
+  font-size: var(--t-nano); font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  font-family: var(--fonte-tecnica);
+  transition: all var(--transicao);
+}
+.filtro:hover { border-style: solid; }
+.filtro[aria-pressed="true"] { background: var(--tinta); color: #fff; border-color: var(--tinta); border-style: solid; }
+
+.peca {
+  display: flex; flex-direction: column;
+  background: var(--papel);
+  border: 1px solid var(--prata-fundo);
+  border-radius: var(--raio);
+  overflow: hidden;
+  transition: transform var(--transicao), box-shadow var(--transicao);
+}
+.peca:hover { transform: translateY(-4px); box-shadow: var(--sombra-media); }
+.peca__foto { position: relative; overflow: hidden; background: var(--algodao-fundo); }
+.peca__foto img {
+  width: 100%; height: 320px; object-fit: cover;
+  transition: transform 500ms cubic-bezier(.2, .7, .3, 1);
+}
+.peca:hover .peca__foto img { transform: scale(1.05); }
+.peca__etiqueta {
+  position: absolute; top: var(--e3); left: var(--e3);
+  padding: var(--e1) var(--e3);
+  background: rgb(13 18 64 / .88); color: #fff;
+  font-family: var(--fonte-tecnica); font-size: var(--t-nano);
+  letter-spacing: .08em; text-transform: uppercase;
+  border-radius: 2px;
+}
+.peca__corpo { padding: var(--e4); display: flex; flex-direction: column; flex: 1; }
+.peca__titulo { font-size: var(--t-base); font-weight: 700; line-height: 1.3; }
+.peca__meta {
+  margin-top: var(--e2); font-family: var(--fonte-tecnica); font-size: var(--t-nano);
+  color: var(--tinta-suave);
+}
+.peca__acao { margin-top: auto; padding-top: var(--e4); }
+
+/* ==========================================================================
+   12. FORMULÁRIO
+   ========================================================================== */
+.form { display: grid; gap: var(--e4); }
+.form__linha { display: grid; gap: var(--e4); }
+@media (min-width: 700px) { .form__linha--2 { grid-template-columns: 1fr 1fr; } }
+
+/* `display:block` explícito: o rótulo é <label>, que é inline por padrão, e
+   sem isto ele encosta no campo em algumas combinações de navegador. */
+.form label {
+  display: block;
+  font-size: var(--t-nano); font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase;
+  font-family: var(--fonte-tecnica);
+  color: var(--tinta-suave);
+  margin-bottom: var(--e2);
+}
+.form input, .form select, .form textarea {
+  width: 100%;
+  padding: var(--e3) var(--e4); min-height: 48px;
+  background: var(--papel);
+  border: 1px solid var(--prata);
+  border-radius: var(--raio);
+  transition: border-color var(--transicao), box-shadow var(--transicao);
+}
+.form textarea { min-height: 140px; resize: vertical; line-height: 1.6; }
+.form input:focus, .form select:focus, .form textarea:focus {
+  border-color: var(--linha); outline: none;
+  box-shadow: 0 0 0 3px rgb(217 68 14 / .16);
+}
+.form__ajuda { font-size: var(--t-nano); color: var(--tinta-suave); margin-top: var(--e2); }
+
+/* ==========================================================================
+   13. DÚVIDAS
+   ========================================================================== */
+.duvida { border-bottom: 1px solid var(--prata-fundo); }
+.duvida summary {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--e4);
+  padding: var(--e4) 0; cursor: pointer; list-style: none;
+  font-weight: 700; font-size: var(--t-medio);
+}
+.duvida summary::-webkit-details-marker { display: none; }
+.duvida summary::after {
+  content: ""; flex-shrink: 0;
+  width: 14px; height: 14px;
+  border-right: 2px solid var(--linha); border-bottom: 2px solid var(--linha);
+  transform: rotate(45deg) translate(-3px, -3px);
+  transition: transform var(--transicao);
+}
+.duvida[open] summary::after { transform: rotate(-135deg) translate(-3px, -3px); }
+.duvida__corpo { padding-bottom: var(--e5); color: var(--tinta-suave); max-width: var(--largura-texto); }
+
+/* ==========================================================================
+   14. RODAPÉ
+   ========================================================================== */
+.rodape {
+  background: var(--tinta-fundo);
+  color: rgb(255 255 255 / .78);
+  padding-block: var(--e8) var(--e5);
+  font-size: var(--t-mini);
+}
+.rodape__grade {
+  display: grid; gap: var(--e6);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+}
+.rodape h3 {
+  font-size: var(--t-nano); letter-spacing: .16em; text-transform: uppercase;
+  font-family: var(--fonte-tecnica);
+  color: var(--linha-viva); margin-bottom: var(--e4);
+}
+.rodape a { color: inherit; text-decoration: none; }
+.rodape a:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+.rodape ul { list-style: none; padding: 0; display: grid; gap: var(--e2); }
+.rodape__marca img { height: 62px; width: auto; margin-bottom: var(--e4); }
+.rodape__base {
+  margin-top: var(--e7); padding-top: var(--e5);
+  border-top: 1px solid rgb(255 255 255 / .12);
+  display: flex; flex-wrap: wrap; gap: var(--e4); justify-content: space-between; align-items: center;
+  font-size: var(--t-nano); color: rgb(255 255 255 / .6);
+}
+
+/* Assinatura da casa. O emblema acende no acento do site ao passar o mouse. */
+.dev-credit {
+  display: inline-flex; align-items: center; gap: var(--e2);
+  text-decoration: none; color: inherit;
+  transition: color var(--transicao);
+}
+.dev-credit svg { width: 18px; height: 18px; color: currentColor; transition: color var(--transicao); }
+.dev-credit:hover { color: #fff; text-decoration: none; }
+.dev-credit:hover svg { color: var(--linha-viva); }
+.dev-credit b { font-weight: 700; }
+
+/* ==========================================================================
+   15. AVISO DE COOKIE
+   A contagem de acesso só liga DEPOIS do aceite — por isso o aviso é
+   componente do site, não enfeite: ele é o interruptor.
+   ========================================================================== */
+.aviso-lgpd {
+  position: fixed; inset: auto var(--e4) var(--e4) var(--e4); z-index: 150;
+  max-width: 520px; margin-inline: auto;
+  padding: var(--e5);
+  background: var(--papel);
+  border: 1px solid var(--prata);
+  border-radius: var(--raio);
+  box-shadow: var(--sombra-alta);
+  font-size: var(--t-mini);
+  transform: translateY(150%);
+  transition: transform 320ms cubic-bezier(.2, .7, .3, 1);
+}
+.aviso-lgpd.aberto { transform: translateY(0); }
+.aviso-lgpd .grupo-botoes { margin-top: var(--e4); }
+
+/* ==========================================================================
+   16. ANIMAÇÃO DE ENTRADA
+   Deslocamento mínimo e opacidade. Nada que empurre layout depois da primeira
+   pintura — movimento grande aqui vira instabilidade visual na medição.
+   ========================================================================== */
+/* O ESCONDER É CONDICIONADO A `.js`, E ISSO NÃO É DETALHE.
+
+   `.surge { opacity: 0 }` solto no CSS significa que, sem JavaScript, a página
+   inteira fica em branco: o CSS esconde e só o script revela. Um erro numa
+   linha do `main.js`, uma extensão que bloqueia script, uma rede que perde o
+   arquivo — e o visitante recebe cabeçalho, rodapé e nada no meio.
+
+   A classe `.js` é posta por um script de uma linha no `<head>` do molde. Sem
+   ele, nenhum destes seletores casa e o conteúdo nasce visível. Animação é
+   enfeite; conteúdo não pode depender de enfeite. */
+.js .surge { opacity: 0; transform: translateY(14px); transition: opacity 620ms ease, transform 620ms cubic-bezier(.2, .7, .3, 1); }
+.js .surge.visivel { opacity: 1; transform: none; }
+.surge:nth-child(2) { transition-delay: 70ms; }
+.surge:nth-child(3) { transition-delay: 140ms; }
+.surge:nth-child(4) { transition-delay: 210ms; }
+
+@media print {
+  .topo, .aviso-lgpd, .menu-botao, .botao { display: none !important; }
+  body { background: #fff; color: #000; }
+}

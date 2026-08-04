@@ -1,0 +1,316 @@
+<!-- GERADO por src/gerar-moldes.cjs a partir do cabeçalho e rodapé da home.
+     Pode editar à mão daqui em diante — mas rodar o gerador de novo
+     sobrescreve. Mexeu no cabeçalho ou no rodapé? Mexa na home e gere de novo. -->
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Busca — Borda Tudo</title>
+<meta name="description" content="Procure por tipo de bordado, peça ou material.">
+<link rel="canonical" href="https://bordatudo.com/busca/">
+<meta name="theme-color" content="#0d1240">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Borda Tudo">
+<meta property="og:title" content="Busca — Borda Tudo">
+<meta property="og:description" content="Procure por tipo de bordado, peça ou material.">
+<!-- A miniatura usa o logotipo ORIGINAL, de fundo claro. O Google e o WhatsApp
+     mostram a imagem sobre fundo branco, e a versão recortada perderia o
+     contorno claro da arte. -->
+<meta property="og:image" content="https://bordatudo.com/assets/img/logo.png">
+<meta property="og:image:width" content="657">
+<meta property="og:image:height" content="481">
+<meta property="og:locale" content="pt_BR">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/assets/img/logo.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<!-- Liga as animacoes de entrada. Sem esta linha o `.surge` nunca fica
+     invisivel, e a pagina funciona igual, so que sem transicao. E de
+     proposito: conteudo nao pode depender de script para aparecer. -->
+<script>document.documentElement.classList.add("js")</script>
+<link rel="stylesheet" href="/assets/css/styles.css?v=1.0.1">
+
+</head>
+<body>
+<a class="pular" href="#conteudo">Pular para o conteúdo</a>
+
+<header class="topo" id="topo">
+  <div class="topo__interno">
+    <a class="marca" href="/" aria-label="Borda Tudo — página inicial">
+      <img src="/assets/img/logo-transparente.png" alt="Borda Tudo — Bordados Computadorizados" width="657" height="481">
+    </a>
+    <nav class="nav" id="nav" aria-label="Principal">
+      <a href="/servicos/">Serviços</a>
+      <a href="/vitrine/">Vitrine</a>
+      <a href="/empresa/">A empresa</a>
+      <a href="/#duvidas">Dúvidas</a>
+      <a href="/orcamento/">Orçamento</a>
+    </nav>
+    <div class="topo__acoes">
+      <a class="botao botao--principal" href="/orcamento/">Pedir orçamento</a>
+      <button class="menu-botao" id="menu-botao" type="button" aria-expanded="false" aria-controls="nav" aria-label="Abrir menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="conteudo">
+<section class="heroi tecido--escuro" style="padding-bottom:clamp(2rem,4vw,3rem)">
+  <svg class="fio fio--claro" viewBox="0 0 1440 320" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M-40 250 C 300 250, 420 60, 760 110 S 1180 260, 1480 150"/>
+  </svg>
+  <div class="envolve" style="position:relative;z-index:2">
+    <p class="secao__rotulo" style="color:var(--linha-viva)">Busca</p>
+    <h1 class="secao__titulo">O que você procura?</h1>
+    <p class="heroi__lead">Digite abaixo: filtra serviços, peças da vitrine e dúvidas ao mesmo tempo.</p>
+  </div>
+</section>
+
+<section class="secao tecido">
+  <div class="envolve">
+    <div class="form" style="max-width:520px;margin-bottom:var(--e7)">
+      <div>
+        <label for="campo-busca">Buscar</label>
+        <input id="campo-busca" type="search" placeholder="boné, jeans, etiqueta, prazo…" autocomplete="off">
+      </div>
+    </div>
+    <p id="busca-vazia" hidden class="secao__lead">Nada encontrado com esse termo. Tente uma palavra mais curta.</p>
+    <div class="grade"><!--#SERVICOS-->
+      <article class="cartao surge">
+        <div class="cartao__icone"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20 20 4M8 20l12-12M4 12l8-8" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></div>
+        <h3 class="cartao__titulo">Ponto cheio (cetim)</h3>
+        <p class="cartao__texto">O acabamento brilhante clássico. Cobre a área com linha lado a lado e é o que dá o relevo de logotipo bordado.</p>
+        <dl class="ficha">
+          <div><dt>Aplicação</dt><dd>Logotipo, nome, contorno de letra</dd></div>
+          <div><dt>Material</dt><dd>Malha, jeans, brim, sarja</dd></div>
+          <div><dt>Limite</dt><dd>Traço abaixo de 1 mm fecha e some</dd></div>
+        </dl>
+      </article>
+      <article class="cartao surge">
+        <div class="cartao__icone"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18M3 12h18M3 17h18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M7 3v18M12 3v18M17 3v18" stroke="currentColor" stroke-width="1.1" opacity=".45"/></svg></div>
+        <h3 class="cartao__titulo">Ponto cheio texturizado</h3>
+        <p class="cartao__texto">Preenchimento de área grande com direção programada. Não enruga a peça porque distribui a tensão.</p>
+        <dl class="ficha">
+          <div><dt>Aplicação</dt><dd>Brasão, escudo, área fechada</dd></div>
+          <div><dt>Material</dt><dd>Jeans, brim, lona</dd></div>
+          <div><dt>Limite</dt><dd>Área muito grande endurece a peça</dd></div>
+        </dl>
+      </article>
+      <article class="cartao surge">
+        <div class="cartao__icone"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9l9-6 9 6-9 6z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/><path d="M3 15l9 6 9-6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/></svg></div>
+        <h3 class="cartao__titulo">Matelassê</h3>
+        <p class="cartao__texto">Costura decorativa em linhas paralelas ou losango, que dá volume ao tecido.</p>
+        <dl class="ficha">
+          <div><dt>Aplicação</dt><dd>Jaqueta, colete, bolsa</dd></div>
+          <div><dt>Material</dt><dd>Jeans, nylon, tecido acolchoado</dd></div>
+          <div><dt>Limite</dt><dd>Precisa de manta ou forro por baixo</dd></div>
+        </dl>
+      </article>
+      <article class="cartao surge">
+        <div class="cartao__icone"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15a8 8 0 0116 0z" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M4 15h17a2 2 0 01-2 2H4z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/></svg></div>
+        <h3 class="cartao__titulo">Bordado em boné e sarja</h3>
+        <p class="cartao__texto">Bordado em peça pronta, no bastidor próprio de boné, sem abrir a costura.</p>
+        <dl class="ficha">
+          <div><dt>Aplicação</dt><dd>Boné, viseira, jaleco, avental</dd></div>
+          <div><dt>Material</dt><dd>Sarja, brim, algodão</dd></div>
+          <div><dt>Limite</dt><dd>Frente estruturada limita altura do desenho</dd></div>
+        </dl>
+      </article>
+      <article class="cartao surge">
+        <div class="cartao__icone"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8a2 2 0 012-2h8l8 8-8 8-8-8z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/><circle cx="8" cy="11" r="1.4" fill="currentColor"/></svg></div>
+        <h3 class="cartao__titulo">Etiqueta e patch bordado</h3>
+        <p class="cartao__texto">Bordado feito em base própria, com acabamento de borda, para aplicar depois.</p>
+        <dl class="ficha">
+          <div><dt>Aplicação</dt><dd>Etiqueta de marca, patch, emblema</dd></div>
+          <div><dt>Material</dt><dd>Twill, feltro, base termocolante</dd></div>
+          <div><dt>Limite</dt><dd>Aplicação com calor exige tecido compatível</dd></div>
+        </dl>
+      </article>
+      <article class="cartao surge">
+        <div class="cartao__icone"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V6l7 9 7-9v13" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3 class="cartao__titulo">Monograma e personalização</h3>
+        <p class="cartao__texto">Peça avulsa, nome ou inicial, com escolha de fonte e cor de linha.</p>
+        <dl class="ficha">
+          <div><dt>Aplicação</dt><dd>Toalha, roupão, enxoval, presente</dd></div>
+          <div><dt>Material</dt><dd>Felpa, algodão, linho</dd></div>
+          <div><dt>Limite</dt><dd>Felpa alta pede ponto com base</dd></div>
+        </dl>
+      </article>
+      <article class="cartao surge">
+        <div class="cartao__icone"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h7l5 5v13H6z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/><path d="M13 3v5h5" stroke="currentColor" stroke-width="1.7" fill="none"/></svg></div>
+        <h3 class="cartao__titulo">Digitalização de arte</h3>
+        <p class="cartao__texto">Transformamos seu logotipo em programa de bordado. O arquivo fica guardado para as repetições.</p>
+        <dl class="ficha">
+          <div><dt>Aplicação</dt><dd>Qualquer arte que vá virar bordado</dd></div>
+          <div><dt>Material</dt><dd>—</dd></div>
+          <div><dt>Limite</dt><dd>Arte muito detalhada precisa de simplificação</dd></div>
+        </dl>
+      </article>
+      <article class="cartao surge">
+        <div class="cartao__icone"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8l8-4 8 4-8 4z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/><path d="M4 12l8 4 8-4M4 16l8 4 8-4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/></svg></div>
+        <h3 class="cartao__titulo">Bordado em lote para confecção</h3>
+        <p class="cartao__texto">Produção em escala com amostra aprovada, prazo por escrito e conferência peça a peça.</p>
+        <dl class="ficha">
+          <div><dt>Aplicação</dt><dd>Coleção, uniforme, lote de loja</dd></div>
+          <div><dt>Material</dt><dd>O tecido do seu lote</dd></div>
+          <div><dt>Limite</dt><dd>Volume mínimo combinado por proposta</dd></div>
+        </dl>
+      </article><!--/SERVICOS--></div>
+    <div style="margin-top:var(--e7)"><!--#VITRINE_TUDO--><div class="filtros" role="group" aria-label="Filtrar por categoria">
+      <button class="filtro" type="button" data-filtro="" aria-pressed="true">Tudo</button>
+      <button class="filtro" type="button" data-filtro="Peça avulsa" aria-pressed="false">Peça avulsa</button><button class="filtro" type="button" data-filtro="Boné" aria-pressed="false">Boné</button><button class="filtro" type="button" data-filtro="Produção" aria-pressed="false">Produção</button><button class="filtro" type="button" data-filtro="Cores" aria-pressed="false">Cores</button><button class="filtro" type="button" data-filtro="Detalhe" aria-pressed="false">Detalhe</button>
+    </div><div class="grade">
+      <article class="peca surge" data-categoria="Peça avulsa">
+        <div class="peca__foto">
+          <img src="/assets/img/vitrine/jeans-bolso-flor.jpg" alt="Flor bordada em ponto cheio no bolso de uma peça jeans preta" loading="lazy" decoding="async" width="600" height="600">
+          <span class="peca__etiqueta">Peça avulsa</span>
+        </div>
+        <div class="peca__corpo">
+          <h3 class="peca__titulo">Floral em bolso de jeans</h3>
+          <p class="peca__meta">Ponto cheio · Jeans</p>
+          <div class="peca__acao">
+            <a class="botao botao--contorno" href="https://wa.me/5581997740959?text=Ol%C3%A1!%20Vi%20%22Floral%20em%20bolso%20de%20jeans%22%20no%20site%20e%20quero%20um%20or%C3%A7amento%20de%20algo%20parecido." target="_blank" rel="noopener">Quero parecido</a>
+          </div>
+        </div>
+      </article>
+      <article class="peca surge" data-categoria="Boné">
+        <div class="peca__foto">
+          <img src="/assets/img/vitrine/bone-mascote.jpg" alt="Boné branco com mascote bordado na frente" loading="lazy" decoding="async" width="600" height="600">
+          <span class="peca__etiqueta">Boné</span>
+        </div>
+        <div class="peca__corpo">
+          <h3 class="peca__titulo">Mascote em boné</h3>
+          <p class="peca__meta">Ponto cheio com contorno · Sarja</p>
+          <div class="peca__acao">
+            <a class="botao botao--contorno" href="https://wa.me/5581997740959?text=Ol%C3%A1!%20Vi%20%22Mascote%20em%20bon%C3%A9%22%20no%20site%20e%20quero%20um%20or%C3%A7amento%20de%20algo%20parecido." target="_blank" rel="noopener">Quero parecido</a>
+          </div>
+        </div>
+      </article>
+      <article class="peca surge" data-categoria="Produção">
+        <div class="peca__foto">
+          <img src="/assets/img/vitrine/guias-linha.jpg" alt="Guias de linha de uma máquina de bordar de múltiplas cabeças" loading="lazy" decoding="async" width="600" height="600">
+          <span class="peca__etiqueta">Produção</span>
+        </div>
+        <div class="peca__corpo">
+          <h3 class="peca__titulo">Troca de cor programada</h3>
+          <p class="peca__meta">Multi-cabeças · —</p>
+          <div class="peca__acao">
+            <a class="botao botao--contorno" href="https://wa.me/5581997740959?text=Ol%C3%A1!%20Vi%20%22Troca%20de%20cor%20programada%22%20no%20site%20e%20quero%20um%20or%C3%A7amento%20de%20algo%20parecido." target="_blank" rel="noopener">Quero parecido</a>
+          </div>
+        </div>
+      </article>
+      <article class="peca surge" data-categoria="Produção">
+        <div class="peca__foto">
+          <img src="/assets/img/vitrine/cones-prateleira.jpg" alt="Cones de linha na gaiola de uma máquina industrial" loading="lazy" decoding="async" width="600" height="600">
+          <span class="peca__etiqueta">Produção</span>
+        </div>
+        <div class="peca__corpo">
+          <h3 class="peca__titulo">Gaiola pronta para o lote</h3>
+          <p class="peca__meta">Multi-cabeças · —</p>
+          <div class="peca__acao">
+            <a class="botao botao--contorno" href="https://wa.me/5581997740959?text=Ol%C3%A1!%20Vi%20%22Gaiola%20pronta%20para%20o%20lote%22%20no%20site%20e%20quero%20um%20or%C3%A7amento%20de%20algo%20parecido." target="_blank" rel="noopener">Quero parecido</a>
+          </div>
+        </div>
+      </article>
+      <article class="peca surge" data-categoria="Cores">
+        <div class="peca__foto">
+          <img src="/assets/img/vitrine/linhas-cores.jpg" alt="Parede de carretéis de linha em várias cores" loading="lazy" decoding="async" width="600" height="600">
+          <span class="peca__etiqueta">Cores</span>
+        </div>
+        <div class="peca__corpo">
+          <h3 class="peca__titulo">Cartela de cores</h3>
+          <p class="peca__meta">— · Linha de bordado</p>
+          <div class="peca__acao">
+            <a class="botao botao--contorno" href="https://wa.me/5581997740959?text=Ol%C3%A1!%20Vi%20%22Cartela%20de%20cores%22%20no%20site%20e%20quero%20um%20or%C3%A7amento%20de%20algo%20parecido." target="_blank" rel="noopener">Quero parecido</a>
+          </div>
+        </div>
+      </article>
+      <article class="peca surge" data-categoria="Detalhe">
+        <div class="peca__foto">
+          <img src="/assets/img/vitrine/calcador.jpg" alt="Calcador de máquina sobre tecido escuro, com a linha passando" loading="lazy" decoding="async" width="600" height="600">
+          <span class="peca__etiqueta">Detalhe</span>
+        </div>
+        <div class="peca__corpo">
+          <h3 class="peca__titulo">Ponto em tecido escuro</h3>
+          <p class="peca__meta">Ponto corrido · Algodão</p>
+          <div class="peca__acao">
+            <a class="botao botao--contorno" href="https://wa.me/5581997740959?text=Ol%C3%A1!%20Vi%20%22Ponto%20em%20tecido%20escuro%22%20no%20site%20e%20quero%20um%20or%C3%A7amento%20de%20algo%20parecido." target="_blank" rel="noopener">Quero parecido</a>
+          </div>
+        </div>
+      </article></div><!--/VITRINE_TUDO--></div>
+  </div>
+</section>
+
+</main>
+
+<!-- ====================================================== RODAPÉ ======== -->
+<footer class="rodape">
+  <div class="envolve">
+    <div class="rodape__grade">
+      <div class="rodape__marca">
+        <img src="/assets/img/logo-transparente.png" alt="Borda Tudo" width="657" height="481" loading="lazy">
+        <p><!--#RODAPE_TEXTO-->Bordados computadorizados para confecção e peça avulsa. Caruaru e região.<!--/RODAPE_TEXTO--></p>
+      </div>
+      <div>
+        <h3>Serviços</h3>
+        <ul>
+          <li><a href="/servicos/">Todos os tipos de bordado</a></li>
+          <li><a href="/servicos/#lote">Bordado em lote</a></li>
+          <li><a href="/servicos/#arte">Digitalização de arte</a></li>
+          <li><a href="/vitrine/">Vitrine de trabalhos</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>A empresa</h3>
+        <ul>
+          <li><a href="/empresa/">Quem somos</a></li>
+          <li><a href="/#como">Como funciona</a></li>
+          <li><a href="/#duvidas">Dúvidas frequentes</a></li>
+          <li><a href="/privacidade/">Privacidade</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Contato</h3>
+        <ul>
+          <li><a href="https://wa.me/5581997740959?text=Ol%C3%A1!%20Quero%20um%20or%C3%A7amento%20de%20bordado." target="_blank" rel="noopener">WhatsApp <!--#ZAP_NUMERO-->(81) 99774-0959<!--/ZAP_NUMERO--></a></li>
+          <li><a href="https://www.instagram.com/bordatudo" target="_blank" rel="noopener">Instagram</a></li>
+          <li><!--#ENDERECO-->Caruaru, Pernambuco<!--/ENDERECO--></li>
+          <li><!--#HORARIO-->Segunda a sexta, 8h às 18h · Sábado, 8h às 12h<!--/HORARIO--></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="rodape__base">
+      <div>
+        <span>© <!--#ANO-->2026<!--/ANO--> Borda Tudo · CNPJ <!--#CNPJ-->0<!--/CNPJ--></span>
+      </div>
+      <a class="dev-credit" href="https://luizaugust.me" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 20V8l8-5 8 5v12" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M9 20v-6h6v6" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+        <span>Desenvolvido por <b>LA Software House</b></span>
+      </a>
+    </div>
+  </div>
+</footer>
+
+<!-- ================================================ AVISO DE COOKIE ===== -->
+<!-- A contagem de acesso só liga DEPOIS do aceite. Este aviso é o
+     interruptor, não um enfeite jurídico. -->
+<div class="aviso-lgpd" id="aviso-lgpd" role="dialog" aria-live="polite" aria-label="Aviso de privacidade" hidden>
+  <p>Usamos uma contagem simples de visitas para saber quantas pessoas acessam o site.
+     Nenhum dado seu é vendido ou compartilhado. <a href="/privacidade/">Como tratamos seus dados</a>.</p>
+  <div class="grupo-botoes">
+    <button class="botao botao--principal" type="button" data-lgpd="aceitar">Aceitar</button>
+    <button class="botao botao--contorno" type="button" data-lgpd="recusar">Só o necessário</button>
+  </div>
+</div>
+
+<script src="/assets/js/main.js?v=1.0.1" defer></script>
+</body>
+</html>

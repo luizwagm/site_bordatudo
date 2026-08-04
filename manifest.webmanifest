@@ -1,0 +1,13 @@
+{
+  "name": "Borda Tudo — Bordados Computadorizados",
+  "short_name": "Borda Tudo",
+  "description": "Bordado computadorizado para confecção em Caruaru e Agreste.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f5f2",
+  "theme_color": "#0d1240",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "/assets/img/logo.png", "sizes": "657x481", "type": "image/png" }
+  ]
+}

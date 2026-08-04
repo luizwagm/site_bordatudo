@@ -1,0 +1,227 @@
+<!-- GERADO por src/gerar-moldes.cjs a partir do cabeçalho e rodapé da home.
+     Pode editar à mão daqui em diante — mas rodar o gerador de novo
+     sobrescreve. Mexeu no cabeçalho ou no rodapé? Mexa na home e gere de novo. -->
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pedir orçamento — Borda Tudo · Caruaru-PE</title>
+<meta name="description" content="Monte seu pedido de orçamento de bordado e envie direto pelo WhatsApp. Nada fica gravado no site.">
+<link rel="canonical" href="https://bordatudo.com/orcamento/">
+<meta name="theme-color" content="#0d1240">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Borda Tudo">
+<meta property="og:title" content="Pedir orçamento — Borda Tudo · Caruaru-PE">
+<meta property="og:description" content="Monte seu pedido de orçamento de bordado e envie direto pelo WhatsApp. Nada fica gravado no site.">
+<!-- A miniatura usa o logotipo ORIGINAL, de fundo claro. O Google e o WhatsApp
+     mostram a imagem sobre fundo branco, e a versão recortada perderia o
+     contorno claro da arte. -->
+<meta property="og:image" content="https://bordatudo.com/assets/img/logo.png">
+<meta property="og:image:width" content="657">
+<meta property="og:image:height" content="481">
+<meta property="og:locale" content="pt_BR">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/assets/img/logo.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<!-- Liga as animacoes de entrada. Sem esta linha o `.surge` nunca fica
+     invisivel, e a pagina funciona igual, so que sem transicao. E de
+     proposito: conteudo nao pode depender de script para aparecer. -->
+<script>document.documentElement.classList.add("js")</script>
+<link rel="stylesheet" href="/assets/css/styles.css?v=1.0.1">
+
+</head>
+<body>
+<a class="pular" href="#conteudo">Pular para o conteúdo</a>
+
+<header class="topo" id="topo">
+  <div class="topo__interno">
+    <a class="marca" href="/" aria-label="Borda Tudo — página inicial">
+      <img src="/assets/img/logo-transparente.png" alt="Borda Tudo — Bordados Computadorizados" width="657" height="481">
+    </a>
+    <nav class="nav" id="nav" aria-label="Principal">
+      <a href="/servicos/">Serviços</a>
+      <a href="/vitrine/">Vitrine</a>
+      <a href="/empresa/">A empresa</a>
+      <a href="/#duvidas">Dúvidas</a>
+      <a href="/orcamento/" aria-current="page">Orçamento</a>
+    </nav>
+    <div class="topo__acoes">
+      <a class="botao botao--principal" href="/orcamento/">Pedir orçamento</a>
+      <button class="menu-botao" id="menu-botao" type="button" aria-expanded="false" aria-controls="nav" aria-label="Abrir menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="conteudo">
+<section class="heroi tecido--escuro" style="padding-bottom:clamp(2rem,4vw,3rem)">
+  <svg class="fio fio--claro" viewBox="0 0 1440 320" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M-40 250 C 300 250, 420 60, 760 110 S 1180 260, 1480 150"/>
+  </svg>
+  <div class="envolve" style="position:relative;z-index:2">
+    <p class="secao__rotulo" style="color:var(--linha-viva)"><!--#SEC_ORCA_ROTULO-->Orçamento<!--/SEC_ORCA_ROTULO--></p>
+    <h1 class="secao__titulo"><!--#SEC_ORCA_TITULO-->Diga o que precisa bordar<!--/SEC_ORCA_TITULO--></h1>
+    <p class="heroi__lead"><!--#SEC_ORCA_LEAD-->Preencha e o pedido chega pronto no WhatsApp. Nada fica gravado neste site.<!--/SEC_ORCA_LEAD--></p>
+  </div>
+</section>
+
+<section class="secao tecido">
+  <div class="envolve envolve--estreito">
+    <!-- SEM ENVIO PARA O SERVIDOR, DE PROPÓSITO.
+         O formulário monta a mensagem e abre a conversa. Não existe banco de
+         leads: nenhum dado pessoal fica parado aqui, e com ele some toda a
+         obrigação de guarda, prazo de descarte e resposta a pedido de exclusão
+         que viria junto. Quem recebe o dado é o WhatsApp da empresa, onde o
+         cliente já ia falar de qualquer jeito. -->
+    <form class="form" id="form-orcamento" data-zap="5581997740959" novalidate>
+      <div class="form__linha form__linha--2">
+        <div><label for="f-nome">Seu nome</label><input id="f-nome" name="nome" required autocomplete="name"></div>
+        <div><label for="f-empresa">Empresa (se houver)</label><input id="f-empresa" name="empresa" autocomplete="organization"></div>
+      </div>
+      <div class="form__linha form__linha--2">
+        <div><label for="f-telefone">Telefone</label><input id="f-telefone" name="telefone" inputmode="tel" autocomplete="tel"></div>
+        <div>
+          <label for="f-tipo">Tipo de bordado</label>
+          <select id="f-tipo" name="tipo">
+            <option value="">Não sei ainda</option>
+            <option>Logotipo em peça</option>
+            <option>Etiqueta ou patch</option>
+            <option>Boné</option>
+            <option>Uniforme</option>
+            <option>Monograma / peça avulsa</option>
+            <option>Matelassê</option>
+            <option>Lote para confecção</option>
+          </select>
+        </div>
+      </div>
+      <div class="form__linha form__linha--2">
+        <div><label for="f-peca">Qual peça</label><input id="f-peca" name="peca" placeholder="camisa, jaqueta, boné, toalha…"></div>
+        <div><label for="f-tecido">Tecido</label><input id="f-tecido" name="tecido" placeholder="malha, jeans, sarja…"></div>
+      </div>
+      <div class="form__linha form__linha--2">
+        <div><label for="f-quantidade">Quantidade</label><input id="f-quantidade" name="quantidade" inputmode="numeric" placeholder="10, 500, 2000…"></div>
+        <div><label for="f-prazo">Prazo desejado</label><input id="f-prazo" name="prazo" placeholder="para quando você precisa"></div>
+      </div>
+      <div>
+        <label for="f-detalhes">Detalhes</label>
+        <textarea id="f-detalhes" name="detalhes" placeholder="Descreva a arte, as cores, onde vai o bordado. Se tiver o arquivo, é só mandar na conversa depois."></textarea>
+      </div>
+      <div class="grupo-botoes">
+        <button class="botao botao--zap" type="submit"><!--#SEC_ORCA_BOTAO-->Enviar pelo WhatsApp<!--/SEC_ORCA_BOTAO--></button>
+      </div>
+      <p class="form__ajuda">
+        Ao enviar, abrimos o WhatsApp com a mensagem montada — você confere antes de mandar.
+        Nada é gravado neste site. <a href="/privacidade/">Como tratamos seus dados</a>.
+      </p>
+    </form>
+  </div>
+</section>
+
+<section class="secao secao--macia">
+  <div class="envolve envolve--estreito">
+    <div class="secao__cabeca">
+      <p class="secao__rotulo"><!--#SEC_DUVIDAS_ROTULO-->Dúvidas<!--/SEC_DUVIDAS_ROTULO--></p>
+      <h2 class="secao__titulo"><!--#SEC_DUVIDAS_TITULO-->O que perguntam antes de fechar<!--/SEC_DUVIDAS_TITULO--></h2>
+    </div>
+    <!--#DUVIDAS-->
+      <details class="duvida">
+        <summary>Qual a quantidade mínima para confecção?</summary>
+        <div class="duvida__corpo rico"><p>Depende do tipo de bordado e do tamanho da arte. Mande o desenho e a quantidade que você precisa — respondemos com o mínimo e o valor por peça na mesma conversa.</p></div>
+      </details>
+      <details class="duvida">
+        <summary>Vocês bordam em peça que eu mesmo levo?</summary>
+        <div class="duvida__corpo rico"><p>Sim. Bordamos na sua peça, na peça do seu fornecedor ou em base nossa. Só pedimos que a peça chegue lavada e sem passar, porque goma e amaciante mudam o comportamento do tecido no bastidor.</p></div>
+      </details>
+      <details class="duvida">
+        <summary>Preciso ter o logotipo em vetor?</summary>
+        <div class="duvida__corpo rico"><p>Ajuda, mas não é obrigatório. Trabalhamos a partir de PNG, PDF, JPG e até foto de uma peça antiga. Se a arte precisar de ajuste para virar ponto, a gente avisa antes de começar.</p></div>
+      </details>
+      <details class="duvida">
+        <summary>Quanto tempo leva?</summary>
+        <div class="duvida__corpo rico"><p>A digitalização da arte sai em poucos dias úteis; a produção depende do tamanho do lote. O prazo vai por escrito na proposta, e se algo mudar você fica sabendo antes do vencimento, não depois.</p></div>
+      </details>
+      <details class="duvida">
+        <summary>O bordado desbota ou solta na lavagem?</summary>
+        <div class="duvida__corpo rico"><p>Linha de bordado é feita para lavagem industrial. O que causa problema quase sempre é tecido inadequado ou entretela errada — por isso a amostra é bordada no tecido do seu lote antes de a produção começar.</p></div>
+      </details>
+      <details class="duvida">
+        <summary>Vocês entregam fora de Caruaru?</summary>
+        <div class="duvida__corpo rico"><p>Sim, atendemos toda a região do Agreste. Combinamos envio ou retirada conforme o tamanho do lote.</p></div>
+      </details><!--/DUVIDAS-->
+  </div>
+</section>
+
+</main>
+
+<!-- ====================================================== RODAPÉ ======== -->
+<footer class="rodape">
+  <div class="envolve">
+    <div class="rodape__grade">
+      <div class="rodape__marca">
+        <img src="/assets/img/logo-transparente.png" alt="Borda Tudo" width="657" height="481" loading="lazy">
+        <p><!--#RODAPE_TEXTO-->Bordados computadorizados para confecção e peça avulsa. Caruaru e região.<!--/RODAPE_TEXTO--></p>
+      </div>
+      <div>
+        <h3>Serviços</h3>
+        <ul>
+          <li><a href="/servicos/">Todos os tipos de bordado</a></li>
+          <li><a href="/servicos/#lote">Bordado em lote</a></li>
+          <li><a href="/servicos/#arte">Digitalização de arte</a></li>
+          <li><a href="/vitrine/">Vitrine de trabalhos</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>A empresa</h3>
+        <ul>
+          <li><a href="/empresa/">Quem somos</a></li>
+          <li><a href="/#como">Como funciona</a></li>
+          <li><a href="/#duvidas">Dúvidas frequentes</a></li>
+          <li><a href="/privacidade/">Privacidade</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Contato</h3>
+        <ul>
+          <li><a href="https://wa.me/5581997740959?text=Ol%C3%A1!%20Quero%20um%20or%C3%A7amento%20de%20bordado." target="_blank" rel="noopener">WhatsApp <!--#ZAP_NUMERO-->(81) 99774-0959<!--/ZAP_NUMERO--></a></li>
+          <li><a href="https://www.instagram.com/bordatudo" target="_blank" rel="noopener">Instagram</a></li>
+          <li><!--#ENDERECO-->Caruaru, Pernambuco<!--/ENDERECO--></li>
+          <li><!--#HORARIO-->Segunda a sexta, 8h às 18h · Sábado, 8h às 12h<!--/HORARIO--></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="rodape__base">
+      <div>
+        <span>© <!--#ANO-->2026<!--/ANO--> Borda Tudo · CNPJ <!--#CNPJ-->0<!--/CNPJ--></span>
+      </div>
+      <a class="dev-credit" href="https://luizaugust.me" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 20V8l8-5 8 5v12" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M9 20v-6h6v6" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+        <span>Desenvolvido por <b>LA Software House</b></span>
+      </a>
+    </div>
+  </div>
+</footer>
+
+<!-- ================================================ AVISO DE COOKIE ===== -->
+<!-- A contagem de acesso só liga DEPOIS do aceite. Este aviso é o
+     interruptor, não um enfeite jurídico. -->
+<div class="aviso-lgpd" id="aviso-lgpd" role="dialog" aria-live="polite" aria-label="Aviso de privacidade" hidden>
+  <p>Usamos uma contagem simples de visitas para saber quantas pessoas acessam o site.
+     Nenhum dado seu é vendido ou compartilhado. <a href="/privacidade/">Como tratamos seus dados</a>.</p>
+  <div class="grupo-botoes">
+    <button class="botao botao--principal" type="button" data-lgpd="aceitar">Aceitar</button>
+    <button class="botao botao--contorno" type="button" data-lgpd="recusar">Só o necessário</button>
+  </div>
+</div>
+
+<script src="/assets/js/main.js?v=1.0.1" defer></script>
+</body>
+</html>

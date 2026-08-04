@@ -1,0 +1,174 @@
+<!-- GERADO por src/gerar-moldes.cjs a partir do cabeçalho e rodapé da home.
+     Pode editar à mão daqui em diante — mas rodar o gerador de novo
+     sobrescreve. Mexeu no cabeçalho ou no rodapé? Mexa na home e gere de novo. -->
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacidade — Borda Tudo</title>
+<meta name="description" content="Como a Borda Tudo trata seus dados: o que é coletado, por quanto tempo e como pedir exclusão.">
+<link rel="canonical" href="https://bordatudo.com/privacidade/">
+<meta name="theme-color" content="#0d1240">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Borda Tudo">
+<meta property="og:title" content="Privacidade — Borda Tudo">
+<meta property="og:description" content="Como a Borda Tudo trata seus dados: o que é coletado, por quanto tempo e como pedir exclusão.">
+<!-- A miniatura usa o logotipo ORIGINAL, de fundo claro. O Google e o WhatsApp
+     mostram a imagem sobre fundo branco, e a versão recortada perderia o
+     contorno claro da arte. -->
+<meta property="og:image" content="https://bordatudo.com/assets/img/logo.png">
+<meta property="og:image:width" content="657">
+<meta property="og:image:height" content="481">
+<meta property="og:locale" content="pt_BR">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/assets/img/logo.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<!-- Liga as animacoes de entrada. Sem esta linha o `.surge` nunca fica
+     invisivel, e a pagina funciona igual, so que sem transicao. E de
+     proposito: conteudo nao pode depender de script para aparecer. -->
+<script>document.documentElement.classList.add("js")</script>
+<link rel="stylesheet" href="/assets/css/styles.css">
+
+</head>
+<body>
+<a class="pular" href="#conteudo">Pular para o conteúdo</a>
+
+<header class="topo" id="topo">
+  <div class="topo__interno">
+    <a class="marca" href="/" aria-label="Borda Tudo — página inicial">
+      <img src="/assets/img/logo-transparente.png" alt="Borda Tudo — Bordados Computadorizados" width="657" height="481">
+    </a>
+    <nav class="nav" id="nav" aria-label="Principal">
+      <a href="/servicos/">Serviços</a>
+      <a href="/vitrine/">Vitrine</a>
+      <a href="/empresa/">A empresa</a>
+      <a href="/#duvidas">Dúvidas</a>
+      <a href="/orcamento/">Orçamento</a>
+    </nav>
+    <div class="topo__acoes">
+      <a class="botao botao--principal" href="/orcamento/">Pedir orçamento</a>
+      <button class="menu-botao" id="menu-botao" type="button" aria-expanded="false" aria-controls="nav" aria-label="Abrir menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="conteudo">
+<section class="heroi tecido--escuro" style="padding-bottom:clamp(2rem,4vw,3rem)">
+  <svg class="fio fio--claro" viewBox="0 0 1440 320" preserveAspectRatio="none" aria-hidden="true">
+    <path d="M-40 250 C 300 250, 420 60, 760 110 S 1180 260, 1480 150"/>
+  </svg>
+  <div class="envolve" style="position:relative;z-index:2">
+    <p class="secao__rotulo" style="color:var(--linha-viva)">Privacidade</p>
+    <h1 class="secao__titulo">Como tratamos seus dados</h1>
+    <p class="heroi__lead">Em resumo: quase nada é coletado, e o pouco que é serve só para contar quantas pessoas visitam o site.</p>
+  </div>
+</section>
+
+<section class="secao tecido">
+  <div class="envolve envolve--estreito rico">
+    <h2>O que este site coleta</h2>
+    <p>Uma contagem diária de visitas, e só depois de você aceitar o aviso. Para não contar
+       a mesma pessoa duas vezes no dia, o endereço de internet é transformado em um código
+       irreversível junto com uma chave desta instalação — o endereço em si <b>nunca é gravado</b>,
+       e do código não é possível voltar ao endereço.</p>
+
+    <h2>O que este site NÃO faz</h2>
+    <ul>
+      <li>Não guarda formulário. O pedido de orçamento abre o WhatsApp; nada fica no servidor.</li>
+      <li>Não usa mapa embutido nem vídeo de terceiro, que carregariam rastreador antes do seu aceite.</li>
+      <li>Não vende, aluga nem compartilha dado nenhum.</li>
+      <li>Não usa fonte de letra hospedada em outro domínio.</li>
+    </ul>
+
+    <h2>WhatsApp e Instagram</h2>
+    <p>Ao clicar nos nossos links, você sai deste site e passa a ser tratado pela política de
+       privacidade dessas plataformas, que não controlamos.</p>
+
+    <h2>Seus direitos</h2>
+    <p>Pela Lei Geral de Proteção de Dados você pode pedir confirmação, acesso, correção ou
+       exclusão dos seus dados. Como aqui não guardamos cadastro, na prática o pedido se
+       resolve na conversa: fale com a gente pelo WhatsApp
+       <a href="{{ZAP_ORCAMENTO}}" target="_blank" rel="noopener">{{ZAP_NUMERO}}</a>.</p>
+
+    <h2>Mudanças</h2>
+    <p>Se esta política mudar, a data abaixo muda junto.</p>
+    <p><b>Borda Tudo — Bordados Computadorizados</b><br>
+       CNPJ <!--#CNPJ--><!--/CNPJ--> · <!--#ENDERECO--><!--/ENDERECO--></p>
+  </div>
+</section>
+
+</main>
+
+<!-- ====================================================== RODAPÉ ======== -->
+<footer class="rodape">
+  <div class="envolve">
+    <div class="rodape__grade">
+      <div class="rodape__marca">
+        <img src="/assets/img/logo-transparente.png" alt="Borda Tudo" width="657" height="481" loading="lazy">
+        <p><!--#RODAPE_TEXTO--><!--/RODAPE_TEXTO--></p>
+      </div>
+      <div>
+        <h3>Serviços</h3>
+        <ul>
+          <li><a href="/servicos/">Todos os tipos de bordado</a></li>
+          <li><a href="/servicos/#lote">Bordado em lote</a></li>
+          <li><a href="/servicos/#arte">Digitalização de arte</a></li>
+          <li><a href="/vitrine/">Vitrine de trabalhos</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>A empresa</h3>
+        <ul>
+          <li><a href="/empresa/">Quem somos</a></li>
+          <li><a href="/#como">Como funciona</a></li>
+          <li><a href="/#duvidas">Dúvidas frequentes</a></li>
+          <li><a href="/privacidade/">Privacidade</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Contato</h3>
+        <ul>
+          <li><a href="{{ZAP_ORCAMENTO}}" target="_blank" rel="noopener">WhatsApp <!--#ZAP_NUMERO--><!--/ZAP_NUMERO--></a></li>
+          <li><a href="{{INSTAGRAM}}" target="_blank" rel="noopener">Instagram</a></li>
+          <li><!--#ENDERECO--><!--/ENDERECO--></li>
+          <li><!--#HORARIO--><!--/HORARIO--></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="rodape__base">
+      <div>
+        <span>© <!--#ANO--><!--/ANO--> Borda Tudo · CNPJ <!--#CNPJ--><!--/CNPJ--></span>
+      </div>
+      <a class="dev-credit" href="https://luizaugust.me" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 20V8l8-5 8 5v12" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+          <path d="M9 20v-6h6v6" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+        <span>Desenvolvido por <b>LA Software House</b></span>
+      </a>
+    </div>
+  </div>
+</footer>
+
+<!-- ================================================ AVISO DE COOKIE ===== -->
+<!-- A contagem de acesso só liga DEPOIS do aceite. Este aviso é o
+     interruptor, não um enfeite jurídico. -->
+<div class="aviso-lgpd" id="aviso-lgpd" role="dialog" aria-live="polite" aria-label="Aviso de privacidade" hidden>
+  <p>Usamos uma contagem simples de visitas para saber quantas pessoas acessam o site.
+     Nenhum dado seu é vendido ou compartilhado. <a href="/privacidade/">Como tratamos seus dados</a>.</p>
+  <div class="grupo-botoes">
+    <button class="botao botao--principal" type="button" data-lgpd="aceitar">Aceitar</button>
+    <button class="botao botao--contorno" type="button" data-lgpd="recusar">Só o necessário</button>
+  </div>
+</div>
+
+<script src="/assets/js/main.js" defer></script>
+</body>
+</html>

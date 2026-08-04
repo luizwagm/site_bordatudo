@@ -1,0 +1,70 @@
+[Unit]
+# ==========================================================================
+#  MOLDE do serviço. Os campos __DESTINO__, __USUARIO__, __GRUPO__ e
+#  __PORTA__ são trocados pelo nginx/criar_site.sh na instalação, a partir do
+#  que foi passado na linha de comando.
+#
+#  Por que molde e não caminho gravado: o projeto mora em
+#  /var/www/projetos/Borda-Tudo hoje, mas o caminho, o dono e a porta são
+#  decisão de servidor, não de código. Gravá-los aqui criaria um segundo lugar
+#  dizendo onde o projeto está — e um deles ficaria para trás na primeira vez
+#  que algo mudasse.
+#
+#  Para instalar à mão (sem o criar_site.sh), troque os quatro campos:
+#      sed -e 's#__DESTINO__#/var/www/projetos/Borda-Tudo#g' \
+#          -e 's#__USUARIO__#deploy#g' -e 's#__GRUPO__#deploy#g' \
+#          -e 's#__PORTA__#5193#g' bordatudo.service \
+#        > /etc/systemd/system/bordatudo.service
+# ==========================================================================
+Description=Borda Tudo — Bordados Computadorizados
+Documentation=https://bordatudo.com
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USUARIO__
+Group=__GRUPO__
+WorkingDirectory=__DESTINO__
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+
+# Escuta SÓ no loopback: quem fala com a internet é o nginx. Sem isto a porta
+# ficaria exposta direto, contornando TLS, limites e cabeçalhos do proxy.
+Environment=HOST=127.0.0.1
+Environment=PORT=__PORTA__
+Environment=NODE_ENV=production
+
+# --- contenção do processo -------------------------------------------------
+# Se um dia alguém achar uma falha no app, isto limita o estrago: o serviço não
+# enxerga o resto do disco e não vira root.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+
+# NÃO ponha MemoryDenyWriteExecute aqui. Ele proíbe o processo de tornar
+# executável uma página de memória que ele mesmo escreveu — e é exatamente isso
+# que o V8 faz para compilar JavaScript. O Node não avisa: ele derruba o
+# processo com V8_Fatal em v8::base::OS::SetPermissions e o systemd registra
+# `status=5/TRAP`, `core-dump`. Pior, a queda não é na partida — vem quando o
+# compilador sobe a primeira função de nível, alguns segundos depois, o que
+# faz parecer erro de rede ou de banco. Custou a primeira subida deste site.
+
+# A única pasta gravável é a do projeto — o publish reescreve o HTML na raiz,
+# e banco, backups e fotos enviadas ficam dentro dela.
+ReadWritePaths=__DESTINO__
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bordatudo
+
+[Install]
+WantedBy=multi-user.target

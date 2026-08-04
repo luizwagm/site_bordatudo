@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Página não encontrada — Borda Tudo</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0d1240">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="stylesheet" href="/assets/css/styles.css">
+</head>
+<body>
+
+<!-- Página estática de propósito: ela precisa funcionar mesmo quando a
+     publicação falhou ou o banco está indisponível. Por isso não tem
+     marcador nenhum e não depende do servidor para nada além do CSS. -->
+
+<main class="heroi tecido--escuro" style="min-height:100dvh;display:grid;place-items:center;text-align:center;padding-block:var(--e8)">
+  <svg class="fio fio--claro bordando" viewBox="0 0 1440 400" preserveAspectRatio="none" aria-hidden="true"
+       style="--comprimento:0">
+    <path d="M-40 320 C 300 320, 420 80, 760 140 S 1180 330, 1480 190" style="stroke-dashoffset:0"/>
+  </svg>
+
+  <div class="envolve envolve--estreito" style="position:relative;z-index:2">
+    <p class="secao__rotulo" style="color:var(--linha-viva);justify-content:center">Erro 404</p>
+    <h1 class="heroi__titulo" style="font-size:var(--t-secao)">
+      Essa linha <mark>arrebentou</mark>.
+    </h1>
+    <p class="heroi__lead" style="margin-inline:auto">
+      A página que você procurou não existe mais, ou o endereço veio com um caractere trocado.
+      Recomeçamos daqui.
+    </p>
+    <div class="grupo-botoes" style="justify-content:center;margin-top:var(--e6)">
+      <a class="botao botao--principal" href="/">Voltar ao início</a>
+      <a class="botao botao--contorno" href="/vitrine/">Ver a vitrine</a>
+      <a class="botao botao--contorno" href="/busca/">Buscar</a>
+    </div>
+  </div>
+</main>
+
+</body>
+</html>

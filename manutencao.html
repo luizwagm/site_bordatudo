@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voltamos já — Borda Tudo</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0d1240">
+<link rel="icon" href="/favicon.ico" sizes="any">
+
+<!-- O ESTILO ESTÁ EMBUTIDO, E ISSO É INTENCIONAL.
+     Esta página aparece quando o site está fora do ar por manutenção — que é
+     exatamente a situação em que uma folha de estilo externa pode não vir. Uma
+     página de "voltamos já" sem estilo nenhum passa a impressão de site
+     quebrado, que é o oposto do que ela existe para dizer. -->
+<style>
+  :root { --tinta:#1e275f; --tinta-fundo:#0d1240; --linha-viva:#f86519; --algodao:#f7f5f2; }
+  * { box-sizing:border-box }
+  body {
+    margin:0; min-height:100dvh; display:grid; place-items:center; text-align:center;
+    padding:2rem;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    line-height:1.6;
+    color:#fff;
+    background:
+      repeating-linear-gradient(0deg, rgb(255 255 255 / .035) 0 1px, transparent 1px 3px),
+      repeating-linear-gradient(90deg, rgb(255 255 255 / .035) 0 1px, transparent 1px 3px),
+      linear-gradient(165deg, var(--tinta-fundo), var(--tinta));
+  }
+  .caixa { max-width:44rem }
+  .rotulo {
+    font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size:.78rem; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--linha-viva); margin:0 0 .75rem;
+  }
+  h1 { font-size:clamp(1.8rem, 1.2rem + 2.6vw, 3rem); line-height:1.08; letter-spacing:-.02em; margin:0 }
+  h1 mark { background:none; color:var(--linha-viva) }
+  p { color:rgb(255 255 255 / .82); margin:1.25rem 0 0 }
+  /* Costura: o mesmo ponto-corrente do site, aqui em duas linhas de CSS. */
+  .costura {
+    height:6px; border:0; margin:2rem auto 0; max-width:16rem;
+    background:
+      repeating-linear-gradient(90deg,#fff 0 14px,transparent 14px 20px) 0 0/20px 2px repeat-x,
+      repeating-linear-gradient(90deg,var(--linha-viva) 7px 21px,transparent 21px 27px) 0 4px/20px 2px repeat-x;
+    opacity:.45;
+  }
+  .zap {
+    display:inline-flex; align-items:center; justify-content:center;
+    margin-top:2rem; padding:.85rem 1.6rem; min-height:48px;
+    background:#128c7e; color:#fff; text-decoration:none;
+    border-radius:4px; font-weight:700; font-size:.9rem; letter-spacing:.03em;
+  }
+  .zap:hover { background:#0d7568 }
+</style>
+</head>
+<body>
+  <div class="caixa">
+    <p class="rotulo">Manutenção</p>
+    <h1>Estamos <mark>trocando a linha</mark>.</h1>
+    <p>O site volta em instantes. A oficina continua funcionando normalmente —
+       se precisar de orçamento agora, é só chamar no WhatsApp.</p>
+    <hr class="costura">
+    <a class="zap" href="https://wa.me/5581997740959" target="_blank" rel="noopener">Falar no WhatsApp</a>
+  </div>
+</body>
+</html>

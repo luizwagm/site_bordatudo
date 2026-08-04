@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gerenciador — Borda Tudo</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<style>
+  /* O painel tem estilo PRÓPRIO, sem depender do CSS do site.
+     São coisas diferentes: mudar a cor de um botão do site não pode mexer na
+     ferramenta que a pessoa usa para trabalhar — e um erro no CSS do site
+     deixaria o painel inutilizável justamente na hora de corrigir. */
+  :root {
+    --tinta:#1e275f; --fundo:#0d1240; --linha:#c03b0c; --viva:#f86519;
+    --papel:#fff; --tela:#f4f5f8; --borda:#dde0e8; --fraco:#5f6785;
+    --ok:#0f7b52; --erro:#b3261e;
+    --r:6px;
+    --f: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    --m: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  body{margin:0;font-family:var(--f);background:var(--tela);color:var(--tinta);font-size:15px;line-height:1.55}
+  h1,h2,h3,p{margin:0}
+  a{color:var(--linha)}
+  button,input,select,textarea{font:inherit;color:inherit}
+  :focus-visible{outline:3px solid var(--viva);outline-offset:2px}
+
+  /* ---------- entrada ---------- */
+  .porta{min-height:100dvh;display:grid;place-items:center;padding:1.5rem;
+    background:linear-gradient(165deg,var(--fundo),var(--tinta))}
+  .porta__caixa{background:var(--papel);padding:2rem;border-radius:var(--r);width:min(100%,26rem);
+    box-shadow:0 24px 64px rgb(13 18 64/.35)}
+  .porta__caixa img{height:54px;margin-bottom:1.25rem}
+
+  /* ---------- moldura ---------- */
+  .app{display:none;min-height:100dvh;grid-template-rows:auto 1fr}
+  .app.ligado{display:grid}
+  .barra{display:flex;align-items:center;gap:1rem;justify-content:space-between;
+    padding:.6rem 1rem;background:var(--fundo);color:#fff;position:sticky;top:0;z-index:20}
+  .barra img{height:34px}
+  .barra__dir{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+  .versao{font-family:var(--m);font-size:.72rem;opacity:.6}
+
+  .corpo{display:grid;grid-template-columns:230px 1fr;align-items:start}
+  @media (max-width:860px){.corpo{grid-template-columns:1fr}}
+  .menu{position:sticky;top:52px;padding:1rem .75rem;display:grid;gap:2px;align-content:start}
+  @media (max-width:860px){.menu{position:static;grid-auto-flow:column;overflow-x:auto;padding:.5rem}}
+  .menu button{display:block;width:100%;text-align:left;white-space:nowrap;
+    padding:.6rem .8rem;border:0;background:none;border-radius:var(--r);cursor:pointer;font-size:.9rem}
+  .menu button:hover{background:#e8eaf0}
+  .menu button[aria-current="true"]{background:var(--tinta);color:#fff;font-weight:600}
+
+  .tela{padding:1rem 1.25rem 4rem;max-width:60rem}
+  .aba{display:none}.aba.ativa{display:block}
+  .cabeca{margin-bottom:1.25rem}
+  .cabeca h2{font-size:1.35rem;letter-spacing:-.01em}
+  .cabeca p{color:var(--fraco);font-size:.88rem;margin-top:.25rem}
+
+  .campo{margin-bottom:1.1rem}
+  .campo>label{display:block;font-size:.72rem;font-family:var(--m);letter-spacing:.09em;
+    text-transform:uppercase;color:var(--fraco);margin-bottom:.35rem}
+  .campo .dica{font-size:.78rem;color:var(--fraco);margin-top:.3rem}
+  input[type=text],input[type=password],input[type=number],select,textarea{
+    width:100%;padding:.6rem .7rem;border:1px solid var(--borda);border-radius:var(--r);background:var(--papel)}
+  textarea{min-height:7rem;resize:vertical;font-family:var(--f)}
+  .duas{display:grid;gap:1rem;grid-template-columns:1fr 1fr}
+  @media (max-width:640px){.duas{grid-template-columns:1fr}}
+
+  .bloco{background:var(--papel);border:1px solid var(--borda);border-radius:var(--r);
+    padding:1.1rem;margin-bottom:1rem}
+  .bloco h3{font-size:1rem;margin-bottom:.9rem}
+
+  .bt{display:inline-flex;align-items:center;gap:.4rem;padding:.55rem 1rem;min-height:42px;
+    border:1px solid transparent;border-radius:var(--r);cursor:pointer;font-size:.88rem;font-weight:600}
+  .bt--p{background:var(--linha);color:#fff}
+  .bt--p:hover{background:#a93409}
+  .bt--t{background:var(--tinta);color:#fff}
+  .bt--c{background:var(--papel);border-color:var(--borda)}
+  .bt--c:hover{border-color:var(--tinta)}
+  .bt--x{background:var(--papel);border-color:#e6c9c6;color:var(--erro)}
+  .bt--x:hover{background:#fdf3f2}
+  .bt[disabled]{opacity:.5;cursor:not-allowed}
+  .acoes{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+
+  /* ---------- editor de texto ---------- */
+  .ferramentas{display:flex;gap:2px;flex-wrap:wrap;margin-bottom:-1px}
+  .ferramentas button{padding:.3rem .55rem;border:1px solid var(--borda);background:var(--papel);
+    border-radius:var(--r) var(--r) 0 0;cursor:pointer;font-size:.8rem;min-height:32px}
+  .ferramentas button:hover{background:#eef0f5}
+  .rico{min-height:6rem;padding:.7rem;border:1px solid var(--borda);border-radius:0 var(--r) var(--r) var(--r);
+    background:var(--papel);overflow:auto}
+  .rico:focus{outline:2px solid var(--viva);outline-offset:-2px}
+  .rico p{margin:0 0 .6em}
+  .rico ul{margin:0 0 .6em;padding-left:1.2em}
+  .rico--linha{min-height:3rem}
+
+  /* ---------- listas ---------- */
+  .linha{display:grid;gap:.75rem;padding:.9rem;border:1px solid var(--borda);
+    border-radius:var(--r);background:var(--papel);margin-bottom:.75rem}
+  .linha__topo{display:flex;gap:.5rem;align-items:center;justify-content:space-between}
+  .linha__titulo{font-weight:700;font-size:.95rem}
+  .linha__ordem{display:flex;gap:.25rem;align-items:center}
+  .linha__ordem button{width:32px;height:32px;border:1px solid var(--borda);background:var(--papel);
+    border-radius:var(--r);cursor:pointer;line-height:1}
+  .miniatura{width:64px;height:64px;object-fit:cover;border-radius:var(--r);border:1px solid var(--borda);background:var(--tela)}
+
+  /* ---------- avisos ---------- */
+  .aviso{position:fixed;left:50%;bottom:1.25rem;transform:translate(-50%,150%);
+    background:var(--tinta);color:#fff;padding:.7rem 1.1rem;border-radius:var(--r);
+    box-shadow:0 12px 32px rgb(13 18 64/.3);z-index:60;transition:transform .25s;max-width:90vw}
+  .aviso.mostra{transform:translate(-50%,0)}
+  .aviso.erro{background:var(--erro)}
+  .aviso.ok{background:var(--ok)}
+  .nota{padding:.7rem .9rem;border-radius:var(--r);font-size:.85rem;margin-bottom:1rem}
+  .nota--atencao{background:#fff6e8;border:1px solid #f0d9ae}
+  .nota--info{background:#eef1f7;border:1px solid var(--borda)}
+
+  table{width:100%;border-collapse:collapse;font-size:.88rem}
+  th,td{text-align:left;padding:.5rem .4rem;border-bottom:1px solid var(--borda)}
+  th{font-family:var(--m);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--fraco)}
+</style>
+</head>
+<body>
+
+<!-- ====================================================== ENTRADA ======== -->
+<div class="porta" id="porta">
+  <div class="porta__caixa">
+    <img src="/assets/img/logo-transparente.png" alt="Borda Tudo">
+    <h1 style="font-size:1.15rem;margin-bottom:.35rem">Gerenciador do site</h1>
+    <p style="color:var(--fraco);font-size:.85rem;margin-bottom:1.25rem">
+      Entre para editar textos, serviços e a vitrine.</p>
+    <form id="form-entrar">
+      <div class="campo">
+        <label for="senha">Senha</label>
+        <input id="senha" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="bt bt--p" type="submit" style="width:100%;justify-content:center">Entrar</button>
+    </form>
+    <p id="erro-entrar" style="color:var(--erro);font-size:.85rem;margin-top:.75rem" hidden></p>
+  </div>
+</div>
+
+<!-- ====================================================== PAINEL ========= -->
+<div class="app" id="app">
+  <header class="barra">
+    <div style="display:flex;align-items:center;gap:.75rem">
+      <img src="/assets/img/logo-transparente.png" alt="">
+      <span class="versao">Gerenciador v{{VERSAO}}</span>
+    </div>
+    <div class="barra__dir">
+      <a class="bt bt--c" href="/" target="_blank" rel="noopener">Ver o site</a>
+      <button class="bt bt--p" id="bt-publicar" type="button">Publicar</button>
+      <button class="bt bt--c" id="bt-sair" type="button">Sair</button>
+    </div>
+  </header>
+
+  <div class="corpo">
+    <nav class="menu" id="menu" aria-label="Seções"></nav>
+    <div class="tela" id="tela"></div>
+  </div>
+</div>
+
+<div class="aviso" id="aviso" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+(function () {
+
+/* ==========================================================================
+   BASE
+   ========================================================================== */
+var DADOS = null;
+var abaAtual = "textos";
+
+function avisar(msg, tipo) {
+  var el = document.getElementById("aviso");
+  el.textContent = msg;
+  el.className = "aviso mostra " + (tipo || "");
+  clearTimeout(avisar._t);
+  avisar._t = setTimeout(function () { el.className = "aviso"; }, 3200);
+}
+
+async function api(metodo, rota, corpo) {
+  var r = await fetch(rota, {
+    method: metodo,
+    headers: corpo ? { "content-type": "application/json" } : undefined,
+    body: corpo ? JSON.stringify(corpo) : undefined,
+  });
+  var j = null;
+  try { j = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((j && j.error) || ("erro " + r.status));
+  return j;
+}
+
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/* ==========================================================================
+   EDITOR DE TEXTO
+
+   Dois modos, e a diferença NÃO é estética.
+
+   O molde tem chaves que vivem dentro de <h1>, <h2> ou <p>. Um <p> dentro de
+   outro <p> é HTML inválido: o navegador FECHA a tag externa e o texto escapa
+   do estilo da seção — vira uma linha solta, sem cor e sem tamanho, e ninguém
+   entende por quê. Nessas chaves o editor trabalha em MODO LINHA: negrito,
+   itálico e link, mas Enter não cria parágrafo.
+
+   Nas demais (texto corrido de seção), o modo BLOCO libera parágrafo e lista.
+   ========================================================================== */
+var SO_LINHA = ["heroi_titulo","heroi_lead","heroi_rotulo",
+  "sec_servicos_titulo","sec_servicos_lead","sec_como_titulo","sec_como_lead",
+  "sec_porque_titulo","sec_vitrine_titulo","sec_vitrine_lead","sec_depo_titulo",
+  "sec_duvidas_titulo","sec_orca_titulo","sec_orca_lead","sec_empresa_titulo",
+  "passo1_titulo","passo2_titulo","passo3_titulo","passo4_titulo",
+  "passo1_texto","passo2_texto","passo3_texto","passo4_texto",
+  "rodape_texto","horario","endereco"];
+
+function editor(chave, valor, linha) {
+  var id = "ed-" + chave;
+  var ferramentas =
+    '<button type="button" data-cmd="bold" title="Negrito"><b>N</b></button>' +
+    '<button type="button" data-cmd="italic" title="Itálico"><i>I</i></button>' +
+    '<button type="button" data-cmd="link" title="Link">🔗</button>' +
+    (linha ? "" :
+      '<button type="button" data-cmd="insertUnorderedList" title="Lista">• lista</button>');
+  return '<div class="ferramentas" data-para="' + id + '">' + ferramentas + '</div>' +
+    '<div class="rico' + (linha ? " rico--linha" : "") + '" id="' + id + '" contenteditable="true" ' +
+    'data-chave="' + chave + '" data-linha="' + (linha ? "1" : "") + '">' + (valor || "") + "</div>";
+}
+
+/* Delegação num só lugar: cada editor criar o próprio ouvinte multiplicaria
+   escutas a cada troca de aba, e elas nunca seriam removidas. */
+document.addEventListener("click", function (e) {
+  var b = e.target.closest(".ferramentas button");
+  if (!b) return;
+  e.preventDefault();
+  var alvo = document.getElementById(b.parentElement.dataset.para);
+  alvo.focus();
+  if (b.dataset.cmd === "link") {
+    var url = prompt("Endereço do link (deixe vazio para remover):", "https://");
+    if (url === null) return;
+    document.execCommand(url ? "createLink" : "unlink", false, url);
+  } else {
+    document.execCommand(b.dataset.cmd, false, null);
+  }
+});
+
+/* Enter em modo linha não pode criar parágrafo — ver o comentário acima. */
+document.addEventListener("keydown", function (e) {
+  var r = e.target.closest ? e.target.closest(".rico") : null;
+  if (r && r.dataset.linha && e.key === "Enter") e.preventDefault();
+});
+
+function lerEditores(raiz) {
+  var out = {};
+  (raiz || document).querySelectorAll(".rico[data-chave]").forEach(function (el) {
+    out[el.dataset.chave] = el.innerHTML.trim();
+  });
+  (raiz || document).querySelectorAll("[data-simples]").forEach(function (el) {
+    out[el.dataset.simples] = el.value;
+  });
+  return out;
+}
+
+/* ==========================================================================
+   ENVIO DE IMAGEM
+   ========================================================================== */
+function campoImagem(chave, valor, rotulo) {
+  return '<div class="campo">' +
+    '<label>' + esc(rotulo) + "</label>" +
+    '<div style="display:flex;gap:.6rem;align-items:flex-start">' +
+      '<img class="miniatura" src="' + esc(valor || "") + '" alt="" onerror="this.style.opacity=.25">' +
+      '<div style="flex:1">' +
+        '<input type="text" data-simples="' + chave + '" value="' + esc(valor || "") + '">' +
+        '<div class="acoes" style="margin-top:.4rem">' +
+          '<label class="bt bt--c" style="cursor:pointer">Enviar foto' +
+            '<input type="file" accept="image/*" hidden data-envio="' + chave + '"></label>' +
+        "</div>" +
+      "</div>" +
+    "</div></div>";
+}
+
+document.addEventListener("change", async function (e) {
+  var inp = e.target.closest("[data-envio]");
+  if (!inp || !inp.files || !inp.files[0]) return;
+  var arq = inp.files[0];
+  if (arq.size > 9e6) { avisar("Imagem acima de 9 MB — reduza antes de enviar.", "erro"); return; }
+  avisar("Enviando…");
+  try {
+    var dados = await new Promise(function (ok, falha) {
+      var fr = new FileReader();
+      fr.onload = function () { ok(fr.result); };
+      fr.onerror = function () { falha(new Error("não consegui ler o arquivo")); };
+      fr.readAsDataURL(arq);
+    });
+    var r = await api("POST", "/api/enviar", { nome: arq.name, dados: dados });
+    var caixa = inp.closest(".campo");
+    caixa.querySelector("[data-simples]").value = r.caminho;
+    caixa.querySelector(".miniatura").src = r.caminho;
+    caixa.querySelector(".miniatura").style.opacity = 1;
+    avisar("Foto enviada. Não esqueça de salvar.", "ok");
+  } catch (err) { avisar(err.message, "erro"); }
+  inp.value = "";
+});
+
+/* ==========================================================================
+   ABAS
+   ========================================================================== */
+var ABAS = [
+  { id: "textos",   nome: "Textos do site" },
+  { id: "servicos", nome: "Serviços" },
+  { id: "vitrine",  nome: "Vitrine" },
+  { id: "depoimentos", nome: "Depoimentos" },
+  { id: "duvidas",  nome: "Dúvidas" },
+  { id: "contato",  nome: "Contato e rodapé" },
+  { id: "acessos",  nome: "Acessos" },
+  { id: "sistema",  nome: "Manutenção e backup" },
+  { id: "senha",    nome: "Trocar a senha" },
+];
+
+function montarMenu() {
+  document.getElementById("menu").innerHTML = ABAS.map(function (a) {
+    return '<button type="button" data-aba="' + a.id + '" aria-current="' +
+      (a.id === abaAtual) + '">' + esc(a.nome) + "</button>";
+  }).join("");
+}
+
+document.getElementById("menu").addEventListener("click", function (e) {
+  var b = e.target.closest("[data-aba]");
+  if (!b) return;
+  abaAtual = b.dataset.aba;
+  montarMenu();
+  desenhar();
+});
+
+/* --- grupos da aba "Textos do site" -------------------------------------- */
+var GRUPOS = [
+  { titulo: "Topo do site", campos: [
+    ["heroi_rotulo", "Selo acima do título"],
+    ["heroi_titulo", "Título principal"],
+    ["heroi_lead", "Texto de apoio"],
+    ["heroi_botao", "Botão principal", "simples"],
+    ["heroi_botao2", "Botão secundário", "simples"],
+  ], imagens: [["heroi_imagem", "Foto do topo"]],
+     simples: [["heroi_imagem_alt", "Descrição da foto (para quem não enxerga)"]] },
+
+  { titulo: "Números de confiança", nota:
+      "Deixe em <b>0</b> o que você ainda não puder comprovar — o número some do site. " +
+      "Número inventado em site institucional é passivo, não enfeite.",
+    simples: [
+      ["selo1_numero", "Número 1"], ["selo1_texto", "Texto 1"],
+      ["selo2_numero", "Número 2"], ["selo2_texto", "Texto 2"],
+      ["selo3_numero", "Número 3"], ["selo3_texto", "Texto 3"],
+      ["selo4_numero", "Número 4"], ["selo4_texto", "Texto 4"],
+    ] },
+
+  { titulo: "Seção de serviços", campos: [
+    ["sec_servicos_rotulo", "Rótulo", "simples"],
+    ["sec_servicos_titulo", "Título"],
+    ["sec_servicos_lead", "Texto de apoio"],
+  ] },
+
+  { titulo: "Como funciona", campos: [
+    ["sec_como_rotulo", "Rótulo", "simples"],
+    ["sec_como_titulo", "Título"],
+    ["sec_como_lead", "Texto de apoio"],
+    ["passo1_titulo", "Passo 1 — título"], ["passo1_texto", "Passo 1 — texto"],
+    ["passo2_titulo", "Passo 2 — título"], ["passo2_texto", "Passo 2 — texto"],
+    ["passo3_titulo", "Passo 3 — título"], ["passo3_texto", "Passo 3 — texto"],
+    ["passo4_titulo", "Passo 4 — título"], ["passo4_texto", "Passo 4 — texto"],
+  ] },
+
+  { titulo: "Por que a Borda Tudo", campos: [
+    ["sec_porque_rotulo", "Rótulo", "simples"],
+    ["sec_porque_titulo", "Título"],
+    ["sec_porque_texto", "Texto"],
+    ["porque_itens", "Lista de pontos fortes"],
+  ], imagens: [["sec_porque_imagem", "Foto da seção"]],
+     simples: [["sec_porque_imagem_alt", "Descrição da foto"]] },
+
+  { titulo: "Vitrine", campos: [
+    ["sec_vitrine_rotulo", "Rótulo", "simples"],
+    ["sec_vitrine_titulo", "Título"],
+    ["sec_vitrine_lead", "Texto de apoio"],
+  ] },
+
+  { titulo: "Depoimentos e dúvidas", campos: [
+    ["sec_depo_rotulo", "Depoimentos — rótulo", "simples"],
+    ["sec_depo_titulo", "Depoimentos — título"],
+    ["sec_duvidas_rotulo", "Dúvidas — rótulo", "simples"],
+    ["sec_duvidas_titulo", "Dúvidas — título"],
+  ] },
+
+  { titulo: "Orçamento", campos: [
+    ["sec_orca_rotulo", "Rótulo", "simples"],
+    ["sec_orca_titulo", "Título"],
+    ["sec_orca_lead", "Texto de apoio"],
+    ["sec_orca_botao", "Texto do botão", "simples"],
+  ] },
+
+  { titulo: "A empresa", campos: [
+    ["sec_empresa_rotulo", "Rótulo", "simples"],
+    ["sec_empresa_titulo", "Título"],
+    ["sec_empresa_texto", "Texto"],
+  ], imagens: [["sec_empresa_imagem", "Foto da empresa"]],
+     simples: [["sec_empresa_imagem_alt", "Descrição da foto"]] },
+];
+
+function desenharTextos() {
+  var s = DADOS.settings;
+  var html = '<div class="cabeca"><h2>Textos do site</h2>' +
+    "<p>Tudo que aparece nas páginas. Depois de salvar, clique em <b>Publicar</b>.</p></div>";
+
+  GRUPOS.forEach(function (g) {
+    html += '<section class="bloco"><h3>' + esc(g.titulo) + "</h3>";
+    if (g.nota) html += '<div class="nota nota--atencao">' + g.nota + "</div>";
+    (g.campos || []).forEach(function (c) {
+      var chave = c[0], rotulo = c[1], tipo = c[2];
+      html += '<div class="campo"><label>' + esc(rotulo) + "</label>";
+      if (tipo === "simples") {
+        html += '<input type="text" data-simples="' + chave + '" value="' + esc(s[chave]) + '">';
+      } else {
+        html += editor(chave, s[chave], SO_LINHA.indexOf(chave) >= 0);
+      }
+      html += "</div>";
+    });
+    (g.imagens || []).forEach(function (c) { html += campoImagem(c[0], s[c[0]], c[1]); });
+    (g.simples || []).forEach(function (c) {
+      html += '<div class="campo"><label>' + esc(c[1]) + "</label>" +
+        '<input type="text" data-simples="' + c[0] + '" value="' + esc(s[c[0]]) + '"></div>';
+    });
+    html += "</section>";
+  });
+
+  html += '<div class="acoes"><button class="bt bt--p" type="button" id="bt-salvar-textos">Salvar textos</button></div>';
+  return html;
+}
+
+/* --- listas (serviços, vitrine, depoimentos, dúvidas) --------------------- */
+var LISTAS = {
+  servicos: {
+    nome: "Serviços", rotulo: "titulo",
+    campos: [
+      ["titulo", "Título", "texto"],
+      ["resumo", "Resumo", "area"],
+      ["aplicacao", "Aplicação", "texto"],
+      ["material", "Material", "texto"],
+      ["limite", "Limite", "texto"],
+      ["icone", "Ícone", "opcoes", ["cetim","textura","matelasse","bone","etiqueta","monograma","arquivo","lote","ponto"]],
+    ],
+  },
+  vitrine: {
+    nome: "Vitrine", tabela: "pecas", rotulo: "titulo",
+    campos: [
+      ["titulo", "Título", "texto"],
+      ["categoria", "Categoria", "texto"],
+      ["tecnica", "Técnica", "texto"],
+      ["material", "Material", "texto"],
+      ["pontos", "Pontos / observação", "texto"],
+      ["imagem", "Foto", "imagem"],
+      ["alt", "Descrição da foto", "texto"],
+      ["destaque", "Aparece na home", "sim-nao"],
+    ],
+  },
+  depoimentos: {
+    nome: "Depoimentos", rotulo: "nome",
+    campos: [
+      ["nome", "Nome de quem falou", "texto"],
+      ["papel", "Empresa ou cargo", "texto"],
+      ["texto", "Depoimento", "area"],
+    ],
+  },
+  duvidas: {
+    nome: "Dúvidas", rotulo: "pergunta",
+    campos: [
+      ["pergunta", "Pergunta", "texto"],
+      ["resposta", "Resposta", "rico"],
+    ],
+  },
+};
+
+function desenharLista(id) {
+  var cfg = LISTAS[id];
+  var tabela = cfg.tabela || id;
+  var itens = DADOS[tabela] || [];
+  var html = '<div class="cabeca"><h2>' + esc(cfg.nome) + "</h2>" +
+    "<p>A ordem aqui é a ordem no site. Depois de salvar, clique em <b>Publicar</b>.</p></div>";
+
+  if (id === "vitrine") {
+    html += '<div class="nota nota--atencao"><b>As fotos atuais são de banco de imagem.</b> ' +
+      "Elas seguram o site de pé até chegarem as fotos reais dos trabalhos — que valem muito mais " +
+      "e custam um celular com luz de janela. Troque antes de divulgar o endereço.</div>";
+  }
+  if (id === "depoimentos" && !itens.length) {
+    html += '<div class="nota nota--info">Nenhum depoimento cadastrado, e a seção some do site ' +
+      "enquanto estiver vazia. Depoimento inventado é o tipo de coisa que o cliente descobre.</div>";
+  }
+
+  html += '<div id="lista">' + itens.map(function (it, i) {
+    return desenharItem(id, cfg, it, i, itens.length);
+  }).join("") + "</div>";
+  html += '<div class="acoes"><button class="bt bt--t" type="button" data-novo="' + id + '">+ Adicionar</button>' +
+    '<button class="bt bt--p" type="button" data-salvar-lista="' + id + '">Salvar tudo</button></div>';
+  return html;
+}
+
+function desenharItem(id, cfg, it, i, total) {
+  var h = '<div class="linha" data-id="' + it.id + '">' +
+    '<div class="linha__topo"><span class="linha__titulo">' + esc(it[cfg.rotulo] || "(sem título)") + "</span>" +
+    '<div class="linha__ordem">' +
+      '<button type="button" data-mover="cima" ' + (i === 0 ? "disabled" : "") + ' aria-label="Subir">↑</button>' +
+      '<button type="button" data-mover="baixo" ' + (i === total - 1 ? "disabled" : "") + ' aria-label="Descer">↓</button>' +
+      '<button class="bt bt--x" type="button" data-apagar="' + it.id + '">Apagar</button>' +
+    "</div></div>";
+
+  cfg.campos.forEach(function (c) {
+    var chave = c[0], rotulo = c[1], tipo = c[2];
+    h += '<div class="campo"><label>' + esc(rotulo) + "</label>";
+    if (tipo === "texto") h += '<input type="text" data-col="' + chave + '" value="' + esc(it[chave]) + '">';
+    else if (tipo === "area") h += '<textarea data-col="' + chave + '">' + esc(it[chave]) + "</textarea>";
+    else if (tipo === "rico") h += '<div class="ferramentas" data-para="r' + it.id + chave + '">' +
+        '<button type="button" data-cmd="bold"><b>N</b></button>' +
+        '<button type="button" data-cmd="italic"><i>I</i></button>' +
+        '<button type="button" data-cmd="insertUnorderedList">• lista</button></div>' +
+      '<div class="rico" id="r' + it.id + chave + '" contenteditable="true" data-col="' + chave + '">' + (it[chave] || "") + "</div>";
+    else if (tipo === "sim-nao") h += '<select data-col="' + chave + '">' +
+        '<option value="1"' + (Number(it[chave]) ? " selected" : "") + ">Sim</option>" +
+        '<option value="0"' + (Number(it[chave]) ? "" : " selected") + ">Não</option></select>";
+    else if (tipo === "opcoes") h += '<select data-col="' + chave + '">' + c[3].map(function (o) {
+        return '<option' + (it[chave] === o ? " selected" : "") + ">" + esc(o) + "</option>";
+      }).join("") + "</select>";
+    else if (tipo === "imagem") h +=
+      '<div style="display:flex;gap:.6rem;align-items:flex-start">' +
+        '<img class="miniatura" src="' + esc(it[chave]) + '" alt="" onerror="this.style.opacity=.25">' +
+        '<div style="flex:1"><input type="text" data-col="' + chave + '" value="' + esc(it[chave]) + '">' +
+        '<div class="acoes" style="margin-top:.4rem"><label class="bt bt--c" style="cursor:pointer">Enviar foto' +
+        '<input type="file" accept="image/*" hidden data-envio-linha="' + chave + '"></label></div></div></div>';
+    h += "</div>";
+  });
+  return h + "</div>";
+}
+
+/* Envio dentro de uma linha de lista: mesma rotina, alvo diferente. */
+document.addEventListener("change", async function (e) {
+  var inp = e.target.closest("[data-envio-linha]");
+  if (!inp || !inp.files || !inp.files[0]) return;
+  var arq = inp.files[0];
+  avisar("Enviando…");
+  try {
+    var dados = await new Promise(function (ok, falha) {
+      var fr = new FileReader();
+      fr.onload = function () { ok(fr.result); };
+      fr.onerror = function () { falha(new Error("não consegui ler o arquivo")); };
+      fr.readAsDataURL(arq);
+    });
+    var r = await api("POST", "/api/enviar", { nome: arq.name, dados: dados });
+    var caixa = inp.closest(".campo");
+    caixa.querySelector("[data-col]").value = r.caminho;
+    caixa.querySelector(".miniatura").src = r.caminho;
+    caixa.querySelector(".miniatura").style.opacity = 1;
+    avisar("Foto enviada. Não esqueça de salvar.", "ok");
+  } catch (err) { avisar(err.message, "erro"); }
+  inp.value = "";
+});
+
+/* --- outras abas --------------------------------------------------------- */
+function desenharContato() {
+  var s = DADOS.settings;
+  return '<div class="cabeca"><h2>Contato e rodapé</h2><p>O que aparece no rodapé de todas as páginas.</p></div>' +
+    '<section class="bloco"><h3>Contato</h3>' +
+    ["whatsapp","email","instagram","endereco","maps"].map(function (k) {
+      var r = { whatsapp:"WhatsApp (só números, com 55)", email:"E-mail", instagram:"Instagram (endereço completo)",
+                endereco:"Endereço", maps:"Link do Google Maps" }[k];
+      return '<div class="campo"><label>' + r + "</label>" +
+        '<input type="text" data-simples="' + k + '" value="' + esc(s[k]) + '"></div>';
+    }).join("") + "</section>" +
+    '<section class="bloco"><h3>Rodapé</h3>' +
+    '<div class="campo"><label>Texto do rodapé</label>' + editor("rodape_texto", s.rodape_texto, true) + "</div>" +
+    '<div class="campo"><label>Horário</label>' + editor("horario", s.horario, true) + "</div>" +
+    '<div class="campo"><label>CNPJ</label><input type="text" data-simples="cnpj" value="' + esc(s.cnpj) + '">' +
+    '<p class="dica">Aparece no rodapé de todas as páginas. Está em <b>0</b> até você preencher.</p></div>' +
+    "</section>" +
+    '<section class="bloco"><h3>Medição e anúncios</h3>' +
+    '<div class="nota nota--info">Só entram em ação depois que a pessoa aceita o aviso de privacidade.</div>' +
+    '<div class="duas">' +
+    '<div class="campo"><label>Google Analytics</label><input type="text" data-simples="analytics_id" value="' + esc(s.analytics_id) + '" placeholder="G-XXXXXXX"></div>' +
+    '<div class="campo"><label>Meta Pixel</label><input type="text" data-simples="pixel_id" value="' + esc(s.pixel_id) + '" placeholder="000000000000000"></div>' +
+    "</div></section>" +
+    '<div class="acoes"><button class="bt bt--p" type="button" id="bt-salvar-textos">Salvar</button></div>';
+}
+
+function desenharSistema() {
+  var s = DADOS.settings;
+  return '<div class="cabeca"><h2>Manutenção e backup</h2></div>' +
+    '<section class="bloco"><h3>Tirar o site do ar temporariamente</h3>' +
+    '<div class="nota nota--atencao">Com a manutenção ligada, quem visitar vê uma página de aviso. ' +
+    "Este painel continua acessível — senão não haveria como desligar.</div>" +
+    '<div class="campo"><label>Situação</label><select data-simples="manutencao">' +
+    '<option value="0"' + (s.manutencao === "1" ? "" : " selected") + ">Site no ar</option>" +
+    '<option value="1"' + (s.manutencao === "1" ? " selected" : "") + ">Em manutenção</option></select></div>" +
+    '<div class="acoes"><button class="bt bt--p" type="button" id="bt-salvar-textos">Salvar</button></div></section>' +
+    '<section class="bloco"><h3>Backup</h3>' +
+    '<p style="color:var(--fraco);font-size:.88rem;margin-bottom:.75rem">' +
+    "O sistema tira uma cópia por dia sozinho e guarda as 30 últimas. Use o botão para uma cópia agora.</p>" +
+    '<div class="acoes"><button class="bt bt--t" type="button" id="bt-backup">Fazer backup agora</button>' +
+    '<span id="backup-info" style="font-size:.85rem;color:var(--fraco)"></span></div></section>';
+}
+
+function desenharSenha() {
+  return '<div class="cabeca"><h2>Trocar a senha</h2>' +
+    "<p>Ao trocar, todas as outras sessões são derrubadas.</p></div>" +
+    '<section class="bloco" style="max-width:26rem">' +
+    '<div class="campo"><label>Senha atual</label><input type="password" id="s-atual" autocomplete="current-password"></div>' +
+    '<div class="campo"><label>Nova senha</label><input type="password" id="s-nova" autocomplete="new-password">' +
+    '<p class="dica">Dez caracteres ou mais.</p></div>' +
+    '<div class="campo"><label>Repita a nova senha</label><input type="password" id="s-nova2" autocomplete="new-password"></div>' +
+    '<div class="acoes"><button class="bt bt--p" type="button" id="bt-senha">Trocar senha</button></div></section>';
+}
+
+async function desenharAcessos() {
+  var el = document.getElementById("tela");
+  el.innerHTML = '<div class="cabeca"><h2>Acessos</h2><p>Quantas pessoas diferentes abriram o site por dia.</p></div>' +
+    '<section class="bloco">carregando…</section>';
+  try {
+    var r = await api("GET", "/api/acessos");
+    var total = r.dias.reduce(function (a, d) { return a + d.total; }, 0);
+    el.innerHTML = '<div class="cabeca"><h2>Acessos</h2>' +
+      "<p>Contagem por dia, sem guardar endereço de internet de ninguém.</p></div>" +
+      '<section class="bloco"><p style="margin-bottom:.75rem"><b>' + total + "</b> visitas nos últimos " +
+      r.dias.length + " dias com movimento.</p>" +
+      (r.dias.length ? "<table><thead><tr><th>Dia</th><th>Visitas</th></tr></thead><tbody>" +
+        r.dias.map(function (d) {
+          return "<tr><td>" + esc(d.dia.split("-").reverse().join("/")) + "</td><td>" + d.total + "</td></tr>";
+        }).join("") + "</tbody></table>"
+        : "<p>Ainda não há registro. A contagem só começa depois que alguém aceita o aviso de privacidade.</p>") +
+      "</section>";
+  } catch (e) { el.innerHTML = '<div class="nota nota--atencao">' + esc(e.message) + "</div>"; }
+}
+
+function desenhar() {
+  var el = document.getElementById("tela");
+  if (abaAtual === "acessos") { desenharAcessos(); return; }
+  if (abaAtual === "textos") el.innerHTML = desenharTextos();
+  else if (LISTAS[abaAtual]) el.innerHTML = desenharLista(abaAtual);
+  else if (abaAtual === "contato") el.innerHTML = desenharContato();
+  else if (abaAtual === "sistema") { el.innerHTML = desenharSistema(); carregarBackup(); }
+  else if (abaAtual === "senha") el.innerHTML = desenharSenha();
+  el.scrollTop = 0;
+}
+
+async function carregarBackup() {
+  try {
+    var r = await api("GET", "/api/backup");
+    /* O formato vem de `statusBackup`: { destino, manter, bancos:[{copias, ultimo}] }.
+       Ler `r.copias` daria `undefined` e a tela mostraria "0 cópias" com 30 no
+       disco — pior que não mostrar nada, porque parece defeito no backup. */
+    var b = (r && r.bancos && r.bancos[0]) || {};
+    var quando = b.ultimo ? new Date(b.ultimo).toLocaleString("pt-BR") : "ainda nenhuma";
+    document.getElementById("backup-info").textContent =
+      (b.copias || 0) + " cópias guardadas · última: " + quando;
+  } catch (e) { /* sem backup ainda: silêncio é melhor que erro vermelho */ }
+}
+
+/* ==========================================================================
+   AÇÕES
+   ========================================================================== */
+document.getElementById("tela").addEventListener("click", async function (e) {
+  var b = e.target.closest("button");
+  if (!b) return;
+
+  if (b.id === "bt-salvar-textos") {
+    try {
+      await api("PUT", "/api/conteudo", lerEditores(document.getElementById("tela")));
+      DADOS = await api("GET", "/api/conteudo");
+      avisar("Salvo. Clique em Publicar para levar ao site.", "ok");
+    } catch (err) { avisar(err.message, "erro"); }
+    return;
+  }
+
+  if (b.dataset.novo) {
+    var cfg = LISTAS[b.dataset.novo];
+    var tabela = cfg.tabela || b.dataset.novo;
+    var vazio = {};
+    vazio[cfg.rotulo] = "Novo item";
+    vazio.ordem = ((DADOS[tabela] || []).length + 1);
+    try {
+      await api("POST", "/api/" + tabela, vazio);
+      DADOS = await api("GET", "/api/conteudo");
+      desenhar();
+      avisar("Item criado. Preencha e salve.", "ok");
+    } catch (err) { avisar(err.message, "erro"); }
+    return;
+  }
+
+  if (b.dataset.apagar) {
+    var cfg2 = LISTAS[abaAtual];
+    var tab = cfg2.tabela || abaAtual;
+    if (!confirm("Apagar este item? Não dá para desfazer.")) return;
+    try {
+      await api("DELETE", "/api/" + tab + "/" + b.dataset.apagar);
+      DADOS = await api("GET", "/api/conteudo");
+      desenhar();
+      avisar("Apagado.", "ok");
+    } catch (err) { avisar(err.message, "erro"); }
+    return;
+  }
+
+  if (b.dataset.mover) {
+    /* Reordena SÓ na tela e avisa. Gravar aqui descartaria o que a pessoa
+       acabou de digitar nos outros campos e ainda não salvou. */
+    var linha = b.closest(".linha");
+    var irmao = b.dataset.mover === "cima" ? linha.previousElementSibling : linha.nextElementSibling;
+    if (!irmao) return;
+    if (b.dataset.mover === "cima") linha.parentNode.insertBefore(linha, irmao);
+    else linha.parentNode.insertBefore(irmao, linha);
+    avisar("Ordem trocada. Clique em Salvar tudo para valer.");
+    return;
+  }
+
+  if (b.dataset.salvarLista) {
+    var idAba = b.dataset.salvarLista;
+    var cfg3 = LISTAS[idAba];
+    var tab3 = cfg3.tabela || idAba;
+    var linhas = document.querySelectorAll("#lista .linha");
+    try {
+      for (var i = 0; i < linhas.length; i++) {
+        var corpo = { ordem: i + 1 };
+        linhas[i].querySelectorAll("[data-col]").forEach(function (campo) {
+          corpo[campo.dataset.col] = campo.isContentEditable ? campo.innerHTML.trim() : campo.value;
+        });
+        await api("PUT", "/api/" + tab3 + "/" + linhas[i].dataset.id, corpo);
+      }
+      DADOS = await api("GET", "/api/conteudo");
+      desenhar();
+      avisar("Salvo. Clique em Publicar para levar ao site.", "ok");
+    } catch (err) { avisar(err.message, "erro"); }
+    return;
+  }
+
+  if (b.id === "bt-backup") {
+    b.disabled = true;
+    try { await api("POST", "/api/backup"); avisar("Cópia feita.", "ok"); carregarBackup(); }
+    catch (err) { avisar(err.message, "erro"); }
+    b.disabled = false;
+    return;
+  }
+
+  if (b.id === "bt-senha") {
+    var atual = document.getElementById("s-atual").value;
+    var nova = document.getElementById("s-nova").value;
+    var nova2 = document.getElementById("s-nova2").value;
+    if (nova !== nova2) { avisar("As duas senhas novas não são iguais.", "erro"); return; }
+    try {
+      await api("POST", "/api/senha", { atual: atual, nova: nova });
+      avisar("Senha trocada. Entre de novo.", "ok");
+      setTimeout(function () { location.reload(); }, 1400);
+    } catch (err) { avisar(err.message, "erro"); }
+    return;
+  }
+});
+
+document.getElementById("bt-publicar").addEventListener("click", async function (e) {
+  e.target.disabled = true;
+  try {
+    var r = await api("POST", "/api/publicar");
+    avisar("Publicado: " + r.paginas.length + " páginas no ar.", "ok");
+  } catch (err) { avisar(err.message, "erro"); }
+  e.target.disabled = false;
+});
+
+document.getElementById("bt-sair").addEventListener("click", async function () {
+  try { await api("POST", "/api/logout"); } catch (e) {}
+  location.reload();
+});
+
+/* ==========================================================================
+   ENTRADA
+   ========================================================================== */
+document.getElementById("form-entrar").addEventListener("submit", async function (e) {
+  e.preventDefault();
+  var erro = document.getElementById("erro-entrar");
+  erro.hidden = true;
+  try {
+    await api("POST", "/api/login", { senha: document.getElementById("senha").value });
+    await abrir();
+  } catch (err) {
+    erro.textContent = err.message;
+    erro.hidden = false;
+  }
+});
+
+async function abrir() {
+  DADOS = await api("GET", "/api/conteudo");
+  document.getElementById("porta").style.display = "none";
+  document.getElementById("app").classList.add("ligado");
+  montarMenu();
+  desenhar();
+}
+
+/* Já havia sessão? Entra direto. O 401 aqui é resposta esperada, não falha. */
+api("GET", "/api/conteudo").then(abrir).catch(function () {});
+
+})();
+</script>
+</body>
+</html>
