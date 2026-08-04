@@ -113,6 +113,42 @@ enderecosDaMaquina() { ip -o addr show 2>/dev/null | awk '{print $4}' | cut -d/ 
 #
 # Raiz = dois rótulos (empresa.com) ou três terminando em sufixo composto
 # (empresa.com.br). Acima disso é subdomínio.
+# HTTP/2: A DIRETIVA MUDOU DE FORMA NO NGINX 1.25.1.
+#
+#   até 1.25.0 ....  listen 443 ssl http2;
+#   de  1.25.1 ....  listen 443 ssl;   mais   http2 on;
+#
+# Escolher não é opcional: emitir a forma errada faz o nginx recusar a
+# configuração INTEIRA com `unknown directive "http2"`, e o site fica no
+# provisório em HTTP mesmo com o certificado já emitido. Foi exatamente o que
+# aconteceu aqui — certificado emitido com sucesso na etapa 6 e o HTTPS
+# reprovado na 7, o que parece contradição e não é.
+#
+# O Ubuntu 24.04 traz nginx 1.24; do 24.10 em diante, 1.26. O mesmo script
+# roda nos dois lados dessa fronteira, então a versão tem de ser perguntada,
+# não presumida.
+versaoNginx() { nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9][0-9.]*\).*#\1#p'; }
+
+http2Separado() {
+  local a b c
+  IFS=. read -r a b c <<< "$(versaoNginx)"
+  a=${a:-0}; b=${b:-0}; c=${c:-0}
+  [ "$a" -gt 1 ] && return 0
+  [ "$a" -lt 1 ] && return 1
+  [ "$b" -gt 25 ] && return 0
+  [ "$b" -lt 25 ] && return 1
+  [ "$c" -ge 1 ]
+}
+
+# Devolve as linhas de `listen` já na forma que ESTA versão entende.
+linhasListen443() {
+  if http2Separado; then
+    printf '    listen 443 ssl;\n    listen [::]:443 ssl;\n    http2 on;'
+  else
+    printf '    listen 443 ssl http2;\n    listen [::]:443 ssl http2;'
+  fi
+}
+
 ehDominioRaiz() {
   local d="$1"
   local rotulos; rotulos=$(printf '%s' "$d" | tr '.' '
@@ -262,9 +298,7 @@ CAB
 # Um endereço canônico só: com www e sem www indexados, o Google divide a
 # autoridade entre os dois.
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+$(linhasListen443)
     server_name www.${dom};
     ssl_certificate     /etc/letsencrypt/live/${dom}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${dom}/privkey.pem;
@@ -277,9 +311,7 @@ WWW
     cat <<SSL
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+$(linhasListen443)
     server_name ${dom};
 
     ssl_certificate     /etc/letsencrypt/live/${dom}/fullchain.pem;
