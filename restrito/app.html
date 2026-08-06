@@ -1233,15 +1233,38 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
                             : '<span class="etiqueta etiqueta--cinza">inativo</span>') + "</td>" +
           '<td class="linha-botoes">' +
             '<button class="btn btn--fantasma btn--mini" data-acao="editar-cliente" data-id="' + c.id + '">abrir</button>' +
-            (c.ativo
-              ? '<button class="btn btn--fantasma btn--mini" data-acao="desativar-cadastro" data-tab="clientes" data-id="' + c.id + '">desativar</button>'
-              : '<button class="btn btn--fantasma btn--mini" data-acao="reativar-cadastro" data-tab="clientes" data-id="' + c.id + '">reativar</button>') +
+            botoesDeVida("clientes", c) +
           "</td></tr>").join("") +
         "</tbody></table></div>" + paginacao(r, "clientes")
         : '<div class="vazio">' + (filtroClientes.busca
             ? "Nenhum cliente com “" + esc(filtroClientes.busca) + "”."
             : "Nenhum cliente cadastrado ainda.") + "</div>") +
       "</div>";
+  }
+
+  /* Os botões de vida de um cadastro, iguais nas cinco telas.
+
+     DESATIVAR e EXCLUIR são botões separados de propósito. Um botão só, que
+     apagasse quando dá e desativasse quando não dá, seria um botão cujo efeito
+     depende de dados que a pessoa não está vendo — e um dia faria o errado. */
+  function botoesDeVida(tabela, item) {
+    return (item.ativo
+      ? '<button class="btn btn--fantasma btn--mini" data-acao="desativar" data-tab="' +
+        tabela + '" data-id="' + item.id + '" data-nome="' + esc(item.nome) + '">desativar</button>'
+      : '<button class="btn btn--fantasma btn--mini" data-acao="reativar" data-tab="' +
+        tabela + '" data-id="' + item.id + '" data-nome="' + esc(item.nome) + '">reativar</button>') +
+      '<button class="btn btn--fantasma btn--mini" data-acao="excluir" data-tab="' + tabela +
+      '" data-id="' + item.id + '" data-nome="' + esc(item.nome) +
+      '" title="apaga de vez — só funciona se nunca foi usado">excluir</button>';
+  }
+
+  /* Redesenha a tela certa depois de mexer num cadastro. */
+  async function repintarCadastro(tabela) {
+    esquecer(tabela);
+    if (tabela === "clientes") await pintarClientes();
+    else if (tabela === "desenhos") await pintarDesenhos();
+    else if (tabela === "usuarios") await pintarUsuarios();
+    else await pintarTabelas();
   }
 
   /* Um só desenho de paginação para as duas telas. Duas cópias divergiriam, e
@@ -1384,9 +1407,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
                             : '<span class="etiqueta etiqueta--cinza">inativo</span>') + "</td>" +
           '<td class="linha-botoes">' +
             '<button class="btn btn--fantasma btn--mini" data-acao="editar-desenho" data-id="' + d.id + '">abrir</button>' +
-            (d.ativo
-              ? '<button class="btn btn--fantasma btn--mini" data-acao="desativar-cadastro" data-tab="desenhos" data-id="' + d.id + '">desativar</button>'
-              : '<button class="btn btn--fantasma btn--mini" data-acao="reativar-cadastro" data-tab="desenhos" data-id="' + d.id + '">reativar</button>') +
+            botoesDeVida("desenhos", d) +
           "</td></tr>").join("") +
         "</tbody></table></div>" + paginacao(r, "desenhos")
         : '<div class="vazio">' + (filtroDesenhos.busca
@@ -1582,9 +1603,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             "<td>" + (i.ativo ? '<span class="etiqueta etiqueta--verde">ativo</span>'
                               : '<span class="etiqueta etiqueta--cinza">inativo</span>') + "</td>" +
             '<td class="linha-botoes"><button class="btn btn--fantasma btn--mini" data-acao="editar-tabela" data-id="' + i.id + '">editar</button>' +
-            (i.ativo
-              ? '<button class="btn btn--fantasma btn--mini" data-acao="desativar-cadastro" data-tab="' + TAB_ABA + '" data-id="' + i.id + '">desativar</button>'
-              : '<button class="btn btn--fantasma btn--mini" data-acao="reativar-cadastro" data-tab="' + TAB_ABA + '" data-id="' + i.id + '">reativar</button>') +
+            botoesDeVida(TAB_ABA, i) +
             (TAB_ABA === "maquinas"
               ? '<a class="btn btn--fantasma btn--mini" href="/restrito/etiquetas?maquina=' + i.id +
                 '" target="_blank" rel="noopener">QR</a>' +
@@ -1675,6 +1694,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             '<button class="btn btn--fantasma btn--mini" data-acao="editar-usuario" data-id="' + u.id + '">editar</button>' +
             '<button class="btn btn--fantasma btn--mini" data-acao="senha-usuario" data-id="' + u.id +
               '" data-usuario="' + esc(u.usuario) + '">redefinir senha</button>' +
+            botoesDeVida("usuarios", { id: u.id, ativo: u.ativo, nome: u.usuario }) +
           "</td></tr>").join("") +
         "</tbody></table></div>" +
       "</div>" +
@@ -1961,8 +1981,16 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         recado("Lote salvo."); await pintarLote(id);
       }
       else if (acao === "apagar-lote") {
-        if (!confirm("Apagar este lote? As fichas NÃO são apagadas — elas voltam para a lista de soltas.")) return;
-        await enviar("/restrito/api/lotes/" + id, "DELETE");
+        if (!confirm("Apagar este lote?\n\nSó sai se estiver VAZIO. Se tiver fichas dentro, " +
+                     "tire-as antes em “Juntar fichas”.")) return;
+        try {
+          await enviar("/restrito/api/lotes/" + id, "DELETE");
+        } catch (e) {
+          /* Recusa esperada, com a contagem do que está dentro. `alert` porque
+             o aviso de rodapé some em 6 segundos e este texto diz o que fazer. */
+          if (e.status === 409) { alert(e.message); return; }
+          throw e;
+        }
         recado("Lote apagado."); await pintarLotes();
       }
 
@@ -1996,18 +2024,51 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       else if (acao === "novo-tabela") await modalTabela(null);
       else if (acao === "editar-tabela") await modalTabela(id);
 
-      /* Desativar e reativar servem às três telas, então a tabela vem no botão.
-         Sem isso, o botão de um cliente desativaria a mercadoria de mesmo id. */
-      else if (acao === "desativar-cadastro" || acao === "reativar-cadastro") {
+      /* Desativar, reativar e excluir servem às cinco telas, então a tabela vem
+         no botão. Sem isso, o botão de um cliente mexeria na mercadoria de
+         mesmo id. */
+      else if (acao === "desativar" || acao === "reativar") {
         const tab = b.getAttribute("data-tab");
-        const ligando = acao === "reativar-cadastro";
-        if (ligando) await enviar("/restrito/api/" + tab + "/" + id, "PUT", { ativo: true });
-        else await enviar("/restrito/api/" + tab + "/" + id, "DELETE");
-        esquecer(tab);
-        recado(ligando ? "Reativado." : "Desativado.");
-        if (tab === "clientes") await pintarClientes();
-        else if (tab === "desenhos") await pintarDesenhos();
-        else await pintarTabelas();
+        const ligando = acao === "reativar";
+        const nome = b.getAttribute("data-nome") || "este registro";
+
+        /* A máquina avisa ANTES: desativar mata o adesivo colado nela, e
+           descobrir isso depois é um operador parado na frente de um QR que
+           não lê. */
+        if (tab === "maquinas" && !ligando &&
+            !confirm(`Desativar ${nome}?\n\nO QR colado nela deixa de valer na hora. ` +
+                     "Se um dia reativar, será preciso imprimir uma etiqueta nova.")) return;
+
+        /* Usuário tem rota própria porque ali mora a trava do último
+           administrador — a mesma que impede rebaixar e excluir. Duplicá-la
+           numa rota genérica seria criar uma segunda chance de esquecê-la. */
+        const r = tab === "usuarios"
+          ? await enviar("/restrito/api/usuarios/" + id, "PUT", { ativo: ligando })
+          : await enviar("/restrito/api/" + tab + "/" + id + "/ativo", "PUT", { ativo: ligando });
+        recado(r.qrInvalidado ? "Desativada — o QR antigo não vale mais."
+                              : (ligando ? "Reativado." : "Desativado."));
+        if (tab === "maquinas" && ligando)
+          setTimeout(() => recado("Imprima a etiqueta nova desta máquina antes de usá-la.", true), 2600);
+        await repintarCadastro(tab);
+      }
+
+      else if (acao === "excluir") {
+        const tab = b.getAttribute("data-tab");
+        const nome = b.getAttribute("data-nome") || "este registro";
+        if (!confirm(`Excluir ${nome} de vez?\n\n` +
+                     "Some da lista e do banco. Se já tiver sido usado em alguma ficha, " +
+                     "o sistema recusa e você poderá desativar no lugar.")) return;
+        try {
+          const r = await enviar("/restrito/api/" + tab + "/" + id, "DELETE");
+          recado(r.fotos ? `Excluído — ${r.fotos} foto(s) foram junto.` : "Excluído.");
+        } catch (e) {
+          /* Recusa esperada: a mensagem do servidor já diz quantos vínculos há
+             e o que fazer. Mostrar em `alert` e não no aviso de rodapé porque
+             é texto longo, e o de rodapé some em 6 segundos. */
+          if (e.dados && e.dados.podeDesativar) { alert(e.message); return; }
+          throw e;
+        }
+        await repintarCadastro(tab);
       }
       else if (acao === "trocar-qr") {
         if (!confirm("Gerar um QR novo para esta máquina? O adesivo antigo deixa de valer.")) return;

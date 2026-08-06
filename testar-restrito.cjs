@@ -90,7 +90,11 @@ async function limpar() {
 /* Restos de uma execução que morreu no meio. Aqui SIM por nome — mas só com o
    prefixo exato, e só depois de conferir que nenhuma ficha depende deles. */
 async function limparRestos() {
-  const P = "ZZ QA %";
+  /* SEM o espaço no fim. A suíte cria um cliente chamado `ZZ QA'; DROP TABLE
+     fichas; --` para testar injeção — e `ZZ QA %` não casa com ele, porque
+     depois de "ZZ QA" vem aspas, não espaço. O resto ficava no banco e fazia a
+     execução seguinte falhar no nome repetido, longe da causa. */
+  const P = "ZZ QA%";
   /* `_` é CORINGA no LIKE, não sublinhado. Sem o ESCAPE, `zz_qa_%` casaria
      com `zzXqaY…` — e isto é um caminho de DELETE. Um `LIKE` mal escrito já
      apagou uma tabela inteira num outro projeto meu; aqui o risco era apagar a
@@ -439,12 +443,19 @@ async function limparRestos() {
   eq(Number((await admin("/restrito/api/lotes/" + lote)).dados.pecas), 120,
      "e depois das tentativas o lote continua com 120 peças");
 
-  /* Apagar um lote NÃO apaga a produção — solta as fichas. */
+  /* Lote com ficha dentro NÃO é apagado. Antes ele soltava as fichas sozinho e
+     se apagava — conveniente e errado: quem clica em "apagar" num lote cheio
+     está pensando no lote, não no que tem dentro dele. */
   await admin("/restrito/api/lotes/" + lote2 + "/fichas", "PUT", { fichas: [fB] });
   eq(Number((await admin("/restrito/api/lotes/" + lote2)).dados.pecas), 5, "lote 2 com a ficha do cliente B");
-  eq((await admin("/restrito/api/lotes/" + lote2, "DELETE")).status, 200, "lote 2 apagado");
+  eq((await admin("/restrito/api/lotes/" + lote2, "DELETE")).status, 409, "lote 2 com ficha: recusado");
   linha = await Q.get("SELECT id, lote_id FROM fichas WHERE id = ?", fB);
-  ok(linha, "a ficha do lote apagado CONTINUA existindo");
+  ok(linha && Number(linha.lote_id) === lote2, "e a ficha continua no lote, intocada");
+
+  await admin("/restrito/api/lotes/" + lote2 + "/fichas", "PUT", { fichas: [] });
+  eq((await admin("/restrito/api/lotes/" + lote2, "DELETE")).status, 200, "esvaziado, o lote 2 sai");
+  linha = await Q.get("SELECT id, lote_id FROM fichas WHERE id = ?", fB);
+  ok(linha, "a ficha CONTINUA existindo — ela é a produção que aconteceu");
   eq(linha.lote_id, null, "e voltou a ficar solta");
   CRIADO.lotes = CRIADO.lotes.filter((x) => x !== lote2);
 
@@ -502,7 +513,8 @@ async function limparRestos() {
 
   /* ==================================================== 12. DESATIVAÇÃO == */
   console.log("  12. desativar não apaga");
-  eq((await admin("/restrito/api/clientes/" + cliA, "DELETE")).status, 200, "desativa o cliente A");
+  eq((await admin(`/restrito/api/clientes/${cliA}/ativo`, "PUT", { ativo: false })).status, 200,
+     "desativa o cliente A");
   linha = await Q.get("SELECT ativo FROM clientes WHERE id = ?", cliA);
   eq(linha.ativo, false, "ele continua no banco, apenas inativo");
   r = await admin("/restrito/api/clientes");
@@ -843,6 +855,132 @@ async function limparRestos() {
   r = await admin(`/restrito/lotes/${r.dados.id}/recibo`);
   ok(!/<script>alert\(1\)<\/script>/.test(r.texto), "nome com script sai escapado no recibo");
   ok(r.texto.includes("&lt;script&gt;"), "…como texto visível", "");
+
+  /* ============================ 12h. EXCLUIR × DESATIVAR ================ */
+  /* Cadastro nunca usado é engano de digitação: apagar é o certo. Cadastro já
+     usado está dentro de uma ficha que virou nota — esse só desativa. A regra
+     precisa valer nas SETE tabelas, e é aqui que se prova uma a uma. */
+  console.log("  12h. excluir × desativar");
+
+  /* --- sem vínculo: some de verdade --- */
+  const paraApagar = {};
+  for (const [tab, corpo] of [
+    ["clientes", { nome: "ZZ QA Apagar Cliente" }],
+    ["mercadorias", { nome: "ZZ QA Apagar Mercadoria" }],
+    ["cores", { nome: "ZZ QA Apagar Cor" }],
+    ["maquinas", { nome: "ZZ QA Apagar Maquina" }],
+  ]) {
+    r = await admin("/restrito/api/" + tab, "POST", corpo);
+    paraApagar[tab] = r.dados.id; CRIADO[tab].push(r.dados.id);
+  }
+  r = await admin("/restrito/api/desenhos", "POST",
+    { nome: "ZZ QA Apagar Desenho", cliente_id: paraApagar.clientes, pontuacao: "500" });
+  paraApagar.desenhos = r.dados.id; CRIADO.desenhos.push(r.dados.id);
+
+  /* O desenho segura o cliente — é vínculo, mesmo sem produção nenhuma. */
+  r = await admin("/restrito/api/clientes/" + paraApagar.clientes, "DELETE");
+  eq(r.status, 409, "cliente com desenho não é excluído");
+  ok(/1 desenho/.test(r.dados.error), "e a mensagem diz o que segura", r.dados.error);
+  eq(r.dados.podeDesativar, true, "e oferece desativar");
+
+  eq((await admin("/restrito/api/desenhos/" + paraApagar.desenhos, "DELETE")).status, 200,
+     "desenho sem ficha é excluído");
+  ok(!(await admin("/restrito/api/desenhos/" + paraApagar.desenhos)).dados.id,
+     "e some do banco de verdade — não fica inativo");
+
+  for (const tab of ["clientes", "mercadorias", "cores", "maquinas"]) {
+    r = await admin("/restrito/api/" + tab + "/" + paraApagar[tab], "DELETE");
+    eq(r.status, 200, `${tab}: sem vínculo, exclui`);
+    eq(r.dados.excluido, true, `${tab}: e diz que EXCLUIU, não que desativou`);
+    eq((await admin("/restrito/api/" + tab + "/" + paraApagar[tab])).status, 404,
+       `${tab}: sumiu do banco`);
+    CRIADO[tab] = CRIADO[tab].filter((x) => x !== paraApagar[tab]);
+  }
+
+  /* --- com vínculo: recusa, e desativar continua funcionando --- */
+  for (const [tab, alvo, oQue] of [["clientes", cliA, "cliente"], ["desenhos", desA1, "desenho"],
+                                   ["mercadorias", merc, "mercadoria"], ["cores", corPreta, "cor"],
+                                   ["maquinas", maq, "máquina"]]) {
+    r = await admin("/restrito/api/" + tab + "/" + alvo, "DELETE");
+    eq(r.status, 409, `${oQue} em uso NÃO é excluído`);
+    ok(/ficha|desenho|lote/.test(r.dados.error || ""), `${oQue}: a mensagem diz por quê`, r.dados.error);
+    ok(Array.isArray(r.dados.vinculos) && r.dados.vinculos.length,
+       `${oQue}: e a tela recebe a lista do que segura`);
+    eq((await admin("/restrito/api/" + tab + "/" + alvo)).status, 200, `${oQue}: continua lá, intacto`);
+  }
+
+  eq((await admin(`/restrito/api/clientes/${cliA}/ativo`, "PUT", { ativo: false })).status, 200,
+     "mas desativar funciona");
+  eq((await admin("/restrito/api/clientes/" + cliA)).dados.ativo, false, "e ficou inativo");
+  eq((await admin(`/restrito/api/lotes/${lote}`)).dados.pecas, 120,
+     "sem mexer numa vírgula da produção já registrada");
+  await admin(`/restrito/api/clientes/${cliA}/ativo`, "PUT", { ativo: true });
+
+  eq((await oper(`/restrito/api/clientes/${cliA}/ativo`, "PUT", { ativo: false })).status, 403,
+     "operador não desativa cadastro");
+  eq((await oper("/restrito/api/cores/" + corPreta, "DELETE")).status, 403, "nem exclui");
+
+  /* --- máquina: desativar mata o QR --- */
+  const tokenAntes = (await Q.get("SELECT token FROM maquinas WHERE id = ?", maq)).token;
+  r = await admin(`/restrito/api/maquinas/${maq}/ativo`, "PUT", { ativo: false });
+  eq(r.dados.qrInvalidado, true, "desativar máquina avisa que o QR morreu");
+  const tokenDepois = (await Q.get("SELECT token FROM maquinas WHERE id = ?", maq)).token;
+  ok(tokenAntes !== tokenDepois, "e o token REALMENTE mudou");
+  eq((await oper("/restrito/api/maquina-do-qr?m=" + encodeURIComponent(tokenAntes))).status, 404,
+     "o adesivo antigo não é mais reconhecido");
+
+  /* Reativar não pode ressuscitar o adesivo velho: ele passou meses fora de uso
+     e pode ter ido parar em qualquer lugar. */
+  await admin(`/restrito/api/maquinas/${maq}/ativo`, "PUT", { ativo: true });
+  eq((await oper("/restrito/api/maquina-do-qr?m=" + encodeURIComponent(tokenAntes))).status, 404,
+     "e reativar NÃO faz o adesivo antigo voltar a valer");
+  eq((await oper("/restrito/api/maquina-do-qr?m=" + encodeURIComponent(tokenDepois))).status, 200,
+     "só a etiqueta nova funciona");
+
+  /* --- usuários --- */
+  r = await admin("/restrito/api/usuarios", "POST", { usuario: "zz_qa_apagar", nome: "ZZ QA Apagar" });
+  const idApagar = r.dados.id; CRIADO.usuarios.push(idApagar);
+  r = await admin("/restrito/api/usuarios/" + idApagar, "DELETE");
+  eq(r.status, 200, "usuário que nunca produziu é excluído");
+  CRIADO.usuarios = CRIADO.usuarios.filter((x) => x !== idApagar);
+  ok(!(await admin("/restrito/api/usuarios")).dados.itens.some((u) => u.id === idApagar),
+     "e sai da lista");
+
+  r = await admin("/restrito/api/usuarios/" + idOper, "DELETE");
+  eq(r.status, 409, "operador COM produção não é excluído");
+  ok(/ficha/.test(r.dados.error), "e a mensagem diz quantas fichas", r.dados.error);
+  eq((await admin("/restrito/api/usuarios/" + idOper, "PUT", { ativo: false })).status, 200,
+     "mas desativar funciona");
+  await admin("/restrito/api/usuarios/" + idOper, "PUT", { ativo: true });
+
+  /* Apagar a si mesmo deixaria a sessão viva apontando para um id que não
+     existe — e a próxima tela quebraria sem dizer por quê. */
+  const euAdmin = (await admin("/restrito/api/usuarios")).dados.itens
+    .filter((u) => u.usuario === "zz_qa_admin")[0];
+  eq((await admin("/restrito/api/usuarios/" + euAdmin.id, "DELETE")).status, 409,
+     "ninguém exclui a própria conta");
+  eq((await oper("/restrito/api/usuarios/" + idOper2, "DELETE")).status, 403, "operador não exclui usuário");
+
+  /* --- lotes --- */
+  r = await admin("/restrito/api/lotes", "POST", { cliente_id: cliA, descricao: "ZZ QA lote vazio" });
+  const loteVazio = r.dados.id; CRIADO.lotes.push(loteVazio);
+  r = await admin("/restrito/api/lotes/" + loteVazio, "DELETE");
+  eq(r.status, 200, "lote VAZIO é apagado");
+  CRIADO.lotes = CRIADO.lotes.filter((x) => x !== loteVazio);
+
+  /* Antes ele soltava as fichas sozinho e se apagava. Conveniente e errado:
+     quem clica em "apagar" num lote com 40 fichas está pensando no lote, não
+     nas 40 — desfazer a composição tem de ser um ato à parte. */
+  r = await admin("/restrito/api/lotes/" + loteSemCor, "DELETE");
+  eq(r.status, 409, "lote COM fichas dentro não é apagado");
+  ok(/2 fichas/.test(r.dados.error), "e diz quantas estão dentro", r.dados.error);
+  eq((await admin("/restrito/api/lotes/" + loteSemCor)).dados.fichas.length, 2,
+     "e as fichas continuam onde estavam");
+
+  await admin(`/restrito/api/lotes/${loteSemCor}/fichas`, "PUT", { fichas: [] });
+  eq((await admin("/restrito/api/lotes/" + loteSemCor, "DELETE")).status, 200,
+     "esvaziado em “Juntar fichas”, aí sim sai");
+  CRIADO.lotes = CRIADO.lotes.filter((x) => x !== loteSemCor);
 
   /* ==================================================== 13. SAIR ========= */
   console.log("  13. sair");

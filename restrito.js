@@ -682,6 +682,73 @@ function prepararCadastro(def, corpo) {
   return dados;
 }
 
+/* ==========================================================================
+   4b. VÍNCULOS — o que impede apagar
+
+   Cadastro que NUNCA foi usado é engano de digitação: apagar é o certo, e
+   deixá-lo "inativo" para sempre só enche a lista de lixo que ninguém tem
+   coragem de tirar.
+
+   Cadastro JÁ USADO é outra coisa. Ele não está só na lista: está dentro de
+   uma ficha de três meses atrás, de um lote que virou nota. Apagar faria o
+   relatório daquele mês mostrar um vazio onde havia um cliente. Esse só pode
+   ser DESATIVADO — sai da escolha, fica no passado.
+
+   ATENÇÃO — A CONTA ABAIXO NÃO É SÓ UMA MENSAGEM MAIS BONITA.
+
+   O banco protege apenas TRÊS destes vínculos com RESTRICT: cliente, desenho e
+   usuário. Os outros são ON DELETE SET NULL:
+
+       cor_id, mercadoria_id, maquina_id, lote_id  →  SET NULL
+
+   Ou seja: sem esta verificação, apagar uma cor apagaria a cor de TODAS as
+   fichas antigas — em silêncio, sem erro nenhum. A ficha sobreviveria sem
+   saber mais de que cor era a peça, e a composição do lote (que é o que
+   sustenta a nota) sairia errada sem ninguém perceber. Apagar um lote levaria
+   junto o vínculo de todas as fichas dele.
+
+   Provado por sabotagem: desligando esta checagem, a suíte viu cor, mercadoria
+   e máquina EM USO serem apagadas com 200 e sumirem do banco.
+
+   Para cliente, desenho e usuário, o banco também barra — e ali a conta serve
+   ao segundo propósito: dizer POR QUE não dá, e quantos. "Está em 14 fichas"
+   resolve; "erro de chave estrangeira" manda a pessoa perguntar a alguém.
+   ========================================================================== */
+const VINCULOS = {
+  clientes: [
+    { tabela: "desenhos", coluna: "cliente_id", um: "desenho", muitos: "desenhos" },
+    { tabela: "fichas",   coluna: "cliente_id", um: "ficha de produção", muitos: "fichas de produção" },
+    { tabela: "lotes",    coluna: "cliente_id", um: "lote", muitos: "lotes" },
+  ],
+  /* As FOTOS não entram: elas pertencem ao desenho e vão junto com ele. */
+  desenhos:    [{ tabela: "fichas", coluna: "desenho_id",    um: "ficha de produção", muitos: "fichas de produção" }],
+  mercadorias: [{ tabela: "fichas", coluna: "mercadoria_id", um: "ficha de produção", muitos: "fichas de produção" }],
+  cores:       [{ tabela: "fichas", coluna: "cor_id",        um: "ficha de produção", muitos: "fichas de produção" }],
+  maquinas:    [{ tabela: "fichas", coluna: "maquina_id",    um: "ficha de produção", muitos: "fichas de produção" }],
+  usuarios: [
+    { tabela: "fichas",   coluna: "usuario_id", um: "ficha de produção", muitos: "fichas de produção" },
+    { tabela: "jornadas", coluna: "usuario_id", um: "jornada", muitos: "jornadas" },
+  ],
+  lotes: [{ tabela: "fichas", coluna: "lote_id", um: "ficha", muitos: "fichas" }],
+};
+
+async function vinculosDe(tabela, id) {
+  const achados = [];
+  for (const v of VINCULOS[tabela] || []) {
+    const r = await Q.get(`SELECT COUNT(*) c FROM ${v.tabela} WHERE ${v.coluna} = ?`, id);
+    const n = Number(r.c);
+    if (n) achados.push({ quantos: n, o_que: n === 1 ? v.um : v.muitos });
+  }
+  return achados;
+}
+
+/* "3 fichas de produção e 1 lote" — a frase que entra na mensagem. */
+function textoVinculos(vinculos) {
+  const partes = vinculos.map((v) => `${v.quantos} ${v.o_que}`);
+  if (partes.length <= 1) return partes[0] || "";
+  return partes.slice(0, -1).join(", ") + " e " + partes[partes.length - 1];
+}
+
 /* Mensagem de erro que a pessoa entende. O Postgres devolve "duplicar valor da
    chave viola a restrição de unicidade ux_clientes_nome" — verdadeiro e
    inútil para quem está cadastrando. */
@@ -834,6 +901,28 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     return responder(res, 200, { ok: true });
   }
 
+  /* Desativar e reativar. Rota SEPARADA do DELETE de propósito: "excluir" e
+     "desativar" fazem coisas diferentes, e um botão que faz as duas conforme o
+     caso é um botão que um dia faz a errada. */
+  const mAtivar = /^\/restrito\/api\/(clientes|desenhos|mercadorias|cores|maquinas)\/(\d+)\/ativo$/.exec(caminho);
+  if (mAtivar && req.method === "PUT") {
+    if (sessao.papel !== "admin") return responder(res, 403, { error: "só o administrador mexe nos cadastros" });
+    const tabela = mAtivar[1], id = Number(mAtivar[2]);
+    const ligar = !!((await lerCorpo(req)) || {}).ativo;
+    await Q.run(`UPDATE ${tabela} SET ativo = ? WHERE id = ?`, ligar, id);
+
+    /* MÁQUINA DESATIVADA TEM O QR INVALIDADO. Sem isto, o adesivo colado nela
+       voltaria a valer no dia em que alguém reativasse a máquina — e um adesivo
+       que passou meses fora de uso pode ter ido parar em qualquer lugar.
+       Reativar exige imprimir etiqueta nova, e é isso que a tela avisa. */
+    if (tabela === "maquinas" && !ligar) {
+      await Q.run("UPDATE maquinas SET token = ? WHERE id = ?",
+        crypto.randomBytes(9).toString("base64url"), id);
+      return responder(res, 200, { ok: true, ativo: false, qrInvalidado: true });
+    }
+    return responder(res, 200, { ok: true, ativo: ligar });
+  }
+
   /* ----------------------------------------------------- cadastros ------ */
   const mCad = /^\/restrito\/api\/(clientes|desenhos|mercadorias|cores|maquinas)(?:\/(\d+))?$/.exec(caminho);
   if (mCad) {
@@ -944,14 +1033,54 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     }
 
     if (req.method === "DELETE" && id) {
-      /* Não apaga: DESATIVA. Cadastro em uso numa ficha de três meses atrás
-         não pode sumir — o relatório daquele mês passaria a mostrar um vazio
-         onde havia um cliente. O que sai é a lista de escolha, não o passado.
+      /* APAGA DE VERDADE — se ninguém depender. Cadastro nunca usado é engano
+         de digitação; mantê-lo inativo para sempre só enche a lista.
 
-         As chaves estrangeiras são RESTRICT justamente para o banco recusar
-         caso alguém tente apagar por fora. */
-      await Q.run(`UPDATE ${def.tabela} SET ativo = FALSE WHERE id = ?`, id);
-      return responder(res, 200, { ok: true, desativado: true });
+         Com vínculo, recusa e DIZ QUANTOS. A tela oferece desativar no lugar. */
+      const vinculos = await vinculosDe(def.tabela, id);
+      if (vinculos.length) {
+        return responder(res, 409, {
+          error: `Não dá para excluir: está em ${textoVinculos(vinculos)}. ` +
+                 "Desative — some da lista de escolha e continua no que já foi produzido.",
+          vinculos, podeDesativar: true,
+        });
+      }
+
+      if (def.tabela === "desenhos") {
+        /* As fotos são do desenho e vão junto. A linha sai por CASCADE; o
+           ARQUIVO no disco não — e ficaria uma imagem que ninguém mais sabe de
+           quem é, num sistema em que o desenho é propriedade do cliente. */
+        const fotos = await Q.all("SELECT arquivo FROM desenho_fotos WHERE desenho_id = ?", id);
+        try {
+          await Q.run("DELETE FROM desenhos WHERE id = ?", id);
+        } catch (e) {
+          return responder(res, 409, {
+            error: "Esse desenho está em uso e não pode ser excluído. Desative-o.",
+            podeDesativar: true,
+          });
+        }
+        /* Os arquivos só saem DEPOIS de a linha sair. Na ordem inversa, um
+           DELETE recusado deixaria o desenho no banco apontando para fotos que
+           não existem mais. */
+        for (const f of fotos) {
+          try { fs.unlinkSync(path.join(PASTA_FOTOS, f.arquivo)); } catch {}
+        }
+        return responder(res, 200, { ok: true, excluido: true, fotos: fotos.length });
+      }
+
+      try {
+        await Q.run(`DELETE FROM ${def.tabela} WHERE id = ?`, id);
+      } catch (e) {
+        /* Rede de segurança: se aparecer um vínculo que a lista acima não
+           conhece, o banco barra e a pessoa recebe uma frase, não um erro de
+           driver. É o que acontece quando alguém acrescenta uma tabela e
+           esquece de registrar o vínculo aqui. */
+        return responder(res, 409, {
+          error: "Esse registro está em uso e não pode ser excluído. Desative-o.",
+          podeDesativar: true,
+        });
+      }
+      return responder(res, 200, { ok: true, excluido: true });
     }
 
     /* Um cadastro só, para a tela de edição. Ela precisa do registro inteiro
@@ -1428,13 +1557,23 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     if (req.method === "DELETE") {
       if (lote.situacao === "faturado")
         return responder(res, 409, { error: "lote já faturado — não pode ser apagado" });
-      /* As fichas NÃO vão junto: elas são a produção que aconteceu. Só perdem
-         o vínculo e voltam para a lista de soltas, prontas para outro lote. */
-      await Q.tx(async () => {
-        await Q.run("UPDATE fichas SET lote_id = NULL WHERE lote_id = ?", id);
-        await Q.run("DELETE FROM lotes WHERE id = ?", id);
-      });
-      return responder(res, 200, { ok: true });
+
+      /* Lote só sai VAZIO. Antes ele soltava as fichas sozinho e se apagava — o
+         que é conveniente e errado: quem clica em "apagar" num lote com 40
+         fichas dentro não está pensando nas 40, está pensando no lote. Desfazer
+         a composição tem de ser um ato à parte, em "Juntar fichas", onde se vê
+         o que está sendo desfeito. */
+      const vinculos = await vinculosDe("lotes", id);
+      if (vinculos.length) {
+        return responder(res, 409, {
+          error: `Não dá para apagar: o lote tem ${textoVinculos(vinculos)} dentro. ` +
+                 "Tire as fichas em “Juntar fichas” e apague depois.",
+          vinculos,
+        });
+      }
+
+      await Q.run("DELETE FROM lotes WHERE id = ?", id);
+      return responder(res, 200, { ok: true, excluido: true });
     }
   }
 
@@ -1517,6 +1656,44 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     await Q.run(`UPDATE usuarios SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id = ?`,
       ...cols.map((c) => campos[c]), id);
     return responder(res, 200, { ok: true });
+  }
+
+  if (mUsuario && req.method === "DELETE") {
+    const id = Number(mUsuario[1]);
+    const alvo = await Q.get("SELECT usuario, papel, ativo FROM usuarios WHERE id = ?", id);
+    if (!alvo) return responder(res, 404, { error: "usuário não encontrado" });
+
+    /* Ninguém apaga a si mesmo: a sessão continuaria viva apontando para um id
+       que não existe mais, e a próxima tela quebraria sem dizer por quê. */
+    if (Number(id) === Number(sessao.usuarioId))
+      return responder(res, 409, { error: "você não pode excluir a sua própria conta" });
+
+    /* Conta que JÁ PRODUZIU não sai: a ficha diz quem bordou, e é isso que
+       separa a produção de cada um. Sem o nome, o relatório do mês passado
+       passa a ter peça sem dono. */
+    const vinculos = await vinculosDe("usuarios", id);
+    if (vinculos.length) {
+      return responder(res, 409, {
+        error: `Não dá para excluir: ${alvo.usuario} tem ${textoVinculos(vinculos)}. ` +
+               "Desative a conta — ela deixa de entrar e continua no que já foi produzido.",
+        vinculos, podeDesativar: true,
+      });
+    }
+
+    /* O último administrador ativo não sai nem por exclusão. A trava já existia
+       para "desativar" e "rebaixar"; sem ela aqui, o mesmo estrago sairia pela
+       outra porta — e a saída seria mexer no banco à mão. */
+    if (alvo.papel === "admin" && alvo.ativo) {
+      const outros = await Q.get(
+        "SELECT COUNT(*) c FROM usuarios WHERE papel = 'admin' AND ativo AND id <> ?", id);
+      if (Number(outros.c) === 0)
+        return responder(res, 409, { error: "este é o último administrador ativo — promova outro antes." });
+    }
+
+    await Q.run("DELETE FROM usuarios WHERE id = ?", id);
+    /* E derruba a sessão de quem foi apagado, se estiver aberta em algum lugar. */
+    for (const [k, s] of sessoes) if (s.usuarioId === id) sessoes.delete(k);
+    return responder(res, 200, { ok: true, excluido: true });
   }
 
   /* ---------------------------------------------------- QR da máquina --- */

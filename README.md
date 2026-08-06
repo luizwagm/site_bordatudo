@@ -194,7 +194,7 @@ Um adesivo fotografado não dá acesso a nada. Se um adesivo se perder, use
 
 ```bash
 npm start                    # site + painel + /restrito na porta 5193
-npm test                     # as duas suítes (247 + 47 conferências)
+npm test                     # as duas suítes (308 + 47 conferências)
 node backup.js agora         # cópia dos DOIS bancos (site.db + pg_dump)
 ```
 
@@ -230,9 +230,24 @@ algumas pessoas errarem a senha na mesma manhã, a loja inteira fica de fora.
 Se isso acontecer na prática, os números estão em `limitador.js` (`ipMax`,
 `ipJanelaMin`) e vale afrouxar o balde do IP mantendo o da conta.
 
-**Cadastro nunca é apagado, é desativado.** Um cliente removido sumiria dos
-relatórios de três meses atrás. Ele sai da lista de escolha e continua no
-histórico.
+**Excluir e desativar são coisas diferentes, e há um botão para cada.**
+Cadastro que nunca foi usado é engano de digitação: **excluir** apaga de vez.
+Cadastro já usado está dentro de uma ficha que virou nota — esse o sistema
+recusa excluir, dizendo quantos vínculos tem ("está em 2 desenhos, 3 fichas de
+produção e 1 lote"), e só deixa **desativar**: sai da lista de escolha e
+continua no histórico. Vale para clientes, desenhos, mercadorias, cores,
+máquinas, usuários e lotes.
+
+> Para **cor, mercadoria, máquina e lote** essa checagem é a ÚNICA proteção: no
+> banco essas chaves são `ON DELETE SET NULL`, então sem ela apagar uma cor
+> apagaria a cor de todas as fichas antigas em silêncio, e a composição do lote
+> — que sustenta a nota — sairia errada sem ninguém perceber.
+
+**Máquina desativada tem o QR invalidado.** O adesivo colado nela deixa de valer
+na hora, e reativar exige imprimir etiqueta nova: um adesivo que passou meses
+fora de uso pode ter ido parar em qualquer lugar.
+
+**Lote só é apagado vazio.** Tire as fichas em "Juntar fichas" antes.
 
 ---
 
