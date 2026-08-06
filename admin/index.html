@@ -596,13 +596,24 @@ function desenharContato() {
 
 function desenharSistema() {
   var s = DADOS.settings;
-  return '<div class="cabeca"><h2>Manutenção e backup</h2></div>' +
-    '<section class="bloco"><h3>Tirar o site do ar temporariamente</h3>' +
-    '<div class="nota nota--atencao">Com a manutenção ligada, quem visitar vê uma página de aviso. ' +
-    "Este painel continua acessível — senão não haveria como desligar.</div>" +
-    '<div class="campo"><label>Situação</label><select data-simples="manutencao">' +
-    '<option value="0"' + (s.manutencao === "1" ? "" : " selected") + ">Site no ar</option>" +
-    '<option value="1"' + (s.manutencao === "1" ? " selected" : "") + ">Em manutenção</option></select></div>" +
+  var estado = s.site_estado || "no-ar";
+  var opcao = function (valor, rotulo) {
+    return '<option value="' + valor + '"' + (estado === valor ? " selected" : "") + ">" + rotulo + "</option>";
+  };
+  return '<div class="cabeca"><h2>Situação do site e backup</h2></div>' +
+    '<section class="bloco"><h3>O que o visitante vê</h3>' +
+    '<div class="nota nota--atencao">Fora do ar, quem visitar vê uma página de aviso e mais nada — ' +
+    "as páginas continuam gravadas, só não são servidas. Este painel e o /restrito continuam " +
+    "funcionando; senão não haveria como voltar atrás.</div>" +
+    '<div class="campo"><label>Situação</label><select data-simples="site_estado">' +
+    opcao("no-ar", "Site no ar — o visitante vê o site") +
+    opcao("construcao", "Em construção — “nosso site está sendo bordado”") +
+    opcao("manutencao", "Em manutenção — “voltamos já”") +
+    "</select></div>" +
+    '<p style="color:var(--fraco);font-size:.85rem;margin:.5rem 0 0">' +
+    "<b>Construção</b> é para antes do site existir; <b>manutenção</b> é para quando ele já esteve " +
+    "no ar. A diferença não é enfeite: manutenção promete que o site volta, e prometer volta de " +
+    "um site que nunca subiu é a primeira impressão que a empresa dá.</p>" +
     '<div class="acoes"><button class="bt bt--p" type="button" id="bt-salvar-textos">Salvar</button></div></section>' +
     '<section class="bloco"><h3>Backup</h3>' +
     '<p style="color:var(--fraco);font-size:.88rem;margin-bottom:.75rem">' +

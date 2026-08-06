@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Em breve — Borda Tudo · Bordados Computadorizados em Caruaru-PE</title>
+
+<!-- `noindex` E `nofollow`: o site vai nascer aqui, e uma página de "em breve"
+     indexada é a primeira coisa que aparece quando alguém procurar a Borda Tudo
+     no Google — e continua aparecendo semanas depois de o site subir. -->
+<meta name="robots" content="noindex, nofollow">
+
+<meta name="theme-color" content="#0d1240">
+<link rel="icon" href="/favicon.ico" sizes="any">
+
+<!-- O ESTILO ESTÁ EMBUTIDO, E ISSO É INTENCIONAL.
+     Esta página aparece justamente quando o resto do site ainda não está
+     servindo. Depender de uma folha de estilo externa é depender do que pode
+     não vir — e uma página sem estilo nenhum passa a impressão de site
+     quebrado, que é o oposto do que ela existe para dizer. -->
+<style>
+  :root { --tinta:#1e275f; --tinta-fundo:#0d1240; --linha-viva:#f86519; }
+  * { box-sizing:border-box }
+  body {
+    margin:0; min-height:100dvh;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:2rem 1.5rem;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    line-height:1.6; color:#fff;
+    /* A trama de fundo é a mesma do site: dois riscos cruzados que lembram a
+       malha do tecido no bastidor. Duas linhas de CSS, nenhuma imagem. */
+    background:
+      repeating-linear-gradient(0deg, rgb(255 255 255 / .035) 0 1px, transparent 1px 3px),
+      repeating-linear-gradient(90deg, rgb(255 255 255 / .035) 0 1px, transparent 1px 3px),
+      linear-gradient(165deg, var(--tinta-fundo), var(--tinta));
+  }
+  .caixa { max-width:46rem; flex:1; display:flex; flex-direction:column; justify-content:center }
+  .marca {
+    font-size:clamp(1.6rem,1.2rem + 1.8vw,2.3rem); font-weight:800; letter-spacing:-.02em;
+    margin:0 0 .35rem;
+  }
+  .rotulo {
+    font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size:.76rem; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--linha-viva); margin:0 0 1.6rem;
+  }
+  h1 { font-size:clamp(1.7rem, 1.15rem + 2.5vw, 2.9rem); line-height:1.1;
+       letter-spacing:-.02em; margin:0 }
+  h1 mark { background:none; color:var(--linha-viva) }
+  p { color:rgb(255 255 255 / .82); margin:1.25rem 0 0 }
+  p.miudo { font-size:.92rem; color:rgb(255 255 255 / .62) }
+
+  /* Costura: o mesmo ponto-corrente do site, em duas linhas de CSS. */
+  .costura {
+    height:6px; border:0; margin:2rem auto 0; max-width:16rem;
+    background:
+      repeating-linear-gradient(90deg,#fff 0 14px,transparent 14px 20px) 0 0/20px 2px repeat-x,
+      repeating-linear-gradient(90deg,var(--linha-viva) 7px 21px,transparent 21px 27px) 0 4px/20px 2px repeat-x;
+    opacity:.45;
+  }
+
+  .zap {
+    display:inline-flex; align-items:center; gap:.6rem; justify-content:center;
+    margin-top:2rem; padding:.9rem 1.7rem; min-height:48px;
+    background:#128c7e; color:#fff; text-decoration:none;
+    border-radius:4px; font-weight:700; font-size:.95rem; letter-spacing:.02em;
+  }
+  .zap:hover { background:#0d7568 }
+
+  footer {
+    width:100%; max-width:46rem; margin-top:3rem; padding-top:1.25rem;
+    border-top:1px solid rgb(255 255 255 / .12);
+    font-size:.8rem; color:rgb(255 255 255 / .5);
+    display:flex; flex-wrap:wrap; gap:.5rem 1.25rem; justify-content:center;
+  }
+  footer a { color:rgb(255 255 255 / .72) }
+</style>
+</head>
+<body>
+  <div class="caixa">
+    <p class="marca">Borda&nbsp;Tudo</p>
+    <p class="rotulo">Bordados computadorizados · Caruaru-PE</p>
+
+    <h1>Nosso site está <mark>sendo bordado</mark>.</h1>
+    <p>A fábrica está funcionando normalmente. Enquanto a página não fica pronta,
+       fale com a gente direto no WhatsApp — orçamento de bordado para confecção,
+       etiqueta, uniforme e coleção.</p>
+
+    <hr class="costura">
+
+    <a class="zap" href="https://wa.me/5581997740959" target="_blank" rel="noopener">
+      Pedir orçamento no WhatsApp
+    </a>
+
+    <p class="miudo">Segunda a sexta, 8h às 18h · Sábado, 8h às 12h</p>
+  </div>
+
+  <footer>
+    <span>Borda Tudo — Bordados Computadorizados · Caruaru, Pernambuco</span>
+    <!-- O CNPJ entra aqui quando estiver preenchido no painel. -->
+    <span class="dev-credit">Desenvolvido por
+      <a href="https://luizaugust.me" target="_blank" rel="noopener">Luiz Augusto</a></span>
+  </footer>
+</body>
+</html>

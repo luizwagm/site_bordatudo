@@ -83,8 +83,11 @@ if [ -f data/site.db ]; then
         console.log("  " + t.padEnd(14) + db.prepare(`SELECT COUNT(*) c FROM "${t}"`).get().c);
       }
       console.log("  integridade   " + db.prepare("PRAGMA integrity_check").get().integrity_check);
-      const m = db.prepare("SELECT value FROM settings WHERE key=?").get("manutencao");
-      console.log("  modo manutenção " + (m && m.value === "1" ? "LIGADO — o site está fora do ar!" : "desligado"));
+      const e = db.prepare("SELECT value FROM settings WHERE key=?").get("site_estado");
+      const estado = (e && e.value) || "no-ar";
+      const aviso = { construcao: "EM CONSTRUÇÃO — o visitante vê a página de aviso",
+                      manutencao: "EM MANUTENÇÃO — o site está fora do ar!" };
+      console.log("  situação do site " + (aviso[estado] || "no ar"));
     } catch (e) { console.log("  ERRO ao ler: " + e.message); }
   ' 2>/dev/null
 else

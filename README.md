@@ -15,6 +15,31 @@ O `/restrito` usa Postgres porque é dado de faturamento: precisa de transação
 de coluna calculada pelo banco e de índice que **impede** o registro errado de
 existir. O site continua em SQLite porque é conteúdo, não dinheiro.
 
+> **Agora o site está EM CONSTRUÇÃO.** Quem visita vê uma página de aviso com o
+> caminho para o WhatsApp; nada do site é servido. As páginas continuam todas
+> gravadas — só não saem. Quem sobe primeiro é o `/restrito`.
+
+---
+
+## Situação do site
+
+Em **Painel → Situação do site**, três estados:
+
+| Estado | O visitante vê | Para quando |
+|---|---|---|
+| **Site no ar** | o site | depois do lançamento |
+| **Em construção** | `construcao.html` — "nosso site está sendo bordado" | antes de o site existir |
+| **Em manutenção** | `manutencao.html` — "voltamos já" | quando ele já esteve no ar |
+
+A diferença não é enfeite: manutenção **promete que o site volta**, e prometer
+volta de um site que nunca subiu é a primeira impressão que a empresa dá.
+
+Fora do ar, as páginas respondem **503** (e não 200) para o Google entender que
+aquilo não é a home — senão o aviso fica indexado semanas depois do lançamento.
+O `/admin`, o `/restrito`, os `assets` e o favicon continuam servindo: sem o
+painel não haveria como voltar atrás, e a produção da fábrica não para porque o
+site institucional parou.
+
 ---
 
 ## O que o /restrito substitui
@@ -151,14 +176,18 @@ Um adesivo fotografado não dá acesso a nada. Se um adesivo se perder, use
 
 ```bash
 npm start                    # site + painel + /restrito na porta 5193
-node testar-restrito.cjs     # a suíte do /restrito (214 conferências)
+npm test                     # as duas suítes (214 + 46 conferências)
 node backup.js agora         # cópia do banco do site
 ```
 
-A suíte sobe o servidor numa porta própria, cria os registros dela com prefixo
-`ZZ QA` e apaga **por id** no fim. Se ela morrer no meio, os restos ficam
-visíveis com esse prefixo e somem na próxima execução — ou com
+`testar-restrito.cjs` sobe o servidor numa porta própria, cria os registros dela
+com prefixo `ZZ QA` e apaga **por id** no fim. Se morrer no meio, os restos
+ficam visíveis com esse prefixo e somem na próxima execução — ou com
 `node testar-restrito.cjs --limpar`.
+
+`testar-site.cjs` roda contra um **banco descartável** (`SITE_DB`) numa pasta
+temporária: não encosta no `data/site.db` do cliente e não precisa da senha do
+painel.
 
 ---
 

@@ -30,11 +30,14 @@ const restrito = require("./restrito");
    servidor). Tem de ser ANTES de qualquer consulta ao Postgres. */
 carregarAmbiente(__dirname);
 
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.5.0";
 const PORTA = Number(process.env.PORT) || 5193;
 const HOST = process.env.HOST || "127.0.0.1";
 const RAIZ = __dirname;
-const ARQ_BANCO = path.join(RAIZ, "data", "site.db");
+/* O caminho do banco é configurável para a SUÍTE poder subir o servidor contra
+   um banco descartável. Sem isso, testar o painel exigiria a senha do cliente —
+   e eu não leio senha de cliente. */
+const ARQ_BANCO = process.env.SITE_DB || path.join(RAIZ, "data", "site.db");
 
 const SITE = {
   nome: "Borda Tudo",
@@ -226,9 +229,14 @@ const PADROES = {
   /* --- operação --- */
   senha_hash: "",
   visit_salt: "",
-  manutencao: "0",
-  /* NAO existe `manutencao_texto`. A pagina de manutencao tem o texto
-     embutido de proposito: ela aparece justamente quando a publicacao pode
+  /* TRÊS estados, não um interruptor de dois.
+     "em construção" e "em manutenção" dizem coisas diferentes a quem chega:
+     manutenção promete que o site volta, construção diz que ele ainda não
+     nasceu. Prometer volta de um site que nunca esteve no ar é mentira, e é
+     a primeira impressão que a empresa dá. */
+  site_estado: "no-ar",         // no-ar | construcao | manutencao
+  /* NAO existe texto configuravel para essas paginas. Elas tem o texto
+     embutido de proposito: aparecem justamente quando a publicacao pode
      nao ter rodado. Um ajuste no painel que a pagina nunca le e pior que
      ajuste nenhum — alguem edita, salva, publica e nada muda. */
   analytics_id: "",
@@ -238,6 +246,26 @@ const PADROES = {
 const pegar = db.prepare("SELECT value FROM settings WHERE key = ?");
 const porFora = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
 for (const [k, v] of Object.entries(PADROES)) porFora.run(k, v);
+
+/* O `manutencao` de "0"/"1" virou `site_estado` com três valores. A conversão
+   roda uma vez, no lugar em que o banco é preparado: um site que já estivesse
+   EM MANUTENÇÃO voltaria ao ar sozinho no primeiro `git pull` se a chave nova
+   nascesse com o padrão. Depois de converter, a chave velha sai — duas chaves
+   dizendo a mesma coisa acabam discordando. */
+{
+  const velho = pegar.get("manutencao");
+  if (velho) {
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'site_estado'")
+      .run(velho.value === "1" ? "manutencao" : "no-ar");
+    db.prepare("DELETE FROM settings WHERE key = 'manutencao'").run();
+    console.log(`  · situação do site migrada: manutencao=${velho.value} → site_estado`);
+  }
+}
+
+/* Página fora do ar por estado. O `/admin` e o `/assets` continuam servindo,
+   senão não haveria como desligar; o `/restrito` é tratado antes disto, porque
+   a produção da fábrica não para quando o site institucional para. */
+const PAGINA_DO_ESTADO = { construcao: "construcao.html", manutencao: "manutencao.html" };
 
 if (!pegar.get("senha_hash")?.value) {
   db.prepare("UPDATE settings SET value = ? WHERE key = 'senha_hash'").run(gerarHash("borda-admin"));
@@ -811,11 +839,21 @@ const servidor = http.createServer(async (req, res) => {
   if (req.method !== "GET" && req.method !== "HEAD")
     return responder(res, 405, { error: "método não permitido" });
 
-  /* Manutenção: o painel continua acessível, senão não haveria como desligar. */
   const s = S();
-  if (s.manutencao === "1" && !rota.startsWith("/admin") && !rota.startsWith("/assets")) {
-    const p = path.join(RAIZ, "manutencao.html");
-    if (fs.existsSync(p)) return responder(res, 503, fs.readFileSync(p), TIPOS[".html"], { "Retry-After": "600" });
+  const paginaEstado = PAGINA_DO_ESTADO[s.site_estado];
+  /* O favicon passa mesmo com o site fora do ar: a própria página de aviso o
+     pede, e uma aba com o ícone quebrado é a diferença entre "estão
+     trabalhando nisso" e "está tudo quebrado". */
+  if (paginaEstado && !rota.startsWith("/admin") && !rota.startsWith("/assets")
+      && rota !== "/favicon.ico") {
+    const p = path.join(RAIZ, paginaEstado);
+    if (fs.existsSync(p)) {
+      /* 503, e não 200: diz ao Google "isto não é o site, volte depois" em vez
+         de deixá-lo indexar a página de aviso no lugar da home. O `Retry-After`
+         de construção é longo — não adianta o robô voltar em 10 minutos. */
+      return responder(res, 503, fs.readFileSync(p), TIPOS[".html"],
+        { "Retry-After": s.site_estado === "construcao" ? "86400" : "600" });
+    }
   }
 
   /* ------------------------------------------------------- arquivo ------ */
@@ -968,6 +1006,10 @@ async function rotasApi(req, res, rota, url) {
     let n = 0;
     for (const [k, v] of Object.entries(corpo)) {
       if (!CHAVES.has(k)) continue;
+      /* Valor fora da lista aqui tiraria o site do ar sem página nenhuma para
+         mostrar — e o painel continuaria dizendo que está tudo certo. */
+      if (k === "site_estado" && !["no-ar", "construcao", "manutencao"].includes(String(v)))
+        return responder(res, 400, { error: "situação do site inválida" });
       gravar.run(String(v ?? ""), k); n++;
     }
     return responder(res, 200, { ok: true, gravados: n });
