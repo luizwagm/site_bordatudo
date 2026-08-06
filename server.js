@@ -30,7 +30,7 @@ const restrito = require("./restrito");
    servidor). Tem de ser ANTES de qualquer consulta ao Postgres. */
 carregarAmbiente(__dirname);
 
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.4.0";
 const PORTA = Number(process.env.PORT) || 5193;
 const HOST = process.env.HOST || "127.0.0.1";
 const RAIZ = __dirname;
@@ -784,7 +784,20 @@ const servidor = http.createServer(async (req, res) => {
     }
     if (rota === "/restrito/" || rota === "/restrito/index.html") return servirRestrito(req, res);
     try {
-      return await restrito.rotas(req, res, rota, limitador, ipDoCliente);
+      /* Os dados da empresa vêm do painel do SITE (SQLite), não de uma segunda
+         cópia dentro do /restrito. Duas cópias divergiriam, e a errada seria a
+         que sai impressa no recibo que o cliente leva embora. */
+      const c = S();
+      const empresa = {
+        nome: SITE.nomeCompleto,
+        curto: SITE.nome,
+        cnpj: c.cnpj && c.cnpj !== "0" ? c.cnpj : "",
+        endereco: c.endereco || `${SITE.cidade}, ${SITE.uf}`,
+        telefone: c.whatsapp || "",
+        email: c.email || "",
+        versao: APP_VERSION,
+      };
+      return await restrito.rotas(req, res, rota, limitador, ipDoCliente, empresa);
     } catch (e) {
       console.error("  ✖ /restrito:", e.message);
       if (!res.headersSent) {

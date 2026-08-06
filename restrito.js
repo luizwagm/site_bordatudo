@@ -257,6 +257,323 @@ function gravarFoto(nome, dados) {
 }
 
 /* ==========================================================================
+   3d. RECIBO DO LOTE
+
+   Sai do SERVIDOR já pronto, e não montado na tela, por três motivos:
+
+   · é papel que o cliente leva embora — precisa ser o que está no banco no
+     momento da impressão, não o que estava na tela desde manhã;
+   · `@page` (tamanho e orientação do papel) só existe em folha de estilo;
+     não dá para escolher retrato ou paisagem sem gerar a página;
+   · abre em aba própria, então o "imprimir" do navegador imprime o recibo e
+     não o sistema inteiro em volta.
+   ========================================================================== */
+const escH = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const N_BR = new Intl.NumberFormat("pt-BR");
+const nBr = (v) => N_BR.format(Number(v || 0));
+
+function dataBr(d) {
+  if (!d) return "—";
+  const x = new Date(d);
+  return x.toLocaleDateString("pt-BR") + " " + x.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+function soData(d) {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("pt-BR");
+}
+
+/* O detalhe do lote é montado UMA vez e serve à tela e ao recibo. Se cada um
+   somasse por conta própria, o papel que o cliente leva embora poderia
+   discordar da tela em que a nota foi conferida — e não haveria como saber
+   qual dos dois estava certo. */
+async function detalheDoLote(lote) {
+  const fichas = await Q.all(
+    `SELECT f.*, u.nome AS operador_nome, d.nome AS desenho_nome,
+            me.nome AS mercadoria_nome, co.nome AS cor_nome
+       FROM fichas f
+       JOIN usuarios u ON u.id = f.usuario_id
+       JOIN desenhos d ON d.id = f.desenho_id
+       LEFT JOIN mercadorias me ON me.id = f.mercadoria_id
+       LEFT JOIN cores co ON co.id = f.cor_id
+      WHERE f.lote_id = ? AND f.situacao = 'fechada'
+      ORDER BY f.fechada_em`, lote.id);
+
+  const pecas = fichas.reduce((a, f) => a + Number(f.quantidade || 0), 0);
+  const pontos = fichas.reduce((a, f) => a + Number(f.total_pontos || 0), 0);
+
+  /* Quebra por COR e por MERCADORIA — é para isso que a cor é campo próprio.
+     "1500 abas" fecha somando 100 pretas + 500 brancas + …, e sem a quebra não
+     dá para saber o que ainda falta. */
+  const agrupar = (chave) => {
+    const m = {};
+    for (const f of fichas) {
+      const k = f[chave] || "(não informado)";
+      m[k] = (m[k] || 0) + Number(f.quantidade || 0);
+    }
+    return Object.entries(m).map(([nome, q]) => ({ nome, pecas: q })).sort((a, b) => b.pecas - a.pecas);
+  };
+
+  return {
+    lote, fichas, pecas, pontos,
+    falta: lote.quantidade_prevista === null ? null : Number(lote.quantidade_prevista) - pecas,
+    porCor: agrupar("cor_nome"),
+    porMercadoria: agrupar("mercadoria_nome"),
+    porOperador: agrupar("operador_nome"),
+  };
+}
+
+function reciboDoLote(dados, empresa, opcoes) {
+  const { lote, fichas, pecas, pontos, porCor, porMercadoria, porOperador, cliente } = dados;
+  const paisagem = opcoes.orientacao === "paisagem";
+  const prev = lote.quantidade_prevista == null ? null : Number(lote.quantidade_prevista);
+  const falta = prev == null ? null : prev - pecas;
+
+  /* "(não informado)" NÃO conta como cor. Um lote com duas fichas sem cor
+     anunciaria "2 cores" no papel que o cliente assina — e a quebra logo
+     abaixo mostraria uma cor só. */
+  const SEM = "(não informado)";
+  const nCores = porCor.filter((c) => c.nome !== SEM).length;
+
+  const quebra = (titulo, itens) => !itens.length ? "" : `
+    <div class="quebra">
+      <h3>${escH(titulo)}</h3>
+      <table class="mini"><tbody>
+        ${itens.map((i) => `<tr><td>${escH(i.nome)}</td><td class="n">${nBr(i.pecas)}</td></tr>`).join("")}
+      </tbody></table>
+    </div>`;
+
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escH(lote.codigo)} — recibo de produção</title>
+<style>
+  /* A ORIENTAÇÃO é o motivo de esta página ser gerada e não estática:
+     a regra @page não aceita variável de CSS nem troca por classe. */
+  @page { size: A4 ${paisagem ? "landscape" : "portrait"}; margin: ${paisagem ? "12mm 14mm" : "16mm 15mm"}; }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 12.5px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: #16161c; background: #eceaea; padding: 22px 14px 60px;
+  }
+  .folha {
+    position: relative; overflow: hidden;
+    width: ${paisagem ? "297mm" : "210mm"}; min-height: ${paisagem ? "210mm" : "297mm"};
+    margin: 0 auto; padding: ${paisagem ? "12mm 14mm" : "16mm 15mm"};
+    background: #fff; box-shadow: 0 6px 26px rgb(13 18 64 / .16);
+    /* Na TELA a folha encolhe para caber num notebook; na impressora o
+       @media print devolve o tamanho real. Sem isto, a paisagem obrigava a
+       rolar para o lado só para conferir o recibo antes de mandar imprimir. */
+    max-width: 100%;
+  }
+
+  /* MARCA D'ÁGUA — atrás de tudo, e com print-color-adjust: exact porque o
+     navegador remove fundo na impressão por padrão e ela sumiria justamente
+     no papel, que é onde ela serve para alguma coisa. */
+  .agua {
+    position: absolute; inset: 0; z-index: 0; pointer-events: none;
+    display: flex; align-items: center; justify-content: center;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .agua span {
+    font: 800 ${paisagem ? "116px" : "92px"}/1 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .06em; color: #1e275f; opacity: .055;
+    transform: rotate(-32deg); white-space: nowrap; text-transform: uppercase;
+  }
+  .conteudo { position: relative; z-index: 1; }
+
+  /* ------------------------------------------------------------ cabeçalho */
+  .cabeca { display: flex; gap: 16px; align-items: flex-start;
+    padding-bottom: 10px; border-bottom: 2.5px solid #1e275f; }
+  .cabeca__marca { flex: 1; min-width: 0; }
+  .cabeca__marca b { display: block; font-size: 19px; letter-spacing: -.01em; color: #1e275f; }
+  .cabeca__marca span { display: block; font-size: 11.5px; color: #55555f; }
+  .cabeca__doc { text-align: right; white-space: nowrap; }
+  .cabeca__doc b { display: block; font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: #c03b0c; }
+  .cabeca__doc .cod { font: 800 22px ui-monospace, Consolas, monospace; letter-spacing: .02em; }
+  .cabeca__doc .em { font-size: 11px; color: #55555f; }
+
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .1em;
+    color: #55555f; margin: 16px 0 6px; }
+  h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: #55555f; margin: 0 0 5px; }
+
+  .campos { display: grid; grid-template-columns: repeat(${paisagem ? 4 : 3}, 1fr); gap: 8px 16px; }
+  .campo b { display: block; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: .06em; color: #77778a; }
+  .campo span { display: block; font-size: 13px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  th, td { padding: 5px 7px; text-align: left; border-bottom: 1px solid #e2e2ea; }
+  th { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em;
+    color: #55555f; background: #f2f2f6; border-bottom: 1.5px solid #c6c6d2;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  td.n, th.n { text-align: right; font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
+  tfoot td { font-weight: 800; border-top: 1.5px solid #1e275f; border-bottom: 0; }
+
+  .quebras { display: grid; grid-template-columns: repeat(${paisagem ? 3 : 3}, 1fr); gap: 14px; }
+  .quebra { border: 1px solid #e2e2ea; border-radius: 3px; padding: 8px 10px; break-inside: avoid; }
+  table.mini td { padding: 3px 0; border-bottom: 1px dotted #e2e2ea; font-size: 11.5px; }
+  table.mini tr:last-child td { border-bottom: 0; }
+
+  .totais { display: flex; gap: 10px; margin-top: 12px; break-inside: avoid; }
+  .total { flex: 1; border: 1.5px solid #1e275f; border-radius: 3px; padding: 8px 12px; text-align: center; }
+  .total b { display: block; font: 800 20px ui-monospace, Consolas, monospace; color: #1e275f; }
+  .total span { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: #55555f; }
+  .total--destaque { background: #1e275f; color: #fff;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .total--destaque b, .total--destaque span { color: #fff; }
+
+  /* ----------------------------------------------------------- assinatura */
+  /* break-inside: avoid no bloco inteiro: assinatura partida entre duas
+     folhas é assinatura que não vale. */
+  .assinaturas { margin-top: ${paisagem ? "16mm" : "22mm"}; break-inside: avoid; }
+  .declaro { font-size: 11.5px; color: #33333d; margin-bottom: ${paisagem ? "12mm" : "16mm"};
+    max-width: 118ch; }
+  .linhas { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .linha { text-align: center; }
+  .linha .risco { border-top: 1px solid #16161c; margin-bottom: 4px; }
+  .linha b { display: block; font-size: 12px; }
+  .linha span { display: block; font-size: 10.5px; color: #55555f; }
+
+  .pe { margin-top: 12mm; padding-top: 6px; border-top: 1px solid #e2e2ea;
+    display: flex; justify-content: space-between; gap: 12px;
+    font-size: 9.5px; color: #77778a; }
+
+  /* ------------------------------------------------------------- controles */
+  .controles {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 9;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 9px 14px; background: #1e275f; color: #fff;
+  }
+  .controles a, .controles button {
+    padding: 7px 13px; border: 1px solid rgb(255 255 255 / .3); border-radius: 3px;
+    background: transparent; color: #fff; font: inherit; font-size: 13px; font-weight: 600;
+    text-decoration: none; cursor: pointer;
+  }
+  .controles a:hover, .controles button:hover { background: rgb(255 255 255 / .14); }
+  .controles .agora { background: #c03b0c; border-color: #c03b0c; }
+  .controles .espaco { flex: 1; }
+  .controles .dica { font-size: 12px; opacity: .75; }
+  body { padding-top: 60px; }
+
+  @media print {
+    body { background: #fff; padding: 0; }
+    .folha { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
+    .controles { display: none; }
+    /* A marca d'água acompanha a folha impressa, não a tela. */
+    .agua { position: fixed; }
+  }
+</style></head><body>
+
+<div class="controles">
+  <button class="agora" onclick="print()">Imprimir</button>
+  <a href="?orientacao=retrato">Retrato</a>
+  <a href="?orientacao=paisagem">Paisagem</a>
+  <span class="espaco"></span>
+  <span class="dica">Orientação atual: <b>${paisagem ? "paisagem" : "retrato"}</b> — escolha a mesma na janela de impressão.</span>
+</div>
+
+<div class="folha">
+  <div class="agua"><span>${escH(empresa.curto || empresa.nome)}</span></div>
+  <div class="conteudo">
+
+    <div class="cabeca">
+      <div class="cabeca__marca">
+        <b>${escH(empresa.nome)}</b>
+        <span>${empresa.cnpj ? "CNPJ " + escH(empresa.cnpj) + " · " : ""}${escH(empresa.endereco)}</span>
+        <span>${[empresa.telefone && "Tel. " + empresa.telefone, empresa.email].filter(Boolean).map(escH).join(" · ")}</span>
+      </div>
+      <div class="cabeca__doc">
+        <b>Recibo de produção</b>
+        <div class="cod">${escH(lote.codigo)}</div>
+        <div class="em">emitido em ${dataBr(opcoes.agora)}</div>
+      </div>
+    </div>
+
+    <h2>Cliente</h2>
+    <div class="campos">
+      <div class="campo"><b>Nome</b><span>${escH(lote.cliente_nome)}</span></div>
+      <div class="campo"><b>CNPJ / CPF</b><span>${escH((cliente && cliente.documento) || "—")}</span></div>
+      <div class="campo"><b>Telefone</b><span>${escH((cliente && cliente.telefone) || "—")}</span></div>
+      <div class="campo"><b>Cidade</b><span>${escH((cliente && cliente.cidade) || "—")}</span></div>
+    </div>
+
+    <h2>Lote</h2>
+    <div class="campos">
+      <div class="campo"><b>Serviço</b><span>${escH(lote.descricao || "—")}</span></div>
+      <div class="campo"><b>Entrada da mercadoria</b><span>${soData(lote.entrada_em)}</span></div>
+      <div class="campo"><b>Combinado</b><span>${prev == null ? "—" : nBr(prev) + " peças"}</span></div>
+      <div class="campo"><b>Situação</b><span>${escH(lote.situacao)}</span></div>
+      <div class="campo"><b>Nota fiscal</b><span>${escH(lote.nota || "—")}</span></div>
+      <div class="campo"><b>${falta != null && falta < 0 ? "Excedente" : "Falta"}</b><span>${
+        falta == null ? "—" : nBr(Math.abs(falta)) + " peças"}</span></div>
+    </div>
+
+    <h2>Produção — ${fichas.length} ficha${fichas.length === 1 ? "" : "s"}</h2>
+    <table>
+      <thead><tr>
+        <th>Data</th><th>Operador</th><th>Desenho</th><th>Mercadoria</th><th>Cor</th>
+        <th class="n">Peças</th><th class="n">Pontos/peça</th><th class="n">Total de pontos</th>
+      </tr></thead>
+      <tbody>${fichas.map((f) => `<tr>
+        <td>${soData(f.fechada_em)}</td>
+        <td>${escH(f.operador_nome)}</td>
+        <td>${escH(f.desenho_nome)}</td>
+        <td>${escH(f.mercadoria_nome || "—")}</td>
+        <td>${escH(f.cor_nome || "—")}</td>
+        <td class="n">${nBr(f.quantidade)}</td>
+        <td class="n">${nBr(f.pontuacao)}</td>
+        <td class="n">${nBr(f.total_pontos)}</td>
+      </tr>`).join("") || '<tr><td colspan="8">Nenhuma ficha neste lote.</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="5">Total</td>
+        <td class="n">${nBr(pecas)}</td><td class="n"></td><td class="n">${nBr(pontos)}</td></tr></tfoot>
+    </table>
+
+    <div class="totais">
+      <div class="total total--destaque"><b>${nBr(pecas)}</b><span>peças produzidas</span></div>
+      <div class="total"><b>${nBr(pontos)}</b><span>pontos bordados</span></div>
+      <div class="total"><b>${nCores}</b><span>cor${nCores === 1 ? "" : "es"}</span></div>
+      <div class="total"><b>${porOperador.length}</b><span>operador${porOperador.length === 1 ? "" : "es"}</span></div>
+    </div>
+
+    <h2>Composição</h2>
+    <div class="quebras">
+      ${quebra("Por cor", porCor)}
+      ${quebra("Por mercadoria", porMercadoria)}
+      ${quebra("Por operador", porOperador)}
+    </div>
+
+    <div class="assinaturas">
+      <p class="declaro">Declaro que recebi as peças relacionadas neste recibo, no total de
+      <b>${nBr(pecas)} peça${pecas === 1 ? "" : "s"}</b>, conferidas e nas condições descritas acima.</p>
+      <div class="linhas">
+        <div class="linha">
+          <div class="risco"></div>
+          <b>${escH(empresa.nome)}</b>
+          <span>${empresa.cnpj ? "CNPJ " + escH(empresa.cnpj) : "quem entregou"}</span>
+        </div>
+        <div class="linha">
+          <div class="risco"></div>
+          <b>${escH(lote.cliente_nome)}</b>
+          <span>${(cliente && cliente.documento) ? escH(cliente.documento) : "nome legível, documento e data"}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="pe">
+      <span>${escH(lote.codigo)} · emitido por ${escH(opcoes.porQuem)} em ${dataBr(opcoes.agora)}</span>
+      <span>${escH(empresa.curto || empresa.nome)}${empresa.versao ? " · sistema v" + escH(empresa.versao) : ""}</span>
+    </div>
+
+  </div>
+</div>
+</body></html>`;
+}
+
+/* ==========================================================================
    4. CADASTROS — uma definição, cinco telas
 
    As cinco tabelas de apoio (clientes, desenhos, mercadorias, cores, máquinas)
@@ -350,7 +667,12 @@ function erroDeBanco(e, def) {
 /* ==========================================================================
    5. ROTAS
    ========================================================================== */
-async function rotas(req, res, caminho, limitador, ipDoCliente) {
+async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
+  /* Sem os dados da empresa o recibo sairia com o cabeçalho em branco — e um
+     recibo sem quem emitiu não é recibo. O padrão aqui é rede de segurança
+     para quem chamar `rotas()` de um teste, não para produção. */
+  empresa = empresa || { nome: "Borda Tudo", curto: "Borda Tudo", cnpj: "", endereco: "", telefone: "", email: "", versao: "" };
+
   /* ---------------------------------------------------------- entrar ---- */
   if (caminho === "/restrito/api/entrar" && req.method === "POST") {
     const ip = ipDoCliente(req);
@@ -997,49 +1319,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente) {
       return responder(res, 200, { ok: true, anexadas: Number(n.c), pedidas: ids.length });
     }
 
-    if (req.method === "GET") {
-      const fichas = await Q.all(
-        `SELECT f.*, u.nome AS operador_nome, d.nome AS desenho_nome,
-                me.nome AS mercadoria_nome, co.nome AS cor_nome
-           FROM fichas f
-           JOIN usuarios u ON u.id = f.usuario_id
-           JOIN desenhos d ON d.id = f.desenho_id
-           LEFT JOIN mercadorias me ON me.id = f.mercadoria_id
-           LEFT JOIN cores co ON co.id = f.cor_id
-          WHERE f.lote_id = ? AND f.situacao = 'fechada'
-          ORDER BY f.fechada_em`, id);
-
-      const pecas = fichas.reduce((a, f) => a + Number(f.quantidade || 0), 0);
-      const pontos = fichas.reduce((a, f) => a + Number(f.total_pontos || 0), 0);
-
-      /* Quebra por COR e por MERCADORIA — é para isso que a cor é campo
-         próprio. "1500 abas" fecha somando 100 pretas + 500 brancas + …, e sem
-         a quebra não dá para saber o que ainda falta. */
-      const agrupar = (chave, rotulo) => {
-        const m = {};
-        for (const f of fichas) {
-          const k = f[chave] || "(não informado)";
-          m[k] = (m[k] || 0) + Number(f.quantidade || 0);
-        }
-        return Object.entries(m).map(([nome, pecas]) => ({ nome, pecas }))
-          .sort((a, b) => b.pecas - a.pecas);
-      };
-
-      const porOperador = {};
-      for (const f of fichas) {
-        const k = f.operador_nome || "?";
-        porOperador[k] = (porOperador[k] || 0) + Number(f.quantidade || 0);
-      }
-
-      return responder(res, 200, {
-        lote, fichas, pecas, pontos,
-        falta: lote.quantidade_prevista === null ? null : Number(lote.quantidade_prevista) - pecas,
-        porCor: agrupar("cor_nome"),
-        porMercadoria: agrupar("mercadoria_nome"),
-        porOperador: Object.entries(porOperador).map(([nome, pecas]) => ({ nome, pecas }))
-          .sort((a, b) => b.pecas - a.pecas),
-      });
-    }
+    if (req.method === "GET") return responder(res, 200, await detalheDoLote(lote));
 
     if (req.method === "PUT") {
       const corpo = (await lerCorpo(req)) || {};
@@ -1167,6 +1447,32 @@ async function rotas(req, res, caminho, limitador, ipDoCliente) {
        o token nunca autenticou. Serve para quando um adesivo se perde ou a
        máquina muda de lugar. */
     return responder(res, 200, { ok: true, token });
+  }
+
+  /* O RECIBO DO LOTE — página feita para sair na impressora e ser assinada.
+     Abre em aba própria justamente para o "imprimir" do navegador pegar o
+     recibo, e não o sistema inteiro em volta dele. */
+  const mRecibo = /^\/restrito\/lotes\/(\d+)\/recibo$/.exec(caminho);
+  if (mRecibo && req.method === "GET") {
+    const lote = await Q.get(
+      `SELECT l.*, c.nome AS cliente_nome FROM lotes l JOIN clientes c ON c.id = l.cliente_id WHERE l.id = ?`,
+      Number(mRecibo[1]));
+    if (!lote) return responder(res, 404, { error: "lote não encontrado" });
+
+    const dados = await detalheDoLote(lote);
+    dados.cliente = await Q.get(
+      "SELECT nome, documento, telefone, email, cidade FROM clientes WHERE id = ?", lote.cliente_id);
+
+    const orientacao = new URL(req.url, "http://localhost").searchParams.get("orientacao") === "paisagem"
+      ? "paisagem" : "retrato";
+    const html = reciboDoLote(dados, empresa, {
+      orientacao,
+      agora: new Date(),
+      /* Quem emitiu fica no rodapé. Recibo é documento: meses depois, "quem
+         imprimiu isto" é a primeira pergunta quando o número não bate. */
+      porQuem: sessao.nome || sessao.usuario,
+    });
+    return responder(res, 200, html, { "Content-Type": "text/html; charset=utf-8" });
   }
 
   /* A folha de etiquetas: uma página feita para SAIR NA IMPRESSORA e ser

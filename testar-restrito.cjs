@@ -91,7 +91,12 @@ async function limpar() {
    prefixo exato, e só depois de conferir que nenhuma ficha depende deles. */
 async function limparRestos() {
   const P = "ZZ QA %";
-  const usuarios = await Q.all("SELECT id FROM usuarios WHERE usuario LIKE ?", "zz_qa_%");
+  /* `_` é CORINGA no LIKE, não sublinhado. Sem o ESCAPE, `zz_qa_%` casaria
+     com `zzXqaY…` — e isto é um caminho de DELETE. Um `LIKE` mal escrito já
+     apagou uma tabela inteira num outro projeto meu; aqui o risco era apagar a
+     conta de alguém que só tem a infelicidade de um nome parecido. */
+  const usuarios = await Q.all(
+    "SELECT id FROM usuarios WHERE usuario LIKE ? ESCAPE '!'", "zz!_qa!_%");
   const ids = usuarios.map((u) => u.id);
   if (ids.length) {
     await Q.run("DELETE FROM fichas WHERE usuario_id = ANY(?)", ids);
@@ -682,6 +687,87 @@ async function limparRestos() {
      "a senha nova entra");
   eq((await admin("/restrito/api/usuarios/99999999/senha", "POST")).status, 404,
      "redefinir senha de quem não existe: 404");
+
+  /* ================================================ 12f. RECIBO DO LOTE == */
+  console.log("  12f. recibo do lote");
+  r = await admin(`/restrito/lotes/${lote}/recibo`);
+  eq(r.status, 200, "o recibo responde");
+  ok(r.tipo.includes("text/html"), "sai como HTML", r.tipo);
+
+  const recibo = r.texto;
+  ok(recibo.includes("Recibo de produção"), "tem o título do documento");
+  ok(recibo.includes("LOTE-"), "tem o código do lote");
+  ok(recibo.includes("ZZ QA Cliente A"), "tem o nome do cliente");
+  ok(/class="agua"/.test(recibo), "tem a marca d'água");
+  ok(/print-color-adjust: exact/.test(recibo),
+     "e ela é forçada a sair na impressora — o navegador tira fundo por padrão");
+  ok(recibo.includes("class=\"cabeca\""), "tem cabeçalho");
+  ok(recibo.includes("Declaro que recebi"), "tem a declaração de recebimento");
+  eq((recibo.match(/class="risco"/g) || []).length, 2, "tem DUAS linhas de assinatura");
+  ok(recibo.includes("ZZ QA Admin") || recibo.includes("zz_qa_admin"),
+     "o rodapé diz quem emitiu");
+
+  /* Os números do papel têm de ser os MESMOS da tela. Se cada um somasse por
+     conta própria, o recibo que o cliente leva embora poderia discordar da
+     tela em que a nota foi conferida. */
+  const daTela = await admin("/restrito/api/lotes/" + lote);
+  const totalNoPapel = new Intl.NumberFormat("pt-BR").format(daTela.dados.pecas);
+  ok(recibo.includes(totalNoPapel), `o total do papel é o da tela (${totalNoPapel})`);
+  ok(recibo.includes(new Intl.NumberFormat("pt-BR").format(daTela.dados.pontos)),
+     "e os pontos também");
+  for (const c of daTela.dados.porCor)
+    ok(recibo.includes(c.nome), `a cor ${c.nome} aparece na composição impressa`);
+
+  /* Ficha sem cor entra na composição como "(não informado)", mas NÃO conta
+     como cor no quadro de totais — senão o papel que o cliente assina anuncia
+     uma cor a mais do que a quebra logo abaixo mostra.
+
+     A ficha entra por SQL, e num lote NOVO: o `lote` da seção 8 já está
+     faturado e recusa mudança de composição — que é exatamente o certo, mas
+     faria este teste medir nada. */
+  const fSemCor = await Q.inserir(
+    `INSERT INTO fichas (usuario_id, cliente_id, desenho_id, pontuacao, quantidade, situacao, fechada_em)
+     VALUES (?, ?, ?, 100, 9, 'fechada', now()) RETURNING id`, idOper, cliA, desA1);
+  CRIADO.fichas.push(fSemCor);
+  const fComCor = await Q.inserir(
+    `INSERT INTO fichas (usuario_id, cliente_id, desenho_id, pontuacao, quantidade, cor_id, situacao, fechada_em)
+     VALUES (?, ?, ?, 100, 4, ?, 'fechada', now()) RETURNING id`, idOper, cliA, desA1, corPreta);
+  CRIADO.fichas.push(fComCor);
+
+  r = await admin("/restrito/api/lotes", "POST", { cliente_id: cliA, descricao: "ZZ QA sem cor" });
+  const loteSemCor = r.dados.id; CRIADO.lotes.push(loteSemCor);
+  r = await admin(`/restrito/api/lotes/${loteSemCor}/fichas`, "PUT", { fichas: [fSemCor, fComCor] });
+  eq(r.dados.anexadas, 2, "as duas fichas entraram no lote de teste");
+
+  const comSemCor = await admin(`/restrito/lotes/${loteSemCor}/recibo`);
+  ok(comSemCor.texto.includes("(não informado)"), "a ficha sem cor aparece na composição");
+  ok(/<b>1<\/b><span>cor<\/span>/.test(comSemCor.texto),
+     "mas o total diz 1 cor, no singular — não 2 contando o vazio");
+
+  /* A ORIENTAÇÃO é o motivo de o recibo ser gerado no servidor: `@page` não
+     existe sem folha de estilo, e sem ele o navegador sempre imprimiria em pé. */
+  ok(/@page \{ size: A4 portrait/.test(recibo), "sem parâmetro, o papel sai em pé");
+  r = await admin(`/restrito/lotes/${lote}/recibo?orientacao=paisagem`);
+  ok(/@page \{ size: A4 landscape/.test(r.texto), "com ?orientacao=paisagem, sai deitado");
+  ok(r.texto.includes("landscape") && !r.texto.includes("size: A4 portrait"),
+     "e não sobra a regra de retrato junto");
+  r = await admin(`/restrito/lotes/${lote}/recibo?orientacao=inventada`);
+  ok(/@page \{ size: A4 portrait/.test(r.texto), "orientação inventada cai no retrato, sem erro");
+
+  eq((await admin("/restrito/lotes/99999999/recibo")).status, 404, "recibo de lote que não existe: 404");
+  eq((await oper(`/restrito/lotes/${lote}/recibo`)).status, 403, "operador não emite recibo");
+  eq((await ninguem(`/restrito/lotes/${lote}/recibo`)).status, 302,
+     "sem sessão, o recibo não sai — manda para a entrada");
+
+  /* Texto do cliente vai para dentro do HTML do recibo: se não fosse escapado,
+     um nome com `<` quebraria o documento — ou pior. */
+  r = await admin("/restrito/api/clientes", "POST", { nome: 'ZZ QA <script>alert(1)</script>' });
+  CRIADO.clientes.push(r.dados.id);
+  r = await admin("/restrito/api/lotes", "POST", { cliente_id: r.dados.id, descricao: 'aspas " e <b>tags</b>' });
+  CRIADO.lotes.push(r.dados.id);
+  r = await admin(`/restrito/lotes/${r.dados.id}/recibo`);
+  ok(!/<script>alert\(1\)<\/script>/.test(r.texto), "nome com script sai escapado no recibo");
+  ok(r.texto.includes("&lt;script&gt;"), "…como texto visível", "");
 
   /* ==================================================== 13. SAIR ========= */
   console.log("  13. sair");

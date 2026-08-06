@@ -51,6 +51,12 @@ aberta.
   mercadoria e por operador, e quanto falta.
 - **Nota** — marcar como faturado exige o número da nota. Depois disso o lote
   não aceita mais mexer nas fichas.
+- **Recibo** — cada lote imprime um recibo com marca d'água, cabeçalho da
+  empresa, dados do cliente, a produção ficha por ficha, a composição por cor,
+  mercadoria e operador, e **duas linhas de assinatura**. Abre em aba própria,
+  em **retrato** ou **paisagem** — a orientação é escolhida no botão, não só na
+  janela de impressão, porque é ela que define margens, marca d'água e largura
+  da tabela.
 
 ### Cadastros
 
@@ -145,7 +151,7 @@ Um adesivo fotografado não dá acesso a nada. Se um adesivo se perder, use
 
 ```bash
 npm start                    # site + painel + /restrito na porta 5193
-node testar-restrito.cjs     # a suíte do /restrito (187 conferências)
+node testar-restrito.cjs     # a suíte do /restrito (214 conferências)
 node backup.js agora         # cópia do banco do site
 ```
 

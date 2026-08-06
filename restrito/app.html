@@ -161,8 +161,6 @@ textarea { min-height: 74px; resize: vertical; }
 .suspenso__cabeca { padding: 9px 11px 7px; border-bottom: 1px solid #e6e6ee; margin-bottom: 5px; }
 .suspenso__cabeca b { display: block; font-size: 14.5px; }
 .suspenso__cabeca span { font-size: 12px; color: #77778a; }
-.pontinhos { display: grid; grid-template-columns: repeat(3, 3px); gap: 2.5px; }
-.pontinhos i { width: 3px; height: 3px; background: #fff; border-radius: 50%; }
 
 /* ------------------------------------------------------------------ menu - */
 .corpo { display: flex; min-height: calc(100dvh - var(--topo)); }
@@ -401,16 +399,9 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     <span class="topo__espaco"></span>
     <span class="topo__versao">v{{VERSAO}}</span>
 
-    <div class="suspenso">
-      <button class="topo__btn" data-abrir="apps" aria-label="Atalhos">
-        <span class="pontinhos"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
-      </button>
-      <div class="suspenso__lista" id="menu-apps" hidden>
-        <a href="/" target="_blank" rel="noopener">Ver o site</a>
-        <a href="/admin/" target="_blank" rel="noopener">Painel do site</a>
-        <a href="/restrito/etiquetas" target="_blank" rel="noopener" data-so-admin>Etiquetas das máquinas</a>
-      </div>
-    </div>
+    <!-- Os 9 pontinhos (atalhos para o site e o painel) saíram: o /restrito é
+         o sistema de produção e não precisa levar ninguém para o site. As
+         etiquetas das máquinas continuam em Cadastros → Máquinas. -->
 
     <div class="suspenso">
       <button class="topo__btn" data-abrir="conta"><span id="topo-nome">—</span> ▾</button>
@@ -954,7 +945,9 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
              : '<span style="color:var(--verde)">0</span>')) + "</td>" +
           "<td>" + selo(l.situacao) + "</td>" +
           "<td>" + esc(l.nota || "—") + "</td>" +
-          '<td><button class="btn btn--mini" data-acao="abrir-lote" data-id="' + l.id + '">abrir</button></td>' +
+          '<td class="linha-botoes"><button class="btn btn--mini" data-acao="abrir-lote" data-id="' + l.id + '">abrir</button>' +
+          '<a class="btn btn--fantasma btn--mini" href="/restrito/lotes/' + l.id + '/recibo" ' +
+            'target="_blank" rel="noopener">recibo</a></td>' +
           "</tr>";
       }).join("") + "</tbody></table></div>"
       : '<div class="vazio">Nenhum lote ainda. Crie um para começar a juntar as fichas.</div>') +
@@ -992,6 +985,13 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       "</div></div></div>" +
 
       '<div class="bloco"><div class="bloco__topo"><h2>Composição</h2><span class="espaco"></span>' +
+        /* Duas portas para a mesma folha. Escolher a orientação AQUI, e não só
+           na janela de impressão, é o que faz a marca d'água, as margens e a
+           tabela nascerem no formato certo — o navegador só gira o papel. */
+        '<a class="btn btn--fantasma" href="/restrito/lotes/' + id + '/recibo?orientacao=retrato" ' +
+          'target="_blank" rel="noopener">Recibo em pé</a>' +
+        '<a class="btn btn--fantasma" href="/restrito/lotes/' + id + '/recibo?orientacao=paisagem" ' +
+          'target="_blank" rel="noopener">Recibo deitado</a>' +
         '<button class="btn btn--laranja" data-acao="amalgamar" data-id="' + id + '">Juntar fichas</button>' +
         '<button class="btn btn--fantasma" data-acao="editar-lote" data-id="' + id + '">Editar lote</button>' +
       "</div><div class=\"bloco__corpo\">" +
@@ -2072,7 +2072,6 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
        item só é ruído numa tela que se olha de relance, com a máquina rodando. */
     const admin = EU.papel === "admin";
     document.getElementById("menu").hidden = !admin;
-    document.querySelectorAll("[data-so-admin]").forEach((el) => { el.hidden = !admin; });
 
     if (MAQUINA_TOKEN) {
       const chip = document.getElementById("chip-maquina");
