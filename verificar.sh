@@ -95,6 +95,38 @@ else
 fi
 echo
 
+echo "--- Banco do /restrito (PostgreSQL) ---"
+# No servidor as credenciais vêm de /etc/bordatudo.env; na máquina de quem
+# desenvolve, do .env do projeto. Conferir os dois deixa este script útil nos
+# dois lugares — e é justamente aqui que se quer saber se falta o arquivo.
+if [ ! -f /etc/bordatudo.env ] && [ ! -f .env ]; then
+  echo "  sem /etc/bordatudo.env nem .env — o /restrito não tem como falar com o banco"
+else
+  node -e '
+    const { Q, carregarAmbiente } = require("./pg.js");
+    carregarAmbiente(__dirname);
+    (async () => {
+      /* Conta as tabelas que importam. "Conectou" não basta: um banco vazio
+         conecta igualzinho, e a diferença só aparece quando o operador tenta
+         abrir a ficha. */
+      const t = ["usuarios","clientes","desenhos","fichas","lotes","maquinas"];
+      for (const n of t) {
+        const r = await Q.get(`SELECT COUNT(*) c FROM ${n}`);
+        console.log("  " + n.padEnd(14) + r.c);
+      }
+      const admins = await Q.get("SELECT COUNT(*) c FROM usuarios WHERE papel = ? AND ativo", "admin");
+      if (Number(admins.c) === 0) console.log("  ATENÇÃO: nenhum administrador ativo — ninguém entra no /restrito");
+      const abertas = await Q.get("SELECT COUNT(*) c FROM fichas WHERE situacao = ?", "aberta");
+      if (Number(abertas.c)) console.log("  " + abertas.c + " ficha(s) aberta(s) agora (operador na máquina)");
+    })().catch((e) => {
+      console.log("  ERRO ao falar com o Postgres: " + String(e.message).split("\n")[0]);
+      console.log("  Confira:  systemctl status postgresql@*-main   (a unit `postgresql` mente: ela é fachada)");
+      process.exitCode = 1;
+    }).finally(() => Q.fechar());
+  ' 2>/dev/null || echo "  não consegui consultar (veja a mensagem acima)"
+fi
+echo
+
 echo "--- Freio de tentativas de senha ---"
 if [ -f data/limites.json ]; then
   node -e '

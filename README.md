@@ -104,6 +104,10 @@ extensão — um `.png` que na verdade é HTML é recusado.
 
 ## Instalação do /restrito
 
+> **Para subir no servidor, o roteiro completo está em [SUBIR.md](SUBIR.md)** —
+> com o que conferir a cada passo. O que vem abaixo é o resumo, e serve para a
+> máquina de quem desenvolve.
+
 O banco é criado por você, no seu terminal — eu nunca peço senha de superusuário.
 
 ```bash
@@ -177,7 +181,7 @@ Um adesivo fotografado não dá acesso a nada. Se um adesivo se perder, use
 ```bash
 npm start                    # site + painel + /restrito na porta 5193
 npm test                     # as duas suítes (214 + 46 conferências)
-node backup.js agora         # cópia do banco do site
+node backup.js agora         # cópia dos DOIS bancos (site.db + pg_dump)
 ```
 
 `testar-restrito.cjs` sobe o servidor numa porta própria, cria os registros dela
@@ -193,8 +197,10 @@ painel.
 
 ## Operação no servidor
 
+Roteiro de primeira subida: **[SUBIR.md](SUBIR.md)**.
+
 ```bash
-./deploy.sh                  # publica (faz backup antes)
+./deploy.sh                  # atualiza (backup dos DOIS bancos + migrações)
 ./verificar.sh               # confere que subiu
 systemctl status bordatudo
 journalctl -u bordatudo -n 50

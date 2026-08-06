@@ -167,6 +167,43 @@ else
   amarelo "     ainda não existe banco (primeira instalação)"
 fi
 
+# ------------------------------------------------- 1b. backup do Postgres
+# O banco do /restrito guarda o que virou NOTA. O `site.db` some e alguém
+# reescreve o texto; este some e não há como reescrever. Vem ANTES do pull
+# porque o pull pode trazer uma migração — e migração sem dump é aposta.
+azul "1b/7 Backup do Postgres (/restrito)"
+if [ -f /etc/bordatudo.env ] && command -v pg_dump >/dev/null 2>&1; then
+  # shellcheck disable=SC1091
+  set -a; . /etc/bordatudo.env; set +a
+  PGDB="${PGDATABASE:-bordatudo_producao}"
+  DUMP="$BACKUP_DIR/$PGDB.$(date +%Y-%m-%d_%H%M%S).sql"
+  if PGPASSWORD="$PGPASSWORD" pg_dump -h "${PGHOST:-127.0.0.1}" -p "${PGPORT:-5432}" \
+       -U "${PGUSER:-bordatudo}" -d "$PGDB" --no-owner --no-privileges -f "$DUMP" 2>/tmp/pgdump.$$; then
+    # pg_dump devolve 0 com arquivo vazio quando não lê as tabelas. Guardar um
+    # dump que não restaura é pior que não ter dump: dá segurança falsa.
+    if [ "$(stat -c%s "$DUMP" 2>/dev/null || echo 0)" -gt 200 ]; then
+      verde "     $(basename "$DUMP") ($(du -h "$DUMP" | cut -f1))"
+      ls -1t "$BACKUP_DIR/$PGDB".*.sql 2>/dev/null | tail -n +$((MANTER_BACKUPS + 1)) | xargs -r rm --
+    else
+      rm -f "$DUMP"
+      vermelho "     o dump saiu VAZIO — confira o acesso ao banco antes de seguir"
+      exit 1
+    fi
+  else
+    rm -f "$DUMP"
+    vermelho "     pg_dump FALHOU: $(head -1 /tmp/pgdump.$$)"
+    vermelho "     o /restrito é dado de faturamento — não vou atualizar sem cópia."
+    vermelho "     Para subir mesmo assim (por sua conta):  SEM_BACKUP_PG=1 sudo ./deploy.sh"
+    [ "${SEM_BACKUP_PG:-0}" = "1" ] || exit 1
+  fi
+  rm -f /tmp/pgdump.$$
+elif [ ! -f /etc/bordatudo.env ]; then
+  amarelo "     /etc/bordatudo.env não existe — o /restrito ainda não foi instalado"
+else
+  amarelo "     pg_dump não encontrado — instale com: apt install -y postgresql-client"
+  [ "${SEM_BACKUP_PG:-0}" = "1" ] || exit 1
+fi
+
 # -------------------------------------------------------- 2. inventário
 azul "2/7  Conteúdo atual"
 ANTES=$(inventario)
@@ -225,6 +262,33 @@ if [ -f package.json ]; then
   fi
 else
   amarelo "     sem package.json — nada a instalar"
+fi
+
+# ------------------------------------------------------- 5c. migrações
+# Os arquivos em sql/ são IF NOT EXISTS / DROP-antes-de-criar: rodar de novo
+# não faz nada. Rodar aqui, e não à mão, é o que impede o caso clássico —
+# código novo no ar contra esquema velho no banco, funcionando em tudo menos
+# na tela que usa a coluna que ainda não existe.
+azul "5c/7 Esquema do /restrito"
+if [ -f /etc/bordatudo.env ] && [ -d sql ]; then
+  FALHOU_SQL=0
+  for arquivo in sql/0[2-9]-*.sql sql/[1-9][0-9]-*.sql; do
+    [ -f "$arquivo" ] || continue
+    if node sql/rodar.cjs "$(basename "$arquivo")" >/tmp/sql.$$ 2>&1; then
+      verde "     $(basename "$arquivo")"
+    else
+      FALHOU_SQL=1
+      vermelho "     $(basename "$arquivo") FALHOU:"
+      sed 's/^/       /' /tmp/sql.$$ | tail -5
+    fi
+  done
+  rm -f /tmp/sql.$$
+  if [ "$FALHOU_SQL" = "1" ]; then
+    vermelho "     O esquema não está em dia. O site sobe, mas o /restrito pode falhar."
+    vermelho "     O dump do passo 1b está em $BACKUP_DIR."
+  fi
+else
+  amarelo "     pulado (o /restrito ainda não foi instalado)"
 fi
 
 # --------------------------------------------------------- 6. devolver

@@ -30,7 +30,7 @@ const restrito = require("./restrito");
    servidor). Tem de ser ANTES de qualquer consulta ao Postgres. */
 carregarAmbiente(__dirname);
 
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.6.0";
 const PORTA = Number(process.env.PORT) || 5193;
 const HOST = process.env.HOST || "127.0.0.1";
 const RAIZ = __dirname;
@@ -661,6 +661,19 @@ const backups = agendarBackups({
   bancos: [ARQ_BANCO],
   manter: 30,
   intervaloHoras: 24,
+
+  /* O Postgres do /restrito entra no MESMO backup diário. Ele guarda o que
+     virou nota: se sumir, ninguém reescreve — a informação só existia ali.
+     Só é copiado quando há senha no ambiente; em máquina de desenvolvimento
+     sem `.env` o backup do site continua rodando normalmente. */
+  postgres: process.env.PGPASSWORD ? {
+    banco: process.env.PGDATABASE || "bordatudo_producao",
+    usuario: process.env.PGUSER || "bordatudo",
+    host: process.env.PGHOST || "127.0.0.1",
+    porta: process.env.PGPORT || 5432,
+    senha: process.env.PGPASSWORD,
+    pgDump: process.env.PG_DUMP || "pg_dump",
+  } : null,
 });
 
 /* ==========================================================================

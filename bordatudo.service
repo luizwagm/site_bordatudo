@@ -18,8 +18,17 @@
 # ==========================================================================
 Description=Borda Tudo — Bordados Computadorizados
 Documentation=https://bordatudo.com
-After=network-online.target
+After=network-online.target postgresql.service
 Wants=network-online.target
+
+# `After`, e NÃO `Requires`, para o Postgres.
+# A unit `postgresql.service` do Debian/Ubuntu é uma FACHADA: ela termina com
+# sucesso quase imediatamente e quem realmente segura o banco é a
+# `postgresql@<versão>-main`. Um `Requires` daria falsa sensação de garantia e,
+# pior, derrubaria o site inteiro numa manutenção do banco — sendo que o site
+# institucional não depende do Postgres em nada. Quem tem de aguentar a
+# ausência do banco é a aplicação: o pool religa sozinho, e o /restrito devolve
+# erro só a quem pediu /restrito.
 
 [Service]
 Type=simple
@@ -35,6 +44,22 @@ RestartSec=3
 Environment=HOST=127.0.0.1
 Environment=PORT=__PORTA__
 Environment=NODE_ENV=production
+
+# CREDENCIAIS DO POSTGRES E CHAVE DOS DADOS.
+# Ficam num arquivo do sistema, fora do projeto e fora do git:
+#
+#     PGPASSWORD=<a senha do papel bordatudo>
+#     DADOS_CHAVE=<32 bytes em hex — openssl rand -hex 32>
+#
+#     install -o root -g __GRUPO__ -m 640 /dev/null /etc/bordatudo.env
+#
+# O modo 640 com grupo do serviço é o ponto: o processo lê, e nenhum outro
+# usuário da máquina lê. `Environment=` aqui dentro não serviria — o conteúdo
+# de uma unit é legível por qualquer um com `systemctl cat`.
+#
+# O `-` na frente faz o serviço subir mesmo sem o arquivo: sem ele, o SITE
+# ficaria fora do ar por falta de uma credencial que só o /restrito usa.
+EnvironmentFile=-/etc/bordatudo.env
 
 # --- contenção do processo -------------------------------------------------
 # Se um dia alguém achar uma falha no app, isto limita o estrago: o serviço não

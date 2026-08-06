@@ -94,9 +94,78 @@ function ultimaCopia(destinoDir, nomeBanco) {
   } catch { return 0; }
 }
 
+/* ==========================================================================
+   POSTGRES — o banco da PRODUÇÃO da fábrica
+
+   O `data/site.db` é conteúdo do site: some, e alguém reescreve. O Postgres do
+   /restrito é o que virou NOTA — quanto cada operador produziu, o que foi
+   faturado. Some, e não há como reescrever: a informação só existia ali.
+
+   `pg_dump` num arquivo de texto, não cópia do diretório do Postgres: o
+   diretório copiado com o banco no ar sai inconsistente, e só se descobre no
+   dia em que se precisa dele.
+   ========================================================================== */
+function copiarPostgres(cfg, motivo) {
+  if (!cfg.postgres) return null;
+  const { spawnSync } = require("node:child_process");
+
+  const arquivo = path.join(cfg.destino, `${cfg.postgres.banco}.${CARIMBO()}.sql`);
+  const r = spawnSync(cfg.postgres.pgDump, [
+    "-h", cfg.postgres.host, "-p", String(cfg.postgres.porta),
+    "-U", cfg.postgres.usuario, "-d", cfg.postgres.banco,
+    "--no-owner", "--no-privileges", "-f", arquivo,
+  ], {
+    /* A senha vai pelo AMBIENTE do processo filho, nunca como argumento:
+       argumento aparece no `ps` para qualquer usuário da máquina. */
+    env: Object.assign({}, process.env, { PGPASSWORD: cfg.postgres.senha || "" }),
+    encoding: "utf8", timeout: 120_000,
+  });
+
+  if (r.error || r.status !== 0) {
+    const porque = (r.error && r.error.message) || (r.stderr || "").split("\n")[0] || `código ${r.status}`;
+    console.error(`  ✖ backup do Postgres FALHOU: ${porque}`);
+    try { fs.unlinkSync(arquivo); } catch {}   // meio dump é pior que nenhum
+    return { ok: false, erro: porque };
+  }
+
+  /* Dump vazio é sinal de que algo deu errado calado — pg_dump devolve 0 e um
+     arquivo de zero byte quando não consegue ler as tabelas. */
+  const bytes = fs.statSync(arquivo).size;
+  if (bytes < 200) {
+    console.error("  ✖ backup do Postgres saiu vazio — não vou guardar um arquivo que não restaura");
+    try { fs.unlinkSync(arquivo); } catch {}
+    return { ok: false, erro: "dump vazio" };
+  }
+
+  const removidos = limparAntigosSql(cfg.destino, cfg.postgres.banco, cfg.manter);
+  console.log(`  · backup ${motivo}: ${path.basename(arquivo)} (${Math.round(bytes / 1024)} KB)` +
+              (removidos ? ` · ${removidos} antigo(s) removido(s)` : ""));
+  return { ok: true, arquivo, bytes };
+}
+
+function limparAntigosSql(destinoDir, nome, manter) {
+  try {
+    const antigos = fs.readdirSync(destinoDir)
+      .filter((f) => f.startsWith(nome + ".") && f.endsWith(".sql"))
+      .sort().reverse().slice(manter);
+    for (const f of antigos) fs.unlinkSync(path.join(destinoDir, f));
+    return antigos.length;
+  } catch { return 0; }
+}
+
+function ultimoSql(destinoDir, nome) {
+  try {
+    return fs.readdirSync(destinoDir)
+      .filter((f) => f.startsWith(nome + ".") && f.endsWith(".sql"))
+      .reduce((max, f) => Math.max(max, fs.statSync(path.join(destinoDir, f)).mtimeMs), 0);
+  } catch { return 0; }
+}
+
 /* Uma rodada de backup de todos os bancos configurados. */
 function rodarBackup(cfg, motivo) {
   const feitos = [];
+  const pg = copiarPostgres(cfg, motivo);
+  if (pg && pg.ok) feitos.push({ banco: cfg.postgres.banco, arquivo: pg.arquivo, bytes: pg.bytes });
   for (const origem of cfg.bancos) {
     const nome = path.basename(origem, ".db");
     const r = copiarBanco(origem, cfg.destino);
@@ -123,6 +192,17 @@ function statusBackup(cfg) {
       ultimo: t ? new Date(t).toISOString() : null,
       horasAtras: t ? (Date.now() - t) / 3600e3 : null, copias };
   });
+  if (cfg.postgres) {
+    const t = ultimoSql(cfg.destino, cfg.postgres.banco);
+    let copias = 0;
+    try {
+      copias = fs.readdirSync(cfg.destino)
+        .filter((f) => f.startsWith(cfg.postgres.banco + ".") && f.endsWith(".sql")).length;
+    } catch {}
+    bancos.unshift({ banco: cfg.postgres.banco, motor: "PostgreSQL",
+      ultimo: t ? new Date(t).toISOString() : null,
+      horasAtras: t ? (Date.now() - t) / 3600e3 : null, copias });
+  }
   return { destino: cfg.destino, intervaloHoras: cfg.intervaloHoras, manter: cfg.manter, bancos };
 }
 
@@ -133,13 +213,17 @@ function agendarBackups(opcoes) {
     bancos: (opcoes.bancos || []).filter(Boolean),
     manter: opcoes.manter || 30,
     intervaloHoras: opcoes.intervaloHoras || 24,
+    postgres: opcoes.postgres || null,
   };
   fs.mkdirSync(cfg.destino, { recursive: true });
 
   const vencido = () => cfg.bancos.some((origem) => {
     const t = ultimaCopia(cfg.destino, path.basename(origem, ".db"));
     return !t || (Date.now() - t) > cfg.intervaloHoras * 3600e3;
-  });
+  }) || (cfg.postgres && (() => {
+    const t = ultimoSql(cfg.destino, cfg.postgres.banco);
+    return !t || (Date.now() - t) > cfg.intervaloHoras * 3600e3;
+  })());
 
   /* No boot, espera 20s antes de copiar: o backup não pode atrasar a subida do
      site. O `unref` impede que estes temporizadores segurem o processo aberto
