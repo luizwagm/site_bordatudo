@@ -24,6 +24,8 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 const { Q } = require("./pg.js");
 const { sanitizarHtml } = require("./html-seguro.js");
 
@@ -76,6 +78,18 @@ setInterval(() => {
    memória por tentativa, o que inviabiliza o ataque em escala.
    ========================================================================== */
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 32 };
+
+/* Quatro blocos de quatro, sem vogais nem 0/O/1/l/I. É senha que se dita por
+   telefone e se digita numa tela de fábrica sem errar — e ainda assim tem
+   entropia de sobra: 16 caracteres de um alfabeto de 28.
+
+   Mora aqui, e não no `criar-usuario.cjs`, porque o painel também gera senha.
+   Duas cópias divergiriam, e a do painel é a que vai ser usada todo dia. */
+function senhaDitavel() {
+  const abc = "bcdfghjkmnpqrstvwxyz23456789";
+  const bloco = () => Array.from({ length: 4 }, () => abc[crypto.randomInt(abc.length)]).join("");
+  return [bloco(), bloco(), bloco(), bloco()].join("-");
+}
 
 function gerarHash(senha) {
   const salt = crypto.randomBytes(16);
@@ -197,6 +211,52 @@ O código identifica a máquina — ele <strong>não</strong> dá acesso ao sist
 }
 
 /* ==========================================================================
+   3c. FOTOS DO DESENHO
+
+   Ficam em `data/desenhos/`, que já está fora do git e fora de `assets/`.
+   O desenho é o produto do cliente: em `assets/` bastaria acertar o nome do
+   arquivo para baixar o bordado de qualquer um, sem estar logado.
+
+   Chegam em base64 dentro do JSON, como no painel do site. Multipart exigiria
+   um analisador próprio ou uma dependência; base64 custa 33% a mais de tráfego
+   e elimina uma superfície inteira de erros de parsing.
+   ========================================================================== */
+const PASTA_FOTOS = path.join(__dirname, "data", "desenhos");
+
+function gravarFoto(nome, dados) {
+  if (!dados) throw new Error("sem arquivo");
+  const ext = String(nome || "").toLowerCase().match(/\.(jpe?g|png|webp|avif)$/)?.[0];
+  if (!ext) throw new Error("formato não aceito — use jpg, png, webp ou avif");
+
+  /* O nome do arquivo é RECONSTRUÍDO, não higienizado. Limpar o que veio do
+     cliente é jogo de gato e rato com `..`, barra, dois-pontos, nome reservado
+     do Windows e caractere invisível. Aqui só a parte legível sobrevive. */
+  const bruto = String(nome).slice(0, String(nome).length - ext.length)
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "desenho";
+  const arquivo = `${bruto}-${crypto.randomBytes(5).toString("hex")}${ext}`;
+
+  const conteudo = Buffer.from(String(dados).replace(/^data:[^,]+,/, ""), "base64");
+  if (!conteudo.length) throw new Error("arquivo vazio");
+  if (conteudo.length > 9e6) throw new Error("imagem acima de 9 MB");
+
+  /* Confere a ASSINATURA do arquivo, não a extensão. Um `.png` que na verdade
+     é HTML seria servido como imagem — mas basta um navegador mais velho
+     resolver adivinhar o tipo para virar script rodando no domínio. */
+  const cabeca = conteudo.subarray(0, 12);
+  const ehImagem =
+    (cabeca[0] === 0xff && cabeca[1] === 0xd8) ||                                   // jpeg
+    cabeca.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) || // png
+    (cabeca.subarray(0, 4).toString() === "RIFF" && cabeca.subarray(8, 12).toString() === "WEBP") ||
+    cabeca.subarray(4, 8).toString() === "ftyp";                                    // avif/heif
+  if (!ehImagem) throw new Error("isso não é uma imagem");
+
+  fs.mkdirSync(PASTA_FOTOS, { recursive: true });
+  fs.writeFileSync(path.join(PASTA_FOTOS, arquivo), conteudo);
+  return arquivo;
+}
+
+/* ==========================================================================
    4. CADASTROS — uma definição, cinco telas
 
    As cinco tabelas de apoio (clientes, desenhos, mercadorias, cores, máquinas)
@@ -210,18 +270,23 @@ O código identifica a máquina — ele <strong>não</strong> dá acesso ao sist
 const CADASTROS = {
   clientes: {
     tabela: "clientes",
-    campos: ["nome", "telefone", "observacao", "ativo"],
+    campos: ["nome", "documento", "telefone", "email", "cidade", "observacao", "ativo"],
     obrigatorios: ["nome"],
     ordem: "nome",
+    /* A lista de clientes cresce para sempre e é onde se procura por nome. */
+    paginavel: true,
+    busca: ["nome", "documento", "telefone", "email", "cidade"],
   },
   desenhos: {
     tabela: "desenhos",
     campos: ["cliente_id", "nome", "pontuacao", "observacao", "ativo"],
     obrigatorios: ["nome", "pontuacao"],
     ordem: "nome",
+    paginavel: true,
+    busca: ["nome"],
   },
   mercadorias: { tabela: "mercadorias", campos: ["nome", "ativo"], obrigatorios: ["nome"], ordem: "nome" },
-  cores:       { tabela: "cores",       campos: ["nome", "ativo"], obrigatorios: ["nome"], ordem: "nome" },
+  cores:       { tabela: "cores",       campos: ["nome", "hex", "ativo"], obrigatorios: ["nome"], ordem: "nome" },
   maquinas:    { tabela: "maquinas",    campos: ["nome", "cabecas", "ativo"], obrigatorios: ["nome"], ordem: "nome" },
 };
 
@@ -242,6 +307,19 @@ function prepararCadastro(def, corpo) {
         const n = Number(s.replace(/\D/g, ""));
         if (!Number.isFinite(n)) throw new Error(`${c} precisa ser um número`);
         v = n;
+      }
+    } else if (c === "hex") {
+      /* O tom da cor. Normaliza para `#rrggbb` minúsculo ANTES do banco: o
+         CHECK só aceita esse formato, e um `#FFF` vindo da tela viraria erro
+         de driver em vez de mensagem que alguém entende. */
+      const s = String(v ?? "").trim().toLowerCase();
+      if (s === "") v = "";
+      else {
+        const curto = /^#?([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(s);
+        const longo = /^#?([0-9a-f]{6})$/.exec(s);
+        if (curto) v = `#${curto[1]}${curto[1]}${curto[2]}${curto[2]}${curto[3]}${curto[3]}`;
+        else if (longo) v = `#${longo[1]}`;
+        else throw new Error("o tom da cor precisa ser um código como #1e275f");
       }
     } else {
       v = String(v ?? "").trim().replace(/\s+/g, " ");
@@ -367,20 +445,60 @@ async function rotas(req, res, caminho, limitador, ipDoCliente) {
          que foi desativado desfaz a desativação na prática. `?todos=1` é para
          a tela de cadastro, onde se quer ver e reativar. */
       const todos = url.searchParams.get("todos") === "1";
-      const onde = todos ? "" : "WHERE ativo";
-      if (def.tabela === "desenhos") {
-        /* O desenho vem com o nome do cliente: a tela mostra "RECIFE1 —
-           Marcela", e sem isso ela teria de cruzar duas listas no navegador. */
-        const linhas = await Q.all(
-          `SELECT d.*, c.nome AS cliente_nome FROM desenhos d
-             LEFT JOIN clientes c ON c.id = d.cliente_id
-             ${todos ? "" : "WHERE d.ativo"} ORDER BY d.nome`);
-        return responder(res, 200, { itens: linhas });
+
+      /* PAGINAÇÃO — só quando a tela PEDE (`?pagina=`). Sem o parâmetro, a
+         resposta é a lista inteira, que é o que as caixas de seleção da tela
+         do operador esperam: paginar um <select> o deixaria com metade das
+         opções, e ninguém perceberia até faltar um cliente. */
+      const pagina = Math.max(1, Number(url.searchParams.get("pagina")) || 0);
+      const paginando = def.paginavel && url.searchParams.has("pagina");
+      const porPagina = Math.min(100, Math.max(5, Number(url.searchParams.get("por")) || 20));
+      const busca = String(url.searchParams.get("busca") || "").trim();
+
+      const onde = [], args = [];
+      if (!todos) onde.push(`${def.tabela === "desenhos" ? "d." : ""}ativo`);
+      if (busca && def.busca) {
+        /* Uma condição por campo, unidas por OU: digitar "857" acha pelo
+           telefone e digitar "marc" acha pelo nome, sem duas caixas de busca. */
+        const p = def.tabela === "desenhos" ? "d." : "";
+        onde.push("(" + def.busca.map((c) => `${p}${c} ILIKE ?`).join(" OR ") + ")");
+        for (const _ of def.busca) args.push(`%${busca}%`);
       }
-      /* `maquinas` não devolve o token na listagem — ele só sai na rota do QR.
-         Token é identificador de adesivo, não dado de tela. */
-      const colunas = def.tabela === "maquinas" ? "id, nome, cabecas, ativo, criado_em" : "*";
-      const linhas = await Q.all(`SELECT ${colunas} FROM ${def.tabela} ${onde} ORDER BY ${def.ordem}`);
+      const clausula = onde.length ? "WHERE " + onde.join(" AND ") : "";
+      const limite = paginando ? `LIMIT ${porPagina} OFFSET ${(pagina - 1) * porPagina}` : "";
+
+      let linhas, total = null;
+      if (def.tabela === "desenhos") {
+        /* O desenho vem com o nome do cliente e a PRIMEIRA foto: a tela mostra
+           "RECIFE1 — Marcela" com a miniatura, e sem isso ela teria de cruzar
+           três consultas no navegador. */
+        linhas = await Q.all(
+          `SELECT d.*, c.nome AS cliente_nome,
+                  (SELECT f.arquivo FROM desenho_fotos f
+                    WHERE f.desenho_id = d.id ORDER BY f.ordem, f.id LIMIT 1) AS capa,
+                  (SELECT COUNT(*) FROM desenho_fotos f WHERE f.desenho_id = d.id) AS fotos
+             FROM desenhos d
+             LEFT JOIN clientes c ON c.id = d.cliente_id
+             ${clausula} ORDER BY d.nome ${limite}`, ...args);
+      } else {
+        /* `maquinas` não devolve o token na listagem — ele só sai na rota do QR.
+           Token é identificador de adesivo, não dado de tela. */
+        const colunas = def.tabela === "maquinas" ? "id, nome, cabecas, ativo, criado_em" : "*";
+        linhas = await Q.all(
+          `SELECT ${colunas} FROM ${def.tabela} ${clausula} ORDER BY ${def.ordem} ${limite}`, ...args);
+      }
+
+      if (paginando) {
+        /* O total sai de uma consulta própria, com os MESMOS filtros. Contar as
+           linhas devolvidas daria sempre "20" e a tela mostraria uma página só. */
+        const t = await Q.get(
+          `SELECT COUNT(*) c FROM ${def.tabela} ${def.tabela === "desenhos" ? "d" : ""} ${clausula}`, ...args);
+        total = Number(t.c);
+        return responder(res, 200, {
+          itens: linhas, total, pagina, porPagina,
+          paginas: Math.max(1, Math.ceil(total / porPagina)),
+        });
+      }
       return responder(res, 200, { itens: linhas });
     }
 
@@ -434,6 +552,113 @@ async function rotas(req, res, caminho, limitador, ipDoCliente) {
       await Q.run(`UPDATE ${def.tabela} SET ativo = FALSE WHERE id = ?`, id);
       return responder(res, 200, { ok: true, desativado: true });
     }
+
+    /* Um cadastro só, para a tela de edição. Ela precisa do registro inteiro
+       — inclusive o que a listagem esconde — e ir buscar na lista paginada
+       daria "não encontrado" para quem está na página 3. */
+    if (req.method === "GET" && id) {
+      const item = def.tabela === "desenhos"
+        ? await Q.get(`SELECT d.*, c.nome AS cliente_nome FROM desenhos d
+                         LEFT JOIN clientes c ON c.id = d.cliente_id WHERE d.id = ?`, id)
+        : await Q.get(`SELECT * FROM ${def.tabela} WHERE id = ?`, id);
+      if (!item) return responder(res, 404, { error: "não encontrado" });
+      if (def.tabela === "maquinas") delete item.token;
+      if (def.tabela === "desenhos")
+        item.fotos = await Q.all(
+          "SELECT id, arquivo, legenda, ordem FROM desenho_fotos WHERE desenho_id = ? ORDER BY ordem, id", id);
+      if (def.tabela === "clientes") {
+        /* Quanto este cliente já rendeu. É a primeira pergunta que se faz ao
+           abrir a ficha de um cliente, e sem isso ela cairia em outra tela. */
+        item.resumo = await Q.get(
+          `SELECT (SELECT COUNT(*) FROM desenhos WHERE cliente_id = $1) desenhos,
+                  (SELECT COUNT(*) FROM lotes    WHERE cliente_id = $1) lotes,
+                  (SELECT COALESCE(SUM(quantidade),0) FROM fichas
+                    WHERE cliente_id = $1 AND situacao = 'fechada') pecas`.replace(/\$1/g, "?"),
+          id, id, id);
+      }
+      return responder(res, 200, item);
+    }
+  }
+
+  /* ==================================================== FOTOS DO DESENHO ==
+     As fotos ficam em `data/desenhos/`, FORA de `assets/`, e saem por uma rota
+     que exige sessão. O desenho é propriedade do cliente: em `assets/` bastaria
+     acertar o nome do arquivo para baixar o bordado de qualquer um, sem login.
+     ====================================================================== */
+  const mFoto = /^\/restrito\/api\/desenhos\/(\d+)\/fotos(?:\/(\d+))?$/.exec(caminho);
+  if (mFoto) {
+    if (sessao.papel !== "admin") return responder(res, 403, { error: "só o administrador mexe nas fotos" });
+    const desenhoId = Number(mFoto[1]);
+    const fotoId = mFoto[2] ? Number(mFoto[2]) : null;
+
+    const desenho = await Q.get("SELECT id FROM desenhos WHERE id = ?", desenhoId);
+    if (!desenho) return responder(res, 404, { error: "desenho não encontrado" });
+
+    if (req.method === "GET" && !fotoId) {
+      return responder(res, 200, {
+        itens: await Q.all(
+          "SELECT id, arquivo, legenda, ordem FROM desenho_fotos WHERE desenho_id = ? ORDER BY ordem, id", desenhoId),
+      });
+    }
+
+    if (req.method === "POST" && !fotoId) {
+      const corpo = (await lerCorpo(req)) || {};
+      let gravado;
+      try { gravado = gravarFoto(corpo.nome, corpo.dados); }
+      catch (e) { return responder(res, 400, { error: e.message }); }
+
+      /* A nova entra no FIM. A primeira foto é a capa da lista, e uma foto
+         acrescentada depois não deve tomar esse lugar sem alguém pedir. */
+      const ultima = await Q.get("SELECT COALESCE(MAX(ordem), -1) o FROM desenho_fotos WHERE desenho_id = ?", desenhoId);
+      const id = await Q.inserir(
+        "INSERT INTO desenho_fotos (desenho_id, arquivo, legenda, ordem) VALUES (?,?,?,?) RETURNING id",
+        desenhoId, gravado, sanitizarHtml(String(corpo.legenda || "")), Number(ultima.o) + 1);
+      return responder(res, 201, { ok: true, id, arquivo: gravado });
+    }
+
+    if (fotoId && (req.method === "DELETE" || req.method === "PUT")) {
+      const foto = await Q.get("SELECT * FROM desenho_fotos WHERE id = ? AND desenho_id = ?", fotoId, desenhoId);
+      if (!foto) return responder(res, 404, { error: "foto não encontrada" });
+
+      if (req.method === "DELETE") {
+        await Q.run("DELETE FROM desenho_fotos WHERE id = ?", fotoId);
+        /* O arquivo sai junto com a linha. Guardar o arquivo de uma foto que
+           ninguém mais vê só enche o disco com imagem que ninguém sabe de quem
+           é — e, se for de um cliente que pediu para apagar, é pior que isso. */
+        try { fs.unlinkSync(path.join(PASTA_FOTOS, foto.arquivo)); } catch {}
+        return responder(res, 200, { ok: true });
+      }
+
+      const corpo = (await lerCorpo(req)) || {};
+      const campos = {};
+      if ("legenda" in corpo) campos.legenda = sanitizarHtml(String(corpo.legenda || ""));
+      if ("ordem" in corpo) campos.ordem = Number(corpo.ordem) || 0;
+      const cols = Object.keys(campos);
+      if (!cols.length) return responder(res, 400, { error: "nada para alterar" });
+      await Q.run(`UPDATE desenho_fotos SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id = ?`,
+        ...cols.map((c) => campos[c]), fotoId);
+      return responder(res, 200, { ok: true });
+    }
+  }
+
+  /* A foto em si. Exige sessão — é o motivo de ela não morar em `assets/`. */
+  const mArquivo = /^\/restrito\/foto\/([A-Za-z0-9._-]+)$/.exec(caminho);
+  if (mArquivo && req.method === "GET") {
+    /* O nome vem da expressão acima, que não deixa passar `/` nem `..`; ainda
+       assim o caminho é conferido depois de resolvido. Duas travas porque uma
+       leitura de arquivo arbitrária vale o servidor inteiro. */
+    const alvo = path.join(PASTA_FOTOS, mArquivo[1]);
+    if (!path.resolve(alvo).startsWith(path.resolve(PASTA_FOTOS) + path.sep) || !fs.existsSync(alvo))
+      return responder(res, 404, { error: "foto não encontrada" });
+    const ext = path.extname(alvo).toLowerCase();
+    res.writeHead(200, {
+      "Content-Type": { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+                        ".webp": "image/webp", ".avif": "image/avif" }[ext] || "application/octet-stream",
+      "Cache-Control": "private, max-age=86400",
+      "X-Robots-Tag": "noindex, nofollow",
+      "Content-Disposition": "inline",
+    });
+    return res.end(fs.readFileSync(alvo));
   }
 
   /* ======================================================================
@@ -860,6 +1085,50 @@ async function rotas(req, res, caminho, limitador, ipDoCliente) {
       "SELECT id, usuario, nome, papel, ativo, criado_em FROM usuarios ORDER BY nome, usuario");
     return responder(res, 200, { itens });
   }
+  if (caminho === "/restrito/api/usuarios" && req.method === "POST") {
+    const corpo = (await lerCorpo(req)) || {};
+    const usuario = String(corpo.usuario || "").trim().toLowerCase();
+    const papel = String(corpo.papel || "operador");
+
+    if (!/^[a-z][a-z0-9._-]{2,31}$/.test(usuario))
+      return responder(res, 400, {
+        error: "o login começa com letra e tem de 3 a 32 caracteres (a-z, 0-9, ponto, hífen ou _)",
+        campo: "usuario",
+      });
+    if (!["admin", "operador"].includes(papel)) return responder(res, 400, { error: "papel inválido" });
+
+    if (await Q.get("SELECT id FROM usuarios WHERE usuario = ?", usuario))
+      return responder(res, 409, { error: `já existe alguém com o login "${usuario}"`, campo: "usuario" });
+
+    /* A SENHA É GERADA, NUNCA DIGITADA por quem cadastra. Um administrador com
+       sete operadores para criar põe "123456" em todos, e o sistema que separa
+       a produção de cada um passa a não separar nada. */
+    const senha = senhaDitavel();
+    const id = await Q.inserir(
+      "INSERT INTO usuarios (usuario, nome, senha_hash, papel) VALUES (?,?,?,?) RETURNING id",
+      usuario, String(corpo.nome || usuario).trim(), gerarHash(senha), papel);
+
+    /* A senha volta UMA vez, para a tela mostrar e a pessoa anotar. Não fica
+       guardada em lugar nenhum além do hash — nem eu nem o administrador
+       conseguem lê-la depois. */
+    return responder(res, 201, { ok: true, id, usuario, senha });
+  }
+
+  const mSenhaUsuario = /^\/restrito\/api\/usuarios\/(\d+)\/senha$/.exec(caminho);
+  if (mSenhaUsuario && req.method === "POST") {
+    const id = Number(mSenhaUsuario[1]);
+    const u = await Q.get("SELECT id, usuario FROM usuarios WHERE id = ?", id);
+    if (!u) return responder(res, 404, { error: "usuário não encontrado" });
+
+    const senha = senhaDitavel();
+    await Q.run("UPDATE usuarios SET senha_hash = ? WHERE id = ?", gerarHash(senha), id);
+
+    /* Redefinir derruba as sessões da pessoa. É o caso "perdi o celular" ou
+       "desconfio que alguém entrou": deixar a sessão viva anularia a redefinição. */
+    for (const [k, s] of sessoes) if (s.usuarioId === id) sessoes.delete(k);
+    return responder(res, 200, { ok: true, usuario: u.usuario, senha });
+  }
+
   const mUsuario = /^\/restrito\/api\/usuarios\/(\d+)$/.exec(caminho);
   if (mUsuario && req.method === "PUT") {
     const id = Number(mUsuario[1]);
@@ -918,6 +1187,6 @@ async function rotas(req, res, caminho, limitador, ipDoCliente) {
 }
 
 module.exports = {
-  rotas, sessaoDe, gerarHash, conferirSenha, prepararCadastro,
+  rotas, sessaoDe, gerarHash, conferirSenha, prepararCadastro, senhaDitavel,
   CADASTROS,
 };

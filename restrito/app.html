@@ -127,7 +127,21 @@ textarea { min-height: 74px; resize: vertical; }
   color: #fff; cursor: pointer; font-size: 14px; font-weight: 600;
 }
 .topo__btn:hover { background: rgb(255 255 255 / .12); }
-.topo__versao { font: 600 11px var(--mono); opacity: .5; }
+.topo__versao { font: 600 11px var(--mono); opacity: .5; white-space: nowrap; }
+
+/* Num celular de 375px, "Eduardo" no canto direito estourava a barra em 24px e
+   a PÁGINA INTEIRA passava a rolar para o lado — inclusive a tela do operador,
+   que é onde isso menos podia acontecer. O nome encurta, a barra aperta, e a
+   versão continua visível: ela é a primeira coisa que se pergunta quando algo
+   não bate com o que a pessoa está vendo. */
+@media (max-width: 520px) {
+  .topo { gap: 7px; padding: 0 9px; }
+  .topo__marca { font-size: 15px; }
+  .topo__btn { padding: 6px 8px; }
+  #topo-nome { display: inline-block; max-width: 68px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; vertical-align: -4px; }
+  .topo__maquina { max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+}
 
 /* Os dois menus do topo são posicionados pelo contêiner, não pela página:
    dentro de `position: sticky`, um menu com `position: fixed` fica preso ao
@@ -167,6 +181,55 @@ textarea { min-height: 74px; resize: vertical; }
 .menu button:hover { background: var(--algodao); }
 .menu button[aria-current="true"] { background: var(--tinta); color: #fff; }
 .principal { flex: 1; min-width: 0; padding: 20px; }
+
+/* O "Cadastros" do menu. Vira uma caixa flutuante, e não uma sanfona que
+   empurra o resto: no celular o menu é uma tira horizontal, e uma sanfona ali
+   empurraria a tela inteira para baixo a cada abertura. */
+.suspenso--menu { display: block; }
+.menu__abre { display: flex; align-items: center; gap: 6px; width: 100%; }
+.menu__abre[aria-current="true"] { background: var(--tinta); color: #fff; }
+.menu__seta { margin-left: auto; opacity: .6; font-size: 12px; }
+.suspenso--menu .suspenso__lista { left: 0; right: auto; top: calc(100% + 4px); min-width: 234px; }
+.suspenso--menu .suspenso__lista button { font-weight: 600; }
+
+/* -------------------------------------------------------------- listas --- */
+.barra-lista { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.barra-lista .busca { flex: 1 1 240px; min-width: 180px; }
+.paginacao { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; padding: 12px 18px; border-top: 1px solid #edeef3; }
+.paginacao__conta { font-size: 13.5px; color: #77778a; }
+.paginacao__botoes { display: flex; gap: 6px; align-items: center; }
+
+/* A miniatura do desenho. `contain` e não `cover`: bordado é forma, e cortar
+   as bordas para preencher o quadrado esconde justamente o contorno. */
+.miniatura { width: 46px; height: 46px; border-radius: var(--raio); object-fit: contain;
+  background: var(--prata-fundo); border: 1px solid #dcdce7; display: block; }
+.miniatura--vazia { display: grid; place-items: center; font-size: 17px; color: #a8a8ba; }
+
+.fotos { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 10px; }
+.foto { border: 1px solid #e4e4ec; border-radius: 6px; overflow: hidden; background: var(--papel); }
+.foto img { width: 100%; height: 108px; object-fit: contain; background: var(--prata-fundo); display: block; }
+.foto__pe { display: flex; gap: 6px; align-items: center; padding: 6px; }
+.foto__pe input { flex: 1; min-width: 0; padding: 5px 7px; font-size: 12.5px; }
+.foto__x { border: 0; background: transparent; color: var(--vermelho); cursor: pointer;
+  font-size: 17px; line-height: 1; padding: 2px 5px; }
+.solta-foto { border: 2px dashed #c8c8d4; border-radius: 8px; padding: 18px; text-align: center;
+  color: #77778a; font-size: 14px; cursor: pointer; }
+.solta-foto:hover, .solta-foto.sobre { border-color: var(--linha); background: #fff6f1; color: var(--linha-botao); }
+
+/* A bolinha da cor. "Bege" escrito não distingue dois beges na mesma remessa. */
+.bolinha { display: inline-block; width: 17px; height: 17px; border-radius: 50%;
+  border: 1px solid rgb(13 18 64 / .2); vertical-align: -3px; margin-right: 7px; }
+.bolinha--vazia { background: repeating-linear-gradient(45deg, #fff, #fff 3px, #d8d8e2 3px, #d8d8e2 6px); }
+.escolhe-cor { display: flex; gap: 9px; align-items: center; }
+.escolhe-cor input[type=color] { width: 52px; height: 42px; padding: 3px; border: 1.5px solid #ccccd6;
+  border-radius: var(--raio); background: var(--papel); cursor: pointer; flex: none; }
+
+/* A senha aparece UMA vez. Em bloco grande e monoespaçado porque vai ser lida
+   em voz alta ou digitada num celular. */
+.senha-nova { font: 800 clamp(19px, 5vw, 27px)/1.3 var(--mono); letter-spacing: .04em;
+  text-align: center; padding: 18px 14px; border-radius: 8px; word-break: break-all;
+  background: var(--tinta-fundo); color: var(--linha-viva); user-select: all; }
 
 @media (max-width: 860px) {
   .corpo { flex-direction: column; }
@@ -366,9 +429,23 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       <div class="menu__grupo">Administrativo</div>
       <button data-tela="producao">Produção do dia</button>
       <button data-tela="lotes">Lotes e amálgama</button>
+
+      <!-- Cadastros é UM item que abre quatro. São telas que se visitam de vez
+           em quando — quando entra cliente novo ou desenho novo — e ocupar
+           quatro linhas fixas no menu tira o olho das duas que se usa o dia
+           inteiro. -->
       <div class="menu__grupo">Cadastros</div>
-      <button data-tela="cadastros">Tabelas</button>
-      <button data-tela="usuarios">Usuários</button>
+      <div class="suspenso suspenso--menu">
+        <button class="menu__abre" data-abrir="cadastros">
+          <span id="menu-cadastros-rotulo">Cadastros</span><span class="menu__seta">▾</span>
+        </button>
+        <div class="suspenso__lista" id="menu-cadastros" hidden>
+          <button data-tela="clientes">Clientes</button>
+          <button data-tela="desenhos">Desenhos</button>
+          <button data-tela="tabelas">Mercadorias, cores e máquinas</button>
+          <button data-tela="usuarios">Usuários</button>
+        </div>
+      </div>
     </nav>
 
     <main class="principal" id="principal">
@@ -417,7 +494,6 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   var DIA = null;           // resposta de /meu-dia
   var LISTAS = {};          // cadastros carregados sob demanda
   var LOTE_ABERTO = null;   // id do lote em detalhe
-  var CADASTRO_ABA = "clientes";
 
   /* A máquina vem do QR (`?m=<token>`) e fica guardada na aba. Sem guardar,
      qualquer recarregamento perderia a máquina e o operador teria de escanear
@@ -1092,56 +1168,401 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   }
 
   /* ========================================================================
-     8. CADASTROS
-     ====================================================================== */
-  var CAD = {
-    clientes:    { rotulo: "Clientes",    campos: [["nome", "Nome", "text", true], ["telefone", "Telefone", "tel"], ["observacao", "Observação", "textarea"]] },
-    desenhos:    { rotulo: "Desenhos",    campos: [["nome", "Nome do desenho", "text", true], ["cliente_id", "Cliente", "cliente", true], ["pontuacao", "Pontos por peça", "numero", true], ["observacao", "Observação", "textarea"]] },
-    mercadorias: { rotulo: "Mercadorias", campos: [["nome", "Nome", "text", true]] },
-    cores:       { rotulo: "Cores",       campos: [["nome", "Nome", "text", true]] },
-    maquinas:    { rotulo: "Máquinas",    campos: [["nome", "Nome", "text", true], ["cabecas", "Cabeças", "numero"]] },
-  };
+     8. CLIENTES — área própria, lista paginada
 
-  async function pintarCadastros() {
+     A lista de clientes só cresce. Mostrar tudo de uma vez funciona com cinco
+     e trava com quinhentos — e é justamente quando trava que ninguém mais
+     consegue trocar o servidor de lugar.
+     ====================================================================== */
+  var filtroClientes = { pagina: 1, busca: "", todos: true };
+
+  async function pintarClientes() {
     const alvo = document.getElementById("principal");
     alvo.innerHTML = '<div class="carregando">carregando…</div>';
-    const def = CAD[CADASTRO_ABA];
-    const itens = await lista(CADASTRO_ABA, true);
-    const clientes = CADASTRO_ABA === "desenhos" ? await lista("clientes", true) : [];
-    const nomeCliente = (id) => {
-      const c = clientes.filter((x) => String(x.id) === String(id))[0];
-      return c ? c.nome : "—";
-    };
+
+    const q = new URLSearchParams({ pagina: filtroClientes.pagina, por: 20 });
+    if (filtroClientes.busca) q.set("busca", filtroClientes.busca);
+    if (filtroClientes.todos) q.set("todos", "1");
+    const r = await api("/restrito/api/clientes?" + q);
 
     alvo.innerHTML =
-      '<h1 class="titulo-tela">Cadastros</h1>' +
-      '<p class="subtitulo-tela">O vocabulário da fábrica. Cadastro nunca é apagado — é desativado, ' +
+      '<h1 class="titulo-tela">Clientes</h1>' +
+      '<p class="subtitulo-tela">Quem manda a mercadoria. É daqui que sai o nome e o documento da nota.</p>' +
+      '<div class="bloco">' +
+        '<div class="bloco__topo"><div class="barra-lista" style="flex:1">' +
+          '<input class="busca" type="search" id="bc-busca" placeholder="procurar por nome, documento, telefone…" value="' +
+            esc(filtroClientes.busca) + '">' +
+          '<label style="display:flex;gap:7px;align-items:center;font-size:14px;white-space:nowrap">' +
+            '<input type="checkbox" id="bc-todos" style="width:17px;height:17px;accent-color:var(--tinta)"' +
+            (filtroClientes.todos ? " checked" : "") + "> mostrar inativos</label>" +
+          '<button class="btn" data-acao="buscar-clientes">Procurar</button>' +
+          '<button class="btn btn--laranja" data-acao="novo-cliente">Novo cliente</button>' +
+        "</div></div>" +
+        (r.itens.length ? '<div class="rolagem"><table><thead><tr>' +
+          "<th>Nome</th><th>Documento</th><th>Telefone</th><th>Cidade</th><th>Situação</th><th></th>" +
+        "</tr></thead><tbody>" +
+        r.itens.map((c) => "<tr" + (c.ativo ? "" : ' style="opacity:.5"') + ">" +
+          "<td><b>" + esc(c.nome) + "</b></td>" +
+          "<td>" + esc(c.documento || "—") + "</td>" +
+          "<td>" + esc(c.telefone || "—") + "</td>" +
+          "<td>" + esc(c.cidade || "—") + "</td>" +
+          "<td>" + (c.ativo ? '<span class="etiqueta etiqueta--verde">ativo</span>'
+                            : '<span class="etiqueta etiqueta--cinza">inativo</span>') + "</td>" +
+          '<td class="linha-botoes">' +
+            '<button class="btn btn--fantasma btn--mini" data-acao="editar-cliente" data-id="' + c.id + '">abrir</button>' +
+            (c.ativo
+              ? '<button class="btn btn--fantasma btn--mini" data-acao="desativar-cadastro" data-tab="clientes" data-id="' + c.id + '">desativar</button>'
+              : '<button class="btn btn--fantasma btn--mini" data-acao="reativar-cadastro" data-tab="clientes" data-id="' + c.id + '">reativar</button>') +
+          "</td></tr>").join("") +
+        "</tbody></table></div>" + paginacao(r, "clientes")
+        : '<div class="vazio">' + (filtroClientes.busca
+            ? "Nenhum cliente com “" + esc(filtroClientes.busca) + "”."
+            : "Nenhum cliente cadastrado ainda.") + "</div>") +
+      "</div>";
+  }
+
+  /* Um só desenho de paginação para as duas telas. Duas cópias divergiriam, e
+     a que ficasse para trás mostraria "página 3 de 2". */
+  function paginacao(r, tela) {
+    if (r.paginas <= 1) return "";
+    const de = (r.pagina - 1) * r.porPagina + 1;
+    const ate = Math.min(r.total, r.pagina * r.porPagina);
+    return '<div class="paginacao">' +
+      '<span class="paginacao__conta">' + de + "–" + ate + " de " + num(r.total) + "</span>" +
+      '<span class="paginacao__botoes">' +
+        '<button class="btn btn--fantasma btn--mini" data-acao="pagina" data-tela="' + tela +
+          '" data-ir="' + (r.pagina - 1) + '"' + (r.pagina <= 1 ? " disabled" : "") + ">← anterior</button>" +
+        '<span class="paginacao__conta">página ' + r.pagina + " de " + r.paginas + "</span>" +
+        '<button class="btn btn--fantasma btn--mini" data-acao="pagina" data-tela="' + tela +
+          '" data-ir="' + (r.pagina + 1) + '"' + (r.pagina >= r.paginas ? " disabled" : "") + ">próxima →</button>" +
+      "</span></div>";
+  }
+
+  async function modalCliente(id) {
+    const c = id ? await api("/restrito/api/clientes/" + id) : {};
+    const res = c.resumo || null;
+
+    abrirModal({
+      titulo: id ? esc(c.nome) : "Novo cliente",
+      corpo:
+        (res ? '<div class="resumo-dia" style="margin-bottom:18px">' +
+          "<div><b>" + num(res.desenhos) + "</b><span>desenhos</span></div>" +
+          "<div><b>" + num(res.lotes) + "</b><span>lotes</span></div>" +
+          "<div><b>" + num(res.pecas) + "</b><span>peças feitas</span></div>" +
+        "</div>" : "") +
+        '<label class="campo"><span>Nome</span><input type="text" id="cl-nome" value="' +
+          esc(c.nome || "") + '" autocapitalize="words"></label>' +
+        '<div class="grade-form">' +
+          '<label class="campo"><span>CNPJ ou CPF</span><input type="text" id="cl-doc" inputmode="numeric" value="' +
+            esc(c.documento || "") + '" placeholder="00.000.000/0000-00"></label>' +
+          '<label class="campo"><span>Telefone</span><input type="tel" id="cl-fone" value="' +
+            esc(c.telefone || "") + '" placeholder="(81) 90000-0000"></label>' +
+          '<label class="campo"><span>E-mail</span><input type="text" id="cl-email" value="' +
+            esc(c.email || "") + '" autocapitalize="off"></label>' +
+          '<label class="campo"><span>Cidade</span><input type="text" id="cl-cidade" value="' +
+            esc(c.cidade || "") + '" autocapitalize="words"></label>' +
+        "</div>" +
+        '<label class="campo"><span>Observação</span><textarea id="cl-obs" rows="3">' +
+          esc(c.observacao || "") + "</textarea></label>",
+      confirmar: id ? "Salvar" : "Cadastrar",
+      classe: "btn--laranja",
+      aoAbrir: function (caixa) {
+        mascaraDocumento(caixa.querySelector("#cl-doc"));
+        mascaraTelefone(caixa.querySelector("#cl-fone"));
+        setTimeout(() => caixa.querySelector("#cl-nome").focus(), 60);
+      },
+      aoConfirmar: async function (caixa) {
+        const dados = {
+          nome: caixa.querySelector("#cl-nome").value,
+          documento: caixa.querySelector("#cl-doc").value,
+          telefone: caixa.querySelector("#cl-fone").value,
+          email: caixa.querySelector("#cl-email").value,
+          cidade: caixa.querySelector("#cl-cidade").value,
+          observacao: caixa.querySelector("#cl-obs").value,
+        };
+        if (!dados.nome.trim()) throw new Error("O nome é obrigatório.");
+        if (id) await enviar("/restrito/api/clientes/" + id, "PUT", dados);
+        else await enviar("/restrito/api/clientes", "POST", dados);
+        esquecer("clientes");
+        recado("Salvo."); pintarClientes();
+      },
+    });
+  }
+
+  /* CNPJ e CPF na mesma caixa: a fábrica atende os dois, e obrigar a escolher
+     antes de digitar é uma pergunta a mais para quem só quer cadastrar. O
+     formato sai do número de dígitos. */
+  function mascaraDocumento(campo) {
+    if (!campo) return;
+    campo.addEventListener("input", function () {
+      const d = campo.value.replace(/\D/g, "").slice(0, 14);
+      campo.value = d.length <= 11
+        ? d.replace(/^(\d{3})(\d)/, "$1.$2").replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+            .replace(/\.(\d{3})(\d{1,2})$/, ".$1-$2")
+        : d.replace(/^(\d{2})(\d)/, "$1.$2").replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
+            .replace(/\.(\d{3})(\d)/, ".$1/$2").replace(/(\d{4})(\d{1,2})$/, "$1-$2");
+    });
+  }
+  function mascaraTelefone(campo) {
+    if (!campo) return;
+    campo.addEventListener("input", function () {
+      const d = campo.value.replace(/\D/g, "").slice(0, 11);
+      campo.value = d.length <= 10
+        ? d.replace(/^(\d{2})(\d)/, "($1) $2").replace(/(\d{4})(\d{1,4})$/, "$1-$2")
+        : d.replace(/^(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d{1,4})$/, "$1-$2");
+    });
+  }
+
+  /* ========================================================================
+     8b. DESENHOS — área própria, com foto
+
+     O desenho é o que a fábrica vende: nome, cliente e PONTUAÇÃO, que é o
+     número que multiplica a nota. A foto existe para ninguém bordar o
+     "CORECT1" achando que é o "CORECT2".
+     ====================================================================== */
+  var filtroDesenhos = { pagina: 1, busca: "", todos: true };
+
+  async function pintarDesenhos() {
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+
+    const q = new URLSearchParams({ pagina: filtroDesenhos.pagina, por: 20 });
+    if (filtroDesenhos.busca) q.set("busca", filtroDesenhos.busca);
+    if (filtroDesenhos.todos) q.set("todos", "1");
+    const r = await api("/restrito/api/desenhos?" + q);
+
+    alvo.innerHTML =
+      '<h1 class="titulo-tela">Desenhos</h1>' +
+      '<p class="subtitulo-tela">A pontuação daqui é copiada para a ficha quando ela é aberta. ' +
+      "Mudar aqui não mexe no que já foi produzido.</p>" +
+      '<div class="bloco">' +
+        '<div class="bloco__topo"><div class="barra-lista" style="flex:1">' +
+          '<input class="busca" type="search" id="bd-busca" placeholder="procurar pelo nome do desenho…" value="' +
+            esc(filtroDesenhos.busca) + '">' +
+          '<label style="display:flex;gap:7px;align-items:center;font-size:14px;white-space:nowrap">' +
+            '<input type="checkbox" id="bd-todos" style="width:17px;height:17px;accent-color:var(--tinta)"' +
+            (filtroDesenhos.todos ? " checked" : "") + "> mostrar inativos</label>" +
+          '<button class="btn" data-acao="buscar-desenhos">Procurar</button>' +
+          '<button class="btn btn--laranja" data-acao="novo-desenho">Novo desenho</button>' +
+        "</div></div>" +
+        (r.itens.length ? '<div class="rolagem"><table><thead><tr>' +
+          '<th style="width:60px"></th><th>Desenho</th><th>Cliente</th>' +
+          '<th class="num">Pontos/peça</th><th class="num">Fotos</th><th>Situação</th><th></th>' +
+        "</tr></thead><tbody>" +
+        r.itens.map((d) => "<tr" + (d.ativo ? "" : ' style="opacity:.5"') + ">" +
+          "<td>" + (d.capa
+            ? '<img class="miniatura" src="/restrito/foto/' + esc(d.capa) + '" alt="">'
+            : '<span class="miniatura miniatura--vazia">✳</span>') + "</td>" +
+          "<td><b>" + esc(d.nome) + "</b></td>" +
+          "<td>" + esc(d.cliente_nome || "—") + "</td>" +
+          '<td class="num">' + num(d.pontuacao) + "</td>" +
+          '<td class="num">' + (Number(d.fotos) || "—") + "</td>" +
+          "<td>" + (d.ativo ? '<span class="etiqueta etiqueta--verde">ativo</span>'
+                            : '<span class="etiqueta etiqueta--cinza">inativo</span>') + "</td>" +
+          '<td class="linha-botoes">' +
+            '<button class="btn btn--fantasma btn--mini" data-acao="editar-desenho" data-id="' + d.id + '">abrir</button>' +
+            (d.ativo
+              ? '<button class="btn btn--fantasma btn--mini" data-acao="desativar-cadastro" data-tab="desenhos" data-id="' + d.id + '">desativar</button>'
+              : '<button class="btn btn--fantasma btn--mini" data-acao="reativar-cadastro" data-tab="desenhos" data-id="' + d.id + '">reativar</button>') +
+          "</td></tr>").join("") +
+        "</tbody></table></div>" + paginacao(r, "desenhos")
+        : '<div class="vazio">' + (filtroDesenhos.busca
+            ? "Nenhum desenho com “" + esc(filtroDesenhos.busca) + "”."
+            : "Nenhum desenho cadastrado ainda.") + "</div>") +
+      "</div>";
+  }
+
+  async function modalDesenho(id) {
+    const d = id ? await api("/restrito/api/desenhos/" + id) : {};
+    const clientes = await lista("clientes", true);
+
+    abrirModal({
+      titulo: id ? esc(d.nome) : "Novo desenho",
+      corpo:
+        '<label class="campo"><span>Nome do desenho</span><input type="text" id="dz-nome" value="' +
+          esc(d.nome || "") + '"></label>' +
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Cliente</span><select id="dz-cliente">' +
+            opcoes(clientes, d.cliente_id, "— escolha —") + "</select></label>" +
+          '<label class="campo"><span>Pontos por peça</span>' +
+            '<input type="text" inputmode="numeric" id="dz-pontos" value="' +
+            esc(d.pontuacao == null ? "" : d.pontuacao) + '"></label>' +
+        "</div>" +
+        '<label class="campo"><span>Observação</span><textarea id="dz-obs" rows="2">' +
+          esc(d.observacao || "") + "</textarea></label>" +
+        '<div style="margin-top:6px"><span style="display:block;font-size:12.5px;font-weight:700;' +
+          'color:#55555f;text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px">Fotos</span>' +
+        (id
+          ? '<div id="dz-fotos" class="fotos" style="margin-bottom:10px"></div>' +
+            '<div class="solta-foto" id="dz-solta">Clique aqui ou arraste as fotos do desenho' +
+            "<br><small>jpg, png, webp ou avif — até 9 MB cada</small></div>" +
+            '<input type="file" id="dz-arquivo" accept="image/jpeg,image/png,image/webp,image/avif" multiple hidden>'
+          /* Sem id ainda não há onde pendurar a foto. Cadastrar primeiro e
+             reabrir é mais honesto que guardar a imagem em memória e perdê-la
+             se o cadastro for recusado. */
+          : '<p style="margin:0;color:#77778a;font-size:14px">Cadastre o desenho primeiro — ' +
+            "a tela reabre em seguida para você anexar as fotos.</p>") +
+        "</div>",
+      confirmar: id ? "Salvar" : "Cadastrar",
+      classe: "btn--laranja",
+      aoAbrir: function (caixa) {
+        if (id) montarFotos(caixa, id, d.fotos || []);
+        setTimeout(() => caixa.querySelector("#dz-nome").focus(), 60);
+      },
+      aoConfirmar: async function (caixa) {
+        const dados = {
+          nome: caixa.querySelector("#dz-nome").value,
+          cliente_id: caixa.querySelector("#dz-cliente").value,
+          pontuacao: caixa.querySelector("#dz-pontos").value,
+          observacao: caixa.querySelector("#dz-obs").value,
+        };
+        if (!dados.nome.trim()) throw new Error("O nome do desenho é obrigatório.");
+        if (!dados.cliente_id) throw new Error("Escolha o cliente.");
+        if (!String(dados.pontuacao).replace(/\D/g, "")) throw new Error("Informe os pontos por peça.");
+
+        if (id) {
+          await enviar("/restrito/api/desenhos/" + id, "PUT", dados);
+          esquecer("desenhos"); recado("Salvo."); pintarDesenhos();
+        } else {
+          const r = await enviar("/restrito/api/desenhos", "POST", dados);
+          esquecer("desenhos"); pintarDesenhos();
+          recado("Desenho cadastrado — agora as fotos.");
+          setTimeout(() => modalDesenho(r.id), 250);
+        }
+      },
+    });
+  }
+
+  /* A galeria grava DIRETO, sem esperar o "Salvar" do formulário. Enviar uma
+     foto de 5 MB e só descobrir que falhou na hora de salvar o resto seria
+     perder as duas coisas de uma vez. */
+  function montarFotos(caixa, desenhoId, fotos) {
+    const grade = caixa.querySelector("#dz-fotos");
+    const solta = caixa.querySelector("#dz-solta");
+    const arquivo = caixa.querySelector("#dz-arquivo");
+
+    function desenhar(itens) {
+      grade.innerHTML = itens.length ? itens.map((f) =>
+        '<div class="foto" data-foto="' + f.id + '">' +
+          '<img src="/restrito/foto/' + esc(f.arquivo) + '" alt="' + esc(f.legenda || "") + '">' +
+          '<div class="foto__pe">' +
+            '<input type="text" value="' + esc(f.legenda || "") + '" placeholder="legenda">' +
+            '<button type="button" class="foto__x" title="remover">&times;</button>' +
+          "</div></div>").join("")
+        : '<p style="margin:0;color:#8a8a99;font-size:14px">Nenhuma foto ainda.</p>';
+    }
+    async function recarregar() {
+      desenhar((await api("/restrito/api/desenhos/" + desenhoId + "/fotos")).itens);
+    }
+    desenhar(fotos);
+
+    async function enviarArquivos(arquivos) {
+      for (const a of arquivos) {
+        if (a.size > 9e6) { recado(a.name + " passa de 9 MB.", true); continue; }
+        solta.textContent = "enviando " + a.name + "…";
+        try {
+          const dados = await new Promise((ok, falha) => {
+            const l = new FileReader();
+            l.onload = () => ok(l.result);
+            l.onerror = () => falha(new Error("não deu para ler " + a.name));
+            l.readAsDataURL(a);
+          });
+          await enviar("/restrito/api/desenhos/" + desenhoId + "/fotos", "POST", { nome: a.name, dados });
+        } catch (e) { recado(e.message, true); }
+      }
+      solta.innerHTML = "Clique aqui ou arraste as fotos do desenho" +
+        "<br><small>jpg, png, webp ou avif — até 9 MB cada</small>";
+      await recarregar();
+      esquecer("desenhos");
+    }
+
+    solta.addEventListener("click", () => arquivo.click());
+    arquivo.addEventListener("change", () => {
+      enviarArquivos(Array.from(arquivo.files || []));
+      arquivo.value = "";
+    });
+    ["dragenter", "dragover"].forEach((n) => solta.addEventListener(n, (ev) => {
+      ev.preventDefault(); solta.classList.add("sobre");
+    }));
+    ["dragleave", "drop"].forEach((n) => solta.addEventListener(n, (ev) => {
+      ev.preventDefault(); solta.classList.remove("sobre");
+    }));
+    solta.addEventListener("drop", (ev) => {
+      enviarArquivos(Array.from((ev.dataTransfer && ev.dataTransfer.files) || []));
+    });
+
+    grade.addEventListener("click", async function (ev) {
+      const x = ev.target.closest(".foto__x");
+      if (!x) return;
+      if (!confirm("Remover esta foto?")) return;
+      const fid = x.closest("[data-foto]").getAttribute("data-foto");
+      await enviar("/restrito/api/desenhos/" + desenhoId + "/fotos/" + fid, "DELETE");
+      esquecer("desenhos");
+      await recarregar();
+    });
+    /* `focusout`, não `blur`: blur não sobe pela árvore, e a delegação aqui
+       nunca receberia o evento de um campo que nasceu depois. */
+    grade.addEventListener("focusout", async function (ev) {
+      const campo = ev.target.closest("input[type=text]");
+      if (!campo) return;
+      const fid = campo.closest("[data-foto]").getAttribute("data-foto");
+      try { await enviar("/restrito/api/desenhos/" + desenhoId + "/fotos/" + fid, "PUT", { legenda: campo.value }); }
+      catch (e) { recado(e.message, true); }
+    });
+  }
+
+  /* ========================================================================
+     8c. TABELAS — mercadoria, cor e máquina
+
+     Estas três são listas de palavras: nascem uma vez e quase não mudam. Não
+     merecem tela própria; merecem uma aba cada.
+     ====================================================================== */
+  var TAB = {
+    mercadorias: { rotulo: "Mercadorias", campos: [["nome", "Nome", "text"]] },
+    cores:       { rotulo: "Cores",       campos: [["nome", "Nome", "text"], ["hex", "Tom", "cor"]] },
+    maquinas:    { rotulo: "Máquinas",    campos: [["nome", "Nome", "text"], ["cabecas", "Cabeças", "numero"]] },
+  };
+  var TAB_ABA = "mercadorias";
+
+  async function pintarTabelas() {
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+    const def = TAB[TAB_ABA];
+    const itens = await lista(TAB_ABA, true);
+
+    alvo.innerHTML =
+      '<h1 class="titulo-tela">Mercadorias, cores e máquinas</h1>' +
+      '<p class="subtitulo-tela">O vocabulário da fábrica. Nada aqui é apagado — é desativado, ' +
       "para não sumir do que já foi produzido.</p>" +
       '<div class="bloco">' +
-        '<div class="abas">' + Object.keys(CAD).map((k) =>
-          '<button data-cad="' + k + '" aria-current="' + (k === CADASTRO_ABA) + '">' +
-          CAD[k].rotulo + "</button>").join("") + "</div>" +
+        '<div class="abas">' + Object.keys(TAB).map((k) =>
+          '<button data-tab-aba="' + k + '" aria-current="' + (k === TAB_ABA) + '">' +
+          TAB[k].rotulo + "</button>").join("") + "</div>" +
         '<div class="bloco__topo"><h2>' + def.rotulo + "</h2><span class=\"espaco\"></span>" +
-          (CADASTRO_ABA === "maquinas"
+          (TAB_ABA === "maquinas"
             ? '<a class="btn btn--fantasma" href="/restrito/etiquetas" target="_blank" rel="noopener">Imprimir etiquetas</a>' : "") +
-          '<button class="btn btn--laranja" data-acao="novo-cadastro">Novo</button></div>' +
+          '<button class="btn btn--laranja" data-acao="novo-tabela">Novo</button></div>' +
         (itens.length ? '<div class="rolagem"><table><thead><tr>' +
           def.campos.map((c) => "<th>" + c[1] + "</th>").join("") +
           "<th>Situação</th><th></th></tr></thead><tbody>" +
           itens.map((i) => "<tr" + (i.ativo ? "" : ' style="opacity:.5"') + ">" +
             def.campos.map(function (c) {
               const v = i[c[0]];
-              if (c[2] === "cliente") return "<td>" + esc(i.cliente_nome || nomeCliente(v)) + "</td>";
+              if (c[2] === "cor")
+                return "<td>" + (v
+                  ? '<span class="bolinha" style="background:' + esc(v) + '"></span>' +
+                    '<code style="font-size:13px">' + esc(v) + "</code>"
+                  : '<span class="bolinha bolinha--vazia"></span><span style="color:#9a9aab">sem tom</span>') + "</td>";
               if (c[2] === "numero") return '<td class="num">' + num(v) + "</td>";
-              return "<td>" + esc(v || "—") + "</td>";
+              return "<td><b>" + esc(v || "—") + "</b></td>";
             }).join("") +
             "<td>" + (i.ativo ? '<span class="etiqueta etiqueta--verde">ativo</span>'
                               : '<span class="etiqueta etiqueta--cinza">inativo</span>') + "</td>" +
-            '<td class="linha-botoes"><button class="btn btn--fantasma btn--mini" data-acao="editar-cadastro" data-id="' + i.id + '">editar</button>' +
+            '<td class="linha-botoes"><button class="btn btn--fantasma btn--mini" data-acao="editar-tabela" data-id="' + i.id + '">editar</button>' +
             (i.ativo
-              ? '<button class="btn btn--fantasma btn--mini" data-acao="desativar-cadastro" data-id="' + i.id + '">desativar</button>'
-              : '<button class="btn btn--fantasma btn--mini" data-acao="reativar-cadastro" data-id="' + i.id + '">reativar</button>') +
-            (CADASTRO_ABA === "maquinas"
+              ? '<button class="btn btn--fantasma btn--mini" data-acao="desativar-cadastro" data-tab="' + TAB_ABA + '" data-id="' + i.id + '">desativar</button>'
+              : '<button class="btn btn--fantasma btn--mini" data-acao="reativar-cadastro" data-tab="' + TAB_ABA + '" data-id="' + i.id + '">reativar</button>') +
+            (TAB_ABA === "maquinas"
               ? '<a class="btn btn--fantasma btn--mini" href="/restrito/etiquetas?maquina=' + i.id +
                 '" target="_blank" rel="noopener">QR</a>' +
                 '<button class="btn btn--fantasma btn--mini" data-acao="trocar-qr" data-id="' + i.id + '">trocar QR</button>'
@@ -1152,21 +1573,22 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       "</div>";
   }
 
-  async function modalCadastro(id) {
-    const def = CAD[CADASTRO_ABA];
-    const itens = await lista(CADASTRO_ABA, true);
+  async function modalTabela(id) {
+    const def = TAB[TAB_ABA];
+    const itens = await lista(TAB_ABA, true);
     const atual = id ? itens.filter((x) => String(x.id) === String(id))[0] : null;
-    const clientes = await lista("clientes", true);
 
     const corpo = def.campos.map(function (c) {
       const chave = c[0], rotulo = c[1], tipo = c[2];
       const v = atual ? atual[chave] : "";
-      if (tipo === "cliente")
-        return '<label class="campo"><span>' + rotulo + "</span><select data-campo=\"" + chave + "\">" +
-          opcoes(clientes, v, "— escolha —") + "</select></label>";
-      if (tipo === "textarea")
-        return '<label class="campo"><span>' + rotulo + '</span><textarea data-campo="' + chave +
-          '" rows="2">' + esc(v || "") + "</textarea></label>";
+      if (tipo === "cor")
+        return '<label class="campo"><span>' + rotulo +
+          ' <small style="font-weight:600;text-transform:none;color:#8a8a99">(opcional — a bolinha na lista)</small></span>' +
+          '<span class="escolhe-cor">' +
+            '<input type="color" data-cor value="' + esc(v || "#cccccc") + '">' +
+            '<input type="text" data-campo="' + chave + '" value="' + esc(v || "") +
+              '" placeholder="#1e275f" autocapitalize="off" spellcheck="false">' +
+          "</span></label>";
       return '<label class="campo"><span>' + rotulo + '</span><input type="text"' +
         (tipo === "numero" ? ' inputmode="numeric"' : "") + ' data-campo="' + chave +
         '" value="' + esc(v == null ? "" : v) + '"></label>';
@@ -1174,20 +1596,30 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
 
     abrirModal({
       titulo: (id ? "Editar " : "Novo em ") + def.rotulo.toLowerCase(),
-      corpo: corpo + (CADASTRO_ABA === "desenhos"
-        ? '<p style="margin:0;font-size:13.5px;color:#77778a">A pontuação é copiada para a ficha ' +
-          "no momento em que ela é aberta. Mudar aqui não mexe no que já foi produzido.</p>" : ""),
+      corpo: corpo,
       confirmar: id ? "Salvar" : "Cadastrar",
       classe: "btn--laranja",
+      aoAbrir: function (caixa) {
+        /* Os dois campos da cor andam juntos: a paleta escreve no texto e o
+           texto move a paleta. Sem isso, quem digita `#1e275f` veria a bolinha
+           continuar cinza e acharia que não pegou. */
+        const paleta = caixa.querySelector("[data-cor]");
+        const texto = caixa.querySelector('[data-campo="hex"]');
+        if (!paleta || !texto) return;
+        paleta.addEventListener("input", () => { texto.value = paleta.value; });
+        texto.addEventListener("input", function () {
+          if (/^#[0-9a-fA-F]{6}$/.test(texto.value.trim())) paleta.value = texto.value.trim();
+        });
+      },
       aoConfirmar: async function (caixa) {
         const dados = {};
         caixa.querySelectorAll("[data-campo]").forEach(function (el) {
           dados[el.getAttribute("data-campo")] = el.value;
         });
-        if (id) await enviar("/restrito/api/" + CADASTRO_ABA + "/" + id, "PUT", dados);
-        else await enviar("/restrito/api/" + CADASTRO_ABA, "POST", dados);
-        esquecer(CADASTRO_ABA);
-        recado("Salvo."); pintarCadastros();
+        if (id) await enviar("/restrito/api/" + TAB_ABA + "/" + id, "PUT", dados);
+        else await enviar("/restrito/api/" + TAB_ABA, "POST", dados);
+        esquecer(TAB_ABA);
+        recado("Salvo."); pintarTabelas();
       },
     });
   }
@@ -1201,34 +1633,118 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     const r = await api("/restrito/api/usuarios");
     alvo.innerHTML =
       '<h1 class="titulo-tela">Usuários</h1>' +
-      '<p class="subtitulo-tela">Quem entra no sistema. Senha nova só pelo terminal do servidor — ' +
-      "ninguém, nem o administrador, lê a senha de outra pessoa.</p>" +
-      '<div class="bloco"><div class="rolagem"><table><thead><tr>' +
-        "<th>Usuário</th><th>Nome</th><th>Papel</th><th>Situação</th><th>Desde</th><th></th>" +
-      "</tr></thead><tbody>" +
-      r.itens.map((u) => "<tr" + (u.ativo ? "" : ' style="opacity:.5"') + ">" +
-        "<td><b>" + esc(u.usuario) + "</b></td><td>" + esc(u.nome || "—") + "</td>" +
-        "<td>" + (u.papel === "admin"
-          ? '<span class="etiqueta etiqueta--verde">administrador</span>'
-          : '<span class="etiqueta etiqueta--cinza">operador</span>') + "</td>" +
-        "<td>" + (u.ativo ? "ativo" : "inativo") + "</td>" +
-        "<td>" + dataHora(u.criado_em) + "</td>" +
-        '<td class="linha-botoes">' +
-          '<button class="btn btn--fantasma btn--mini" data-acao="papel-usuario" data-id="' + u.id +
-          '" data-papel="' + (u.papel === "admin" ? "operador" : "admin") + '">' +
-          (u.papel === "admin" ? "tornar operador" : "tornar administrador") + "</button>" +
-          '<button class="btn btn--fantasma btn--mini" data-acao="ativo-usuario" data-id="' + u.id +
-          '" data-ativo="' + (u.ativo ? "0" : "1") + '">' + (u.ativo ? "desativar" : "reativar") + "</button>" +
-        "</td></tr>").join("") +
-      "</tbody></table></div></div>" +
+      '<p class="subtitulo-tela">Quem entra no sistema. A senha é sempre <b>gerada</b> e mostrada uma vez — ' +
+      "ninguém, nem o administrador, lê a senha de outra pessoa depois.</p>" +
+      '<div class="bloco">' +
+        '<div class="bloco__topo"><h2>Contas</h2><span class="espaco"></span>' +
+          '<button class="btn btn--laranja" data-acao="novo-usuario">Novo usuário</button></div>' +
+        '<div class="rolagem"><table><thead><tr>' +
+          "<th>Login</th><th>Nome</th><th>Papel</th><th>Situação</th><th>Desde</th><th></th>" +
+        "</tr></thead><tbody>" +
+        r.itens.map((u) => "<tr" + (u.ativo ? "" : ' style="opacity:.5"') + ">" +
+          "<td><b>" + esc(u.usuario) + "</b></td><td>" + esc(u.nome || "—") + "</td>" +
+          "<td>" + (u.papel === "admin"
+            ? '<span class="etiqueta etiqueta--verde">administrador</span>'
+            : '<span class="etiqueta etiqueta--cinza">operador</span>') + "</td>" +
+          "<td>" + (u.ativo ? "ativo" : "inativo") + "</td>" +
+          "<td>" + dataHora(u.criado_em) + "</td>" +
+          '<td class="linha-botoes">' +
+            '<button class="btn btn--fantasma btn--mini" data-acao="editar-usuario" data-id="' + u.id + '">editar</button>' +
+            '<button class="btn btn--fantasma btn--mini" data-acao="senha-usuario" data-id="' + u.id +
+              '" data-usuario="' + esc(u.usuario) + '">redefinir senha</button>' +
+          "</td></tr>").join("") +
+        "</tbody></table></div>" +
+      "</div>" +
       '<div class="bloco"><div class="bloco__corpo" style="font-size:14.5px;color:#55555f">' +
-        "<b>Para criar um usuário ou redefinir uma senha</b>, no servidor:<br>" +
-        '<code style="display:inline-block;margin-top:8px;padding:9px 12px;background:var(--prata-fundo);' +
-        'border-radius:4px;font-family:var(--mono);font-size:13.5px">' +
-        'node criar-usuario.cjs joao operador "João da Silva"</code>' +
-        "<p style=\"margin:10px 0 0\">A senha é gerada e mostrada UMA vez. Rodar de novo com o mesmo " +
-        "usuário troca a senha — é assim que se atende “esqueci a senha” sem ninguém ler senha de ninguém.</p>" +
+        "O login não muda depois de criado — ele é a identidade da pessoa na produção de meses atrás. " +
+        "Para trocar de pessoa, desative a conta e crie outra." +
       "</div></div>";
+  }
+
+  async function modalUsuario(id) {
+    const lista = (await api("/restrito/api/usuarios")).itens;
+    const u = id ? lista.filter((x) => String(x.id) === String(id))[0] : null;
+
+    abrirModal({
+      titulo: id ? "Editar " + u.usuario : "Novo usuário",
+      corpo:
+        (id
+          ? '<label class="campo"><span>Login</span><input type="text" value="' + esc(u.usuario) +
+            '" disabled style="background:var(--prata-fundo);color:#77778a"></label>'
+          : '<label class="campo"><span>Login</span><input type="text" id="us-login" ' +
+            'autocapitalize="off" spellcheck="false" placeholder="joao"></label>') +
+        '<label class="campo"><span>Nome</span><input type="text" id="us-nome" value="' +
+          esc(u ? u.nome : "") + '" autocapitalize="words" placeholder="João da Silva"></label>' +
+        '<label class="campo"><span>Papel</span><select id="us-papel">' +
+          '<option value="operador"' + (u && u.papel === "operador" ? " selected" : "") +
+            ">operador — só a própria produção</option>" +
+          '<option value="admin"' + (u && u.papel === "admin" ? " selected" : "") +
+            ">administrador — vê tudo, mexe nos cadastros</option>" +
+        "</select></label>" +
+        (id
+          ? '<label style="display:flex;gap:9px;align-items:center;font-size:15px;margin-top:4px">' +
+            '<input type="checkbox" id="us-ativo" style="width:18px;height:18px;accent-color:var(--tinta)"' +
+            (u.ativo ? " checked" : "") + "> conta ativa (pode entrar)</label>"
+          : '<p style="margin:0;font-size:13.5px;color:#77778a">A senha é gerada agora e mostrada ' +
+            "<b>uma vez</b>. Anote antes de fechar a tela.</p>"),
+      confirmar: id ? "Salvar" : "Criar usuário",
+      classe: "btn--laranja",
+      aoAbrir: function (caixa) {
+        const campo = caixa.querySelector("#us-login") || caixa.querySelector("#us-nome");
+        setTimeout(() => campo.focus(), 60);
+        const login = caixa.querySelector("#us-login");
+        /* O login é chave: normaliza enquanto se digita, para o "João" que a
+           pessoa escreveu não virar recusa do servidor depois de preencher
+           tudo. */
+        if (login) login.addEventListener("input", function () {
+          login.value = login.value.toLowerCase().normalize("NFD")
+            .replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9._-]/g, "");
+        });
+      },
+      aoConfirmar: async function (caixa) {
+        if (id) {
+          await enviar("/restrito/api/usuarios/" + id, "PUT", {
+            nome: caixa.querySelector("#us-nome").value,
+            papel: caixa.querySelector("#us-papel").value,
+            ativo: caixa.querySelector("#us-ativo").checked,
+          });
+          recado("Salvo."); pintarUsuarios();
+        } else {
+          const login = caixa.querySelector("#us-login").value.trim();
+          if (login.length < 3) throw new Error("O login precisa de pelo menos 3 caracteres.");
+          const r = await enviar("/restrito/api/usuarios", "POST", {
+            usuario: login,
+            nome: caixa.querySelector("#us-nome").value,
+            papel: caixa.querySelector("#us-papel").value,
+          });
+          pintarUsuarios();
+          setTimeout(() => mostrarSenha(r.usuario, r.senha, "Usuário criado"), 220);
+        }
+      },
+    });
+  }
+
+  /* A senha nova aparece SÓ AQUI, e não fica guardada em lugar nenhum além do
+     hash. Fechar sem anotar significa redefinir de novo — e é por isso que a
+     tela avisa antes de deixar fechar. */
+  function mostrarSenha(usuario, senha, titulo) {
+    abrirModal({
+      titulo: titulo,
+      corpo:
+        '<p style="margin:0 0 12px">Login <b>' + esc(usuario) + "</b>. Esta senha aparece " +
+        "<b>uma única vez</b> — anote ou mande para a pessoa agora.</p>" +
+        '<div class="senha-nova" id="sn-senha">' + esc(senha) + "</div>" +
+        '<p style="margin:12px 0 0;font-size:13.5px;color:#77778a">Ela não tem vogal nem os ' +
+        "caracteres que se confundem (0 e O, 1 e l), justamente para poder ser ditada por telefone. " +
+        "Quem receber pode trocá-la no menu da própria conta.</p>",
+      confirmar: "Copiar e fechar",
+      classe: "btn--verde",
+      extra: '<button class="btn btn--fantasma" data-fechar>Já anotei</button>',
+      aoConfirmar: async function () {
+        try { await navigator.clipboard.writeText(senha); recado("Senha copiada."); }
+        catch (e) { recado("Não deu para copiar — anote da tela.", true); }
+      },
+    });
   }
 
   /* ========================================================================
@@ -1276,16 +1792,33 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   /* ========================================================================
      11. NAVEGAÇÃO E EVENTOS
      ====================================================================== */
+  /* As quatro telas que moram dentro do dropdown "Cadastros". A lista está aqui
+     e não espalhada pelo código: acrescentar uma quinta e esquecer de marcar o
+     menu deixaria o item "Cadastros" apagado enquanto a tela dele está aberta. */
+  const DENTRO_DE_CADASTROS = { clientes: "Clientes", desenhos: "Desenhos",
+    tabelas: "Mercadorias, cores e máquinas", usuarios: "Usuários" };
+
   async function irPara(tela) {
     TELA = tela;
-    document.querySelectorAll("#menu button").forEach(function (b) {
+    fecharSuspensos();
+    document.querySelectorAll("#menu button[data-tela]").forEach(function (b) {
       b.setAttribute("aria-current", String(b.getAttribute("data-tela") === tela));
     });
+
+    /* O botão "Cadastros" fica aceso quando qualquer filha dele está aberta, e
+       escreve QUAL — senão o menu não diz onde a pessoa está. */
+    const dentro = DENTRO_DE_CADASTROS[tela];
+    const abre = document.querySelector('[data-abrir="cadastros"]');
+    abre.setAttribute("aria-current", String(!!dentro));
+    document.getElementById("menu-cadastros-rotulo").textContent = dentro || "Cadastros";
+
     try {
       if (tela === "operar") { await carregarDia(); pintarOperar(); }
       else if (tela === "producao") await pintarProducao();
       else if (tela === "lotes") await pintarLotes();
-      else if (tela === "cadastros") await pintarCadastros();
+      else if (tela === "clientes") await pintarClientes();
+      else if (tela === "desenhos") await pintarDesenhos();
+      else if (tela === "tabelas") await pintarTabelas();
       else if (tela === "usuarios") await pintarUsuarios();
     } catch (e) {
       document.getElementById("principal").innerHTML =
@@ -1298,6 +1831,31 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     document.querySelectorAll(".suspenso__lista").forEach((l) => { l.hidden = true; });
   }
 
+  /* O "Cadastros" é posicionado por JAVASCRIPT, não por CSS.
+     No celular o menu é uma TIRA que rola na horizontal, e uma caixa
+     posicionada em relação ao botão nascia a 451px numa tela de 375 — fora da
+     vista, e ainda empurrando a página para o lado. Medir o botão e prender a
+     caixa na janela resolve os dois casos com a mesma conta. */
+  function posicionarMenu(caixa, botao) {
+    const r = botao.getBoundingClientRect();
+    /* `clientWidth` e não `innerWidth`: o segundo inclui a barra de rolagem e
+       mede 399 numa tela de 375, o que jogava a caixa 24px para fora
+       justamente na borda em que ela precisava caber. */
+    const tela = document.documentElement.clientWidth;
+    const largura = Math.min(260, tela - 16);
+    let esquerda = r.left;
+    if (esquerda + largura > tela - 8) esquerda = tela - 8 - largura;
+    caixa.style.position = "fixed";
+    caixa.style.top = Math.round(r.bottom + 6) + "px";
+    caixa.style.left = Math.max(8, Math.round(esquerda)) + "px";
+    caixa.style.right = "auto";
+    caixa.style.width = largura + "px";
+    caixa.style.minWidth = "0";
+  }
+
+  /* Girar o celular com o menu aberto o deixaria pendurado no lugar antigo. */
+  window.addEventListener("resize", fecharSuspensos);
+
   document.addEventListener("click", async function (ev) {
     const abrir = ev.target.closest("[data-abrir]");
     if (abrir) {
@@ -1305,6 +1863,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       const estava = alvo.hidden;
       fecharSuspensos();
       alvo.hidden = !estava;
+      if (!alvo.hidden && alvo.closest(".suspenso--menu")) posicionarMenu(alvo, abrir);
       return;
     }
     if (!ev.target.closest(".suspenso")) fecharSuspensos();
@@ -1312,8 +1871,8 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     const item = ev.target.closest("#menu [data-tela]");
     if (item) { irPara(item.getAttribute("data-tela")); return; }
 
-    const aba = ev.target.closest("[data-cad]");
-    if (aba) { CADASTRO_ABA = aba.getAttribute("data-cad"); pintarCadastros(); return; }
+    const aba = ev.target.closest("[data-tab-aba]");
+    if (aba) { TAB_ABA = aba.getAttribute("data-tab-aba"); pintarTabelas(); return; }
 
     const b = ev.target.closest("[data-acao]");
     if (!b) return;
@@ -1383,16 +1942,48 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         recado("Lote apagado."); await pintarLotes();
       }
 
-      /* ---- cadastros ---- */
-      else if (acao === "novo-cadastro") await modalCadastro(null);
-      else if (acao === "editar-cadastro") await modalCadastro(id);
-      else if (acao === "desativar-cadastro") {
-        await enviar("/restrito/api/" + CADASTRO_ABA + "/" + id, "DELETE");
-        esquecer(CADASTRO_ABA); recado("Desativado."); await pintarCadastros();
+      /* ---- clientes ---- */
+      else if (acao === "novo-cliente") await modalCliente(null);
+      else if (acao === "editar-cliente") await modalCliente(id);
+      else if (acao === "buscar-clientes") {
+        filtroClientes.busca = document.getElementById("bc-busca").value.trim();
+        filtroClientes.todos = document.getElementById("bc-todos").checked;
+        filtroClientes.pagina = 1;      // busca nova recomeça na primeira página
+        await pintarClientes();
       }
-      else if (acao === "reativar-cadastro") {
-        await enviar("/restrito/api/" + CADASTRO_ABA + "/" + id, "PUT", { ativo: true });
-        esquecer(CADASTRO_ABA); recado("Reativado."); await pintarCadastros();
+
+      /* ---- desenhos ---- */
+      else if (acao === "novo-desenho") await modalDesenho(null);
+      else if (acao === "editar-desenho") await modalDesenho(id);
+      else if (acao === "buscar-desenhos") {
+        filtroDesenhos.busca = document.getElementById("bd-busca").value.trim();
+        filtroDesenhos.todos = document.getElementById("bd-todos").checked;
+        filtroDesenhos.pagina = 1;
+        await pintarDesenhos();
+      }
+
+      else if (acao === "pagina") {
+        const ir = Number(b.getAttribute("data-ir"));
+        if (b.getAttribute("data-tela") === "clientes") { filtroClientes.pagina = ir; await pintarClientes(); }
+        else { filtroDesenhos.pagina = ir; await pintarDesenhos(); }
+      }
+
+      /* ---- tabelas ---- */
+      else if (acao === "novo-tabela") await modalTabela(null);
+      else if (acao === "editar-tabela") await modalTabela(id);
+
+      /* Desativar e reativar servem às três telas, então a tabela vem no botão.
+         Sem isso, o botão de um cliente desativaria a mercadoria de mesmo id. */
+      else if (acao === "desativar-cadastro" || acao === "reativar-cadastro") {
+        const tab = b.getAttribute("data-tab");
+        const ligando = acao === "reativar-cadastro";
+        if (ligando) await enviar("/restrito/api/" + tab + "/" + id, "PUT", { ativo: true });
+        else await enviar("/restrito/api/" + tab + "/" + id, "DELETE");
+        esquecer(tab);
+        recado(ligando ? "Reativado." : "Desativado.");
+        if (tab === "clientes") await pintarClientes();
+        else if (tab === "desenhos") await pintarDesenhos();
+        else await pintarTabelas();
       }
       else if (acao === "trocar-qr") {
         if (!confirm("Gerar um QR novo para esta máquina? O adesivo antigo deixa de valer.")) return;
@@ -1401,13 +1992,14 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       }
 
       /* ---- usuários ---- */
-      else if (acao === "papel-usuario") {
-        await enviar("/restrito/api/usuarios/" + id, "PUT", { papel: b.getAttribute("data-papel") });
-        recado("Papel alterado."); await pintarUsuarios();
-      }
-      else if (acao === "ativo-usuario") {
-        await enviar("/restrito/api/usuarios/" + id, "PUT", { ativo: b.getAttribute("data-ativo") === "1" });
-        recado("Salvo."); await pintarUsuarios();
+      else if (acao === "novo-usuario") await modalUsuario(null);
+      else if (acao === "editar-usuario") await modalUsuario(id);
+      else if (acao === "senha-usuario") {
+        const quem = b.getAttribute("data-usuario");
+        if (!confirm("Gerar uma senha nova para " + quem + "?\n\n" +
+                     "A senha atual deixa de valer na hora e a pessoa é desconectada.")) return;
+        const r = await enviar("/restrito/api/usuarios/" + id + "/senha", "POST");
+        mostrarSenha(r.usuario, r.senha, "Senha redefinida");
       }
 
       /* ---- conta ---- */

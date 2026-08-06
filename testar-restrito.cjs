@@ -27,7 +27,8 @@ const SO_LIMPAR = process.argv.includes("--limpar");
 const ARQ_LIMITES = path.join(__dirname, "data", "limites-teste.json");
 
 /* Registro do que esta suíte criou. É a lista de tudo que ela pode apagar. */
-const CRIADO = { usuarios: [], clientes: [], desenhos: [], mercadorias: [], cores: [], maquinas: [], lotes: [], fichas: [], jornadas: [] };
+const CRIADO = { usuarios: [], clientes: [], desenhos: [], mercadorias: [], cores: [], maquinas: [],
+                 lotes: [], fichas: [], jornadas: [], desenho_fotos: [], arquivos: [] };
 
 let passou = 0, falhou = 0;
 const falhas = [];
@@ -69,11 +70,20 @@ function criarNavegador(quem) {
    Faxina — só por id, só o que está em CRIADO.
    ========================================================================== */
 async function limpar() {
-  const ordem = ["fichas", "lotes", "jornadas", "desenhos", "clientes", "mercadorias", "cores", "maquinas", "usuarios"];
+  const ordem = ["desenho_fotos", "fichas", "lotes", "jornadas", "desenhos", "clientes",
+                 "mercadorias", "cores", "maquinas", "usuarios"];
   for (const tabela of ordem) {
     const ids = CRIADO[tabela].filter(Boolean);
     if (!ids.length) continue;
     await Q.run(`DELETE FROM ${tabela} WHERE id = ANY(?)`, ids);
+  }
+
+  /* Os ARQUIVOS das fotos não saem por CASCADE: apagar o desenho leva a linha
+     junto e deixa a imagem no disco. Uma suíte que roda todo dia encheria
+     `data/desenhos/` de imagem que ninguém sabe de quem é. */
+  const fs = require("node:fs"), path = require("node:path");
+  for (const arquivo of CRIADO.arquivos) {
+    try { fs.unlinkSync(path.join(__dirname, "data", "desenhos", arquivo)); } catch {}
   }
 }
 
@@ -97,6 +107,18 @@ async function limparRestos() {
   }
   for (const t of ["desenhos", "mercadorias", "cores", "maquinas"]) {
     await Q.run(`DELETE FROM ${t} WHERE nome LIKE ?`, P);
+  }
+
+  /* Arquivo de foto sem linha no banco: sobra de execução interrompida. Compara
+     o disco com a tabela e apaga só o que ninguém mais referencia — nunca o
+     contrário, que apagaria foto viva. */
+  const fs2 = require("node:fs"), path2 = require("node:path");
+  const pasta = path2.join(__dirname, "data", "desenhos");
+  let noDisco = [];
+  try { noDisco = fs2.readdirSync(pasta); } catch { noDisco = []; }
+  if (noDisco.length) {
+    const vivas = new Set((await Q.all("SELECT arquivo FROM desenho_fotos")).map((f) => f.arquivo));
+    for (const a of noDisco) if (!vivas.has(a)) { try { fs2.unlinkSync(path2.join(pasta, a)); } catch {} }
   }
 }
 
@@ -485,6 +507,181 @@ async function limparRestos() {
   r = await admin("/restrito/api/lotes/" + lote);
   eq(Number(r.dados.pecas), 120, "e a produção já registrada NÃO mudou");
   await admin("/restrito/api/clientes/" + cliA, "PUT", { ativo: true });
+
+  /* =========================================== 12b. LISTA PAGINADA ====== */
+  console.log("  12b. lista paginada e busca");
+  const criados = [];
+  for (let i = 1; i <= 12; i++) {
+    r = await admin("/restrito/api/clientes", "POST",
+      { nome: `ZZ QA Pag ${String(i).padStart(2, "0")}`, cidade: i % 2 ? "Caruaru" : "Toritama",
+        telefone: `(81) 9${i}000-0000`, documento: `1122233300018${i % 10}` });
+    criados.push(r.dados.id); CRIADO.clientes.push(r.dados.id);
+  }
+
+  r = await admin("/restrito/api/clientes?pagina=1&por=5&busca=ZZ QA Pag");
+  eq(r.status, 200, "lista paginada responde");
+  eq(r.dados.itens.length, 5, "a página traz 5");
+  eq(r.dados.total, 12, "e o total conta os 12, não os 5 devolvidos");
+  eq(r.dados.paginas, 3, "12 em páginas de 5 dá 3 páginas");
+  const p1 = r.dados.itens.map((c) => c.nome);
+
+  r = await admin("/restrito/api/clientes?pagina=3&por=5&busca=ZZ QA Pag");
+  eq(r.dados.itens.length, 2, "a última página traz o resto");
+  ok(!r.dados.itens.some((c) => p1.includes(c.nome)), "e nenhum nome se repete entre as páginas");
+
+  r = await admin("/restrito/api/clientes?pagina=9&por=5&busca=ZZ QA Pag");
+  eq(r.dados.itens.length, 0, "página além do fim vem vazia, sem erro");
+
+  /* A busca varre mais de um campo: quem digita o telefone acha, quem digita
+     a cidade acha, e não precisa de duas caixas na tela. */
+  r = await admin("/restrito/api/clientes?pagina=1&por=50&busca=Toritama");
+  eq(r.dados.total, 6, "busca por cidade acha os 6 de Toritama");
+  r = await admin("/restrito/api/clientes?pagina=1&por=50&busca=(81) 93000");
+  eq(r.dados.total, 1, "busca por telefone acha um só");
+  r = await admin("/restrito/api/clientes?pagina=1&por=50&busca=zz qa pag 01");
+  eq(r.dados.total, 1, "a busca não diferencia maiúscula de minúscula");
+  r = await admin("/restrito/api/clientes?pagina=1&por=50&busca=nao-existe-nada-assim");
+  eq(r.dados.total, 0, "busca sem resultado devolve zero, não a lista toda");
+
+  /* A rota SEM `pagina` continua devolvendo tudo — é o que as caixas de
+     seleção da tela do operador consomem. Paginar isso as deixaria com metade
+     das opções, e ninguém perceberia até faltar um cliente. */
+  r = await admin("/restrito/api/clientes");
+  ok(!("total" in r.dados), "sem ?pagina, a resposta não é paginada");
+  ok(r.dados.itens.length >= 13, "e traz a lista inteira", String(r.dados.itens.length));
+
+  /* Campos novos do cliente: são os que vão para a nota. */
+  r = await admin("/restrito/api/clientes/" + criados[0]);
+  eq(r.dados.cidade, "Caruaru", "a cidade do cliente foi gravada");
+  ok(r.dados.resumo && Number(r.dados.resumo.desenhos) === 0, "o cliente vem com o resumo de produção");
+
+  /* ================================================ 12c. TOM DA COR ===== */
+  console.log("  12c. tom da cor");
+  r = await admin("/restrito/api/cores", "POST", { nome: "ZZ QA Tom", hex: "#E8D9B5" });
+  eq(r.status, 201, "cor com tom"); CRIADO.cores.push(r.dados.id);
+  eq((await admin("/restrito/api/cores/" + r.dados.id)).dados.hex, "#e8d9b5",
+     "o tom é normalizado para minúsculo antes do banco");
+
+  r = await admin("/restrito/api/cores", "POST", { nome: "ZZ QA Tom Curto", hex: "abc" });
+  eq(r.status, 201, "tom de três dígitos é aceito"); CRIADO.cores.push(r.dados.id);
+  eq((await admin("/restrito/api/cores/" + r.dados.id)).dados.hex, "#aabbcc", "e vira o de seis");
+
+  eq((await admin("/restrito/api/cores", "POST", { nome: "ZZ QA Tom Ruim", hex: "vermelho" })).status, 400,
+     "tom que não é código é recusado com mensagem, não com erro de banco");
+  r = await admin("/restrito/api/cores", "POST", { nome: "ZZ QA Sem Tom", hex: "" });
+  eq(r.status, 201, "cor sem tom continua valendo"); CRIADO.cores.push(r.dados.id);
+
+  /* ================================================ 12d. FOTO DO DESENHO  */
+  console.log("  12d. fotos do desenho");
+  const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const png = (nome) => ({ nome, dados: "data:image/png;base64," + PNG });
+
+  r = await admin(`/restrito/api/desenhos/${desA1}/fotos`, "POST", png("Frente ZZ.PNG"));
+  eq(r.status, 201, "envia a foto do desenho");
+  const arq1 = r.dados.arquivo; CRIADO.arquivos.push(arq1);
+  ok(/^frente-zz-[0-9a-f]{10}\.png$/.test(arq1), "o nome do arquivo é RECONSTRUÍDO, não o que veio", arq1);
+
+  /* O nome vem do cliente, então é a primeira coisa a atacar. */
+  r = await admin(`/restrito/api/desenhos/${desA1}/fotos`, "POST", png("../../../.env.png"));
+  eq(r.status, 201, "nome com ../ é aceito…");
+  ok(!r.dados.arquivo.includes("/") && !r.dados.arquivo.includes(".."),
+     "…mas sai sem barra e sem ..", r.dados.arquivo);
+  const arq2 = r.dados.arquivo; CRIADO.arquivos.push(arq2);
+
+  /* Extensão não é prova de nada: o que vale é a assinatura do arquivo. */
+  eq((await admin(`/restrito/api/desenhos/${desA1}/fotos`, "POST",
+    { nome: "falsa.png", dados: "data:image/png;base64," + Buffer.from("<html><script>alert(1)</script>").toString("base64") })).status,
+    400, "HTML renomeado para .png é recusado");
+  eq((await admin(`/restrito/api/desenhos/${desA1}/fotos`, "POST", { nome: "x.exe", dados: "data:;base64," + PNG })).status,
+    400, "extensão fora da lista é recusada");
+  eq((await admin(`/restrito/api/desenhos/${desA1}/fotos`, "POST", { nome: "vazia.png", dados: "" })).status,
+    400, "arquivo vazio é recusado");
+
+  r = await admin(`/restrito/api/desenhos/${desA1}/fotos`);
+  eq(r.dados.itens.length, 2, "o desenho tem duas fotos");
+  eq(r.dados.itens[0].arquivo, arq1, "a primeira enviada é a primeira da lista (é a capa)");
+  const foto1 = r.dados.itens[0].id, foto2 = r.dados.itens[1].id;
+
+  r = await admin("/restrito/api/desenhos?pagina=1&por=50&todos=1&busca=ZZ QA DES A1");
+  eq(r.dados.itens[0].capa, arq1, "a listagem já traz a capa, sem consulta extra");
+  eq(Number(r.dados.itens[0].fotos), 2, "e a contagem de fotos");
+
+  eq((await admin(`/restrito/api/desenhos/${desA1}/fotos/${foto1}`, "PUT", { legenda: "frente da camisa" })).status, 200,
+     "grava a legenda");
+  r = await admin(`/restrito/api/desenhos/${desA1}/fotos`);
+  eq(r.dados.itens[0].legenda, "frente da camisa", "e ela volta na listagem");
+
+  /* A foto sai por rota com sessão, não de dentro de `assets/`. O desenho é
+     propriedade do cliente: em `assets/` bastaria acertar o nome para baixar
+     o bordado de qualquer um, sem login. */
+  r = await admin("/restrito/foto/" + arq1);
+  eq(r.status, 200, "com sessão, a foto é servida");
+  ok(r.tipo.includes("image/png"), "como imagem", r.tipo);
+  r = await ninguem("/restrito/foto/" + arq1);
+  eq(r.status, 302, "SEM sessão, a foto NÃO sai — manda para a entrada");
+  eq((await oper("/restrito/foto/" + arq1)).status, 200, "o operador vê a foto (ele precisa dela na máquina)");
+  eq((await oper(`/restrito/api/desenhos/${desA1}/fotos`, "POST", png("a.png"))).status, 403,
+     "mas não envia nem apaga foto");
+
+  eq((await admin("/restrito/foto/..%2F..%2F.env")).status, 404, "travessia de caminho na rota da foto: 404");
+  eq((await admin("/restrito/foto/nao-existe.png")).status, 404, "foto inexistente: 404");
+
+  const fsTeste = require("node:fs"), pathTeste = require("node:path");
+  const noDisco = (a) => fsTeste.existsSync(pathTeste.join(__dirname, "data", "desenhos", a));
+  ok(noDisco(arq1), "o arquivo está em data/desenhos/");
+  eq((await admin(`/restrito/api/desenhos/${desA1}/fotos/${foto2}`, "DELETE")).status, 200, "apaga a segunda foto");
+  ok(!noDisco(arq2), "e o ARQUIVO sai do disco junto com a linha");
+  ok(noDisco(arq1), "sem levar a outra foto junto");
+  eq((await admin(`/restrito/api/desenhos/${desA1}/fotos/${foto2}`, "DELETE")).status, 404,
+     "apagar de novo: 404, não erro de servidor");
+  await admin(`/restrito/api/desenhos/${desA1}/fotos/${foto1}`, "DELETE");
+  ok(!noDisco(arq1), "e o disco fica limpo no fim");
+
+  /* ============================================ 12e. USUÁRIO NO PAINEL == */
+  console.log("  12e. usuário criado pelo painel");
+  eq((await oper("/restrito/api/usuarios", "POST", { usuario: "zz_qa_intruso" })).status, 403,
+     "operador não cria usuário");
+
+  r = await admin("/restrito/api/usuarios", "POST", { usuario: "zz_qa_novo", nome: "ZZ QA Novo", papel: "operador" });
+  eq(r.status, 201, "admin cria usuário pelo painel");
+  CRIADO.usuarios.push(r.dados.id);
+  const senhaNova = r.dados.senha;
+  ok(/^[bcdfghjkmnpqrstvwxyz2-9]{4}(-[bcdfghjkmnpqrstvwxyz2-9]{4}){3}$/.test(senhaNova),
+     "a senha é gerada no formato que se dita por telefone", senhaNova);
+
+  /* A senha mostrada na tela precisa REALMENTE entrar — senão o cadastro
+     produz uma conta que ninguém consegue usar, e só se descobre no dia
+     seguinte, com o operador parado na máquina. */
+  const novo = criarNavegador("novo");
+  eq((await novo("/restrito/api/entrar", "POST", { usuario: "zz_qa_novo", senha: senhaNova })).status, 200,
+     "a senha mostrada uma vez é a que entra");
+  eq((await novo("/restrito/api/eu")).dados.papel, "operador", "e o papel escolhido foi respeitado");
+
+  eq((await admin("/restrito/api/usuarios", "POST", { usuario: "zz_qa_novo" })).status, 409,
+     "login repetido é recusado");
+  eq((await admin("/restrito/api/usuarios", "POST", { usuario: "ab" })).status, 400, "login curto demais");
+  eq((await admin("/restrito/api/usuarios", "POST", { usuario: "1joao" })).status, 400, "login começando com número");
+  eq((await admin("/restrito/api/usuarios", "POST", { usuario: "joão silva" })).status, 400, "login com acento e espaço");
+  eq((await admin("/restrito/api/usuarios", "POST", { usuario: "zz_qa_x", papel: "chefe" })).status, 400,
+     "papel inventado na criação");
+
+  r = await admin("/restrito/api/usuarios");
+  ok(!r.dados.itens.some((u) => "senha" in u || "senha_hash" in u),
+     "a listagem não devolve senha nem hash");
+
+  /* Redefinir: senha nova vale, senha velha não vale mais, sessão cai. */
+  const idNovo = CRIADO.usuarios[CRIADO.usuarios.length - 1];
+  r = await admin("/restrito/api/usuarios/" + idNovo + "/senha", "POST");
+  eq(r.status, 200, "admin redefine a senha");
+  const senha2 = r.dados.senha;
+  ok(senha2 !== senhaNova, "e ela é diferente da anterior");
+  eq((await novo("/restrito/api/eu")).status, 401, "a sessão de quem teve a senha trocada CAIU");
+
+  const novo2 = criarNavegador("novo2");
+  eq((await novo2("/restrito/api/entrar", "POST", { usuario: "zz_qa_novo", senha: senha2 })).status, 200,
+     "a senha nova entra");
+  eq((await admin("/restrito/api/usuarios/99999999/senha", "POST")).status, 404,
+     "redefinir senha de quem não existe: 404");
 
   /* ==================================================== 13. SAIR ========= */
   console.log("  13. sair");

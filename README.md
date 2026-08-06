@@ -52,6 +52,23 @@ aberta.
 - **Nota** — marcar como faturado exige o número da nota. Depois disso o lote
   não aceita mais mexer nas fichas.
 
+### Cadastros
+
+Um item do menu que abre quatro telas:
+
+| Tela | O que tem |
+|---|---|
+| **Clientes** | lista paginada com busca por nome, documento, telefone, e-mail ou cidade; cadastro com CNPJ/CPF (o que vai para a nota) e o resumo de quanto o cliente já rendeu |
+| **Desenhos** | lista paginada com busca e **miniatura**; cadastro com cliente, pontuação e **uma ou mais fotos** |
+| **Mercadorias, cores e máquinas** | três abas — listas de palavras que nascem uma vez e quase não mudam. A cor tem um campo de **tom**, que vira a bolinha da lista: "Bege" escrito não distingue dois beges na mesma remessa |
+| **Usuários** | criar, editar e redefinir senha, tudo pela tela |
+
+**As fotos do desenho** ficam em `data/desenhos/`, **fora** de `assets/`, e só
+saem por uma rota que exige sessão. O desenho é propriedade do cliente: em
+`assets/` bastaria acertar o nome do arquivo para baixar o bordado de qualquer
+um, sem login. O que chega é conferido pela **assinatura do arquivo**, não pela
+extensão — um `.png` que na verdade é HTML é recusado.
+
 ---
 
 ## Instalação do /restrito
@@ -75,14 +92,21 @@ DADOS_CHAVE=<32 bytes em hex — gere com: openssl rand -hex 32>
 Depois:
 
 ```bash
-psql -U bordatudo -d bordatudo_producao -f sql/02-esquema.sql
+node sql/rodar.cjs 02-esquema.sql
+node sql/rodar.cjs 04-cadastros.sql
 node sql/03-dados-de-teste.cjs --gravar
 node criar-usuario.cjs eduardo admin "Eduardo"
 ```
 
-O `criar-usuario.cjs` **gera** a senha, mostra uma vez e não mostra mais. Rodar
-de novo com o mesmo usuário troca a senha — é assim que se atende "esqueci a
-senha" sem ninguém ler senha de ninguém.
+O `criar-usuario.cjs` cria o **primeiro administrador** — antes dele não há
+ninguém para entrar no painel. Do segundo em diante, é tudo pela tela:
+**Cadastros → Usuários → Novo**. O script fica no projeto só para isso e para o
+caso de ficar todo mundo trancado do lado de fora.
+
+A senha é sempre **gerada** — no script e no painel, pela mesma função — e
+mostrada **uma vez**. Ninguém, nem o administrador, lê a senha de outra pessoa
+depois: para atender "esqueci a senha", use **redefinir senha**, que gera outra
+e derruba as sessões daquela conta.
 
 ### Quando os dados de verdade chegarem
 
@@ -121,7 +145,7 @@ Um adesivo fotografado não dá acesso a nada. Se um adesivo se perder, use
 
 ```bash
 npm start                    # site + painel + /restrito na porta 5193
-node testar-restrito.cjs     # a suíte do /restrito (124 conferências)
+node testar-restrito.cjs     # a suíte do /restrito (187 conferências)
 node backup.js agora         # cópia do banco do site
 ```
 
