@@ -471,7 +471,7 @@ async function limparRestos() {
 
   eq((await oper("/restrito/api/eu/senha", "PUT", { atual: "errada", nova: "outra-senha-1" })).status, 401,
      "trocar senha com a atual errada: recusado");
-  eq((await oper("/restrito/api/eu/senha", "PUT", { atual: SENHA_OPER, nova: "curta" })).status, 400,
+  eq((await oper("/restrito/api/eu/senha", "PUT", { atual: SENHA_OPER, nova: "abc" })).status, 400,
      "senha nova curta demais: recusada");
 
   /* Trocar a senha derruba as OUTRAS sessões da mesma conta. */
@@ -651,8 +651,8 @@ async function limparRestos() {
   eq(r.status, 201, "admin cria usuário pelo painel");
   CRIADO.usuarios.push(r.dados.id);
   const senhaNova = r.dados.senha;
-  ok(/^[bcdfghjkmnpqrstvwxyz2-9]{4}(-[bcdfghjkmnpqrstvwxyz2-9]{4}){3}$/.test(senhaNova),
-     "a senha é gerada no formato que se dita por telefone", senhaNova);
+  ok(/^[0-9]{6}$/.test(senhaNova),
+     "a senha é gerada com seis dígitos — dita-se por telefone sem soletrar", senhaNova);
 
   /* A senha mostrada na tela precisa REALMENTE entrar — senão o cadastro
      produz uma conta que ninguém consegue usar, e só se descobre no dia
@@ -687,6 +687,81 @@ async function limparRestos() {
      "a senha nova entra");
   eq((await admin("/restrito/api/usuarios/99999999/senha", "POST")).status, 404,
      "redefinir senha de quem não existe: 404");
+
+  /* ========================================= 12g. SENHA PROVISÓRIA ======= */
+  /* A senha gerada passa pelas mãos de quem cadastrou e é ditada por telefone.
+     Ela abre a porta UMA vez; o sistema não deixa fazer mais nada antes da
+     troca. Sem essa trava, "troque na primeira vez" seria um pedido — e pedido,
+     numa fábrica em dia de correria, é o que ninguém faz. */
+  console.log("  12g. senha provisória");
+
+  r = await admin("/restrito/api/usuarios", "POST", { usuario: "zz_qa_prov", nome: "ZZ QA Provisória" });
+  eq(r.status, 201, "cria o usuário");
+  const idProv = r.dados.id; CRIADO.usuarios.push(idProv);
+  const provisoria = r.dados.senha;
+  ok(/^[0-9]{6}$/.test(provisoria), "a senha gerada tem SEIS DÍGITOS", provisoria);
+
+  const prov = criarNavegador("prov");
+  r = await prov("/restrito/api/entrar", "POST", { usuario: "zz_qa_prov", senha: provisoria });
+  eq(r.status, 200, "entra com a provisória");
+  eq(r.dados.trocarSenha, true, "e a resposta do login já avisa que precisa trocar");
+  eq((await prov("/restrito/api/eu")).dados.trocarSenha, true, "e o /eu também");
+
+  /* A trava é no SERVIDOR. Uma trava que morasse só no JavaScript da tela cai
+     por terra assim que alguém chama a rota direto. */
+  for (const [m, u] of [["GET", "/restrito/api/meu-dia"], ["GET", "/restrito/api/clientes"],
+                        ["POST", "/restrito/api/jornadas"], ["GET", "/restrito/api/desenhos"]]) {
+    r = await prov(u, m, m === "GET" ? undefined : {});
+    eq(r.status, 403, `com senha provisória, ${m} ${u} é barrado`);
+    eq(r.dados.trocarSenha, true, "e a resposta diz por quê");
+  }
+
+  eq((await prov("/restrito/api/eu/senha", "PUT", { nova: "12345" })).status, 400, "senha nova curta demais");
+  eq((await prov("/restrito/api/eu/senha", "PUT", { nova: "111111" })).status, 400, "mesmo caractere repetido");
+  eq((await prov("/restrito/api/eu/senha", "PUT", { nova: "123456" })).status, 400, "sequência 123456");
+  eq((await prov("/restrito/api/eu/senha", "PUT", { nova: "654321" })).status, 400, "e a sequência invertida");
+  eq((await prov("/restrito/api/eu/senha", "PUT", { nova: "abcdef" })).status, 400, "sequência de letras também");
+  r = await prov("/restrito/api/eu/senha", "PUT", { nova: provisoria, atual: provisoria });
+  eq(r.status, 400, "repetir a provisória não é trocar");
+
+  /* Barrado é barrado: nenhuma das tentativas recusadas pode ter destravado. */
+  eq((await prov("/restrito/api/meu-dia")).status, 403, "depois das recusas, a trava continua de pé");
+
+  /* NA PRIMEIRA TROCA não se pede a senha atual — a pessoa acabou de digitá-la
+     para entrar, e a tela está presa nesta operação desde então. */
+  r = await prov("/restrito/api/eu/senha", "PUT", { nova: "bordado7" });
+  eq(r.status, 200, "troca sem precisar repetir a atual");
+
+  eq((await prov("/restrito/api/meu-dia")).status, 200, "e a MESMA sessão destrava, sem entrar de novo");
+  eq((await prov("/restrito/api/eu")).dados.trocarSenha, false, "o /eu não pede mais a troca");
+
+  const prov2 = criarNavegador("prov2");
+  eq((await prov2("/restrito/api/entrar", "POST", { usuario: "zz_qa_prov", senha: provisoria })).status, 401,
+     "a provisória não vale mais");
+  r = await prov2("/restrito/api/entrar", "POST", { usuario: "zz_qa_prov", senha: "bordado7" });
+  eq(r.status, 200, "a senha escolhida vale");
+  eq(r.dados.trocarSenha, false, "e não pede troca de novo");
+
+  /* Na troca VOLUNTÁRIA a atual continua sendo exigida: ali a sessão pode estar
+     aberta há horas, largada na bancada da fábrica. */
+  eq((await prov2("/restrito/api/eu/senha", "PUT", { nova: "outra-senha-9" })).status, 401,
+     "troca voluntária SEM a senha atual: recusada");
+  eq((await prov2("/restrito/api/eu/senha", "PUT", { atual: "bordado7", nova: "bordado7" })).status, 400,
+     "trocar pela mesma que já valia: recusado");
+  eq((await prov2("/restrito/api/eu/senha", "PUT", { atual: "bordado7", nova: "outra-senha-9" })).status, 200,
+     "com a atual, troca");
+
+  /* Redefinir pelo painel devolve a conta ao estado provisório. */
+  r = await admin("/restrito/api/usuarios/" + idProv + "/senha", "POST");
+  ok(/^[0-9]{6}$/.test(r.dados.senha), "a redefinição também gera seis dígitos", r.dados.senha);
+  const prov3 = criarNavegador("prov3");
+  r = await prov3("/restrito/api/entrar", "POST", { usuario: "zz_qa_prov", senha: r.dados.senha });
+  eq(r.dados.trocarSenha, true, "e a conta volta a exigir troca no primeiro acesso");
+  eq((await prov3("/restrito/api/meu-dia")).status, 403, "travada de novo, como deve");
+
+  /* Sair não pode ficar preso atrás da trava: quem entrou por engano na conta
+     de outro precisa conseguir sair sem trocar a senha de alguém. */
+  eq((await prov3("/restrito/api/sair", "POST")).status, 200, "e mesmo travado dá para SAIR");
 
   /* ================================================ 12f. RECIBO DO LOTE == */
   console.log("  12f. recibo do lote");

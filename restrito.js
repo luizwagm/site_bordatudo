@@ -79,16 +79,44 @@ setInterval(() => {
    ========================================================================== */
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 32 };
 
-/* Quatro blocos de quatro, sem vogais nem 0/O/1/l/I. É senha que se dita por
-   telefone e se digita numa tela de fábrica sem errar — e ainda assim tem
-   entropia de sobra: 16 caracteres de um alfabeto de 28.
+/* SEIS DÍGITOS. É senha de uso único: serve para abrir a porta UMA VEZ, e o
+   sistema não deixa a pessoa fazer mais nada antes de trocá-la.
+
+   Seis dígitos são 1 milhão de combinações — pouco para uma senha permanente,
+   e é por isso que ela não é permanente. Para o que ela É, número puro ganha
+   de qualquer coisa: dita-se por telefone sem soletrar, digita-se no teclado
+   numérico do celular preso na máquina, e não tem letra que se confunda.
+
+   A trava de tentativas (5 erros por IP em 15 min) é o que impede alguém de
+   varrer o milhão de combinações enquanto a senha está viva.
 
    Mora aqui, e não no `criar-usuario.cjs`, porque o painel também gera senha.
    Duas cópias divergiriam, e a do painel é a que vai ser usada todo dia. */
-function senhaDitavel() {
-  const abc = "bcdfghjkmnpqrstvwxyz23456789";
-  const bloco = () => Array.from({ length: 4 }, () => abc[crypto.randomInt(abc.length)]).join("");
-  return [bloco(), bloco(), bloco(), bloco()].join("-");
+function senhaProvisoria() {
+  /* `randomInt` e não `Math.random()`: a segunda é previsível a partir de umas
+     poucas saídas, e aqui isso significaria adivinhar a senha do próximo. */
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+}
+
+/* O que a pessoa escolhe no lugar da provisória. Regras curtas de propósito:
+   quem digita isto está de pé, na máquina. Barrar senha fraca demais é
+   necessário; exigir maiúscula, símbolo e número faz a pessoa anotar no papel
+   colado na máquina — que é pior do que a senha simples. */
+function conferirSenhaNova(nova, provisoria) {
+  const s = String(nova || "");
+  if (s.length < 6) return "a senha nova precisa de pelo menos 6 caracteres";
+  if (provisoria && s === String(provisoria)) return "escolha uma senha diferente da provisória";
+  if (/^(.)\1+$/.test(s)) return "não vale repetir o mesmo caractere";
+
+  /* Sequência direta ou invertida — 123456 e 654321 são as duas primeiras que
+     qualquer um tenta, e as duas primeiras que qualquer um escolhe. */
+  const seq = "01234567890";
+  const abc = "abcdefghijklmnopqrstuvwxyz";
+  const baixo = s.toLowerCase();
+  const invertido = baixo.split("").reverse().join("");
+  if (seq.includes(baixo) || seq.includes(invertido) || abc.includes(baixo) || abc.includes(invertido))
+    return "essa sequência é fácil demais — escolha outra";
+  return null;
 }
 
 function gerarHash(senha) {
@@ -696,9 +724,18 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     limitador.acertou("restrito", ip, usuario);
 
     const rid = crypto.randomBytes(24).toString("hex");
-    sessoes.set(rid, { usuarioId: u.id, usuario: u.usuario, nome: u.nome, papel: u.papel, visto: Date.now() });
-    return responder(res, 200, { ok: true, usuario: u.usuario, nome: u.nome, papel: u.papel },
-      { "Set-Cookie": cookieRid(rid, req) });
+    sessoes.set(rid, {
+      usuarioId: u.id, usuario: u.usuario, nome: u.nome, papel: u.papel,
+      /* A sessão nasce TRANCADA quando a senha ainda é a provisória. A trava
+         vive na sessão, e não só no banco, para não custar uma consulta por
+         requisição — e é derrubada no mesmo lugar em que a senha é trocada. */
+      provisoria: !!u.senha_provisoria,
+      visto: Date.now(),
+    });
+    return responder(res, 200, {
+      ok: true, usuario: u.usuario, nome: u.nome, papel: u.papel,
+      trocarSenha: !!u.senha_provisoria,
+    }, { "Set-Cookie": cookieRid(rid, req) });
   }
 
   if (caminho === "/restrito/api/sair" && req.method === "POST") {
@@ -723,6 +760,26 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   if (caminho === "/restrito/api/eu") {
     return responder(res, 200, {
       usuario: sessao.usuario, nome: sessao.nome, papel: sessao.papel,
+      trocarSenha: !!sessao.provisoria,
+    });
+  }
+
+  /* ==========================================================================
+     A TRAVA DA SENHA PROVISÓRIA
+
+     Enquanto a senha for a de uso único, ESTA sessão não faz mais nada além de
+     olhar quem é e trocar a senha. Fica no servidor, e não só na tela: uma
+     trava que mora no JavaScript da página cai por terra assim que alguém
+     chama a rota direto — e a senha provisória passou pelas mãos de quem
+     cadastrou, então ela não pode valer como senha de verdade nem por um
+     minuto de uso.
+     ====================================================================== */
+  if (sessao.provisoria
+      && caminho !== "/restrito/api/eu/senha"
+      && caminho !== "/restrito/api/sair") {
+    return responder(res, 403, {
+      error: "Troque a senha provisória antes de usar o sistema.",
+      trocarSenha: true,
     });
   }
 
@@ -741,17 +798,39 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   if (caminho === "/restrito/api/eu/senha" && req.method === "PUT") {
     const corpo = (await lerCorpo(req)) || {};
     const nova = String(corpo.nova || "");
-    if (nova.length < 8) return responder(res, 400, { error: "a nova senha precisa de pelo menos 8 caracteres" });
-    const u = await Q.get("SELECT senha_hash FROM usuarios WHERE id = ?", sessao.usuarioId);
-    if (!u || !conferirSenha(corpo.atual, u.senha_hash))
+    const u = await Q.get("SELECT senha_hash, senha_provisoria FROM usuarios WHERE id = ?", sessao.usuarioId);
+    if (!u) return responder(res, 401, { error: "usuário não encontrado" });
+
+    /* NA PRIMEIRA TROCA não se pede a senha atual: a pessoa acabou de digitá-la
+       para entrar, e a tela está travada nesta operação desde então. Pedir de
+       novo, na fábrica, é o empurrão que faz alguém anotar a senha num papel
+       colado na máquina.
+
+       Na troca voluntária a atual CONTINUA sendo exigida — ali a sessão pode
+       estar aberta há horas, largada na bancada. */
+    if (!u.senha_provisoria && !conferirSenha(corpo.atual, u.senha_hash))
       return responder(res, 401, { error: "senha atual incorreta" });
-    await Q.run("UPDATE usuarios SET senha_hash = ? WHERE id = ?", gerarHash(nova), sessao.usuarioId);
+
+    const problema = conferirSenhaNova(nova, u.senha_provisoria ? corpo.atual : null);
+    if (problema) return responder(res, 400, { error: problema });
+
+    /* Repetir a senha que já estava valendo é "trocar" sem trocar nada — e a
+       pessoa sairia da tela achando que resolveu. */
+    if (conferirSenha(nova, u.senha_hash))
+      return responder(res, 400, { error: "essa já é a sua senha — escolha outra" });
+
+    await Q.run("UPDATE usuarios SET senha_hash = ?, senha_provisoria = FALSE WHERE id = ?",
+      gerarHash(nova), sessao.usuarioId);
 
     /* Derruba as OUTRAS sessões desta conta. Quem troca a senha normalmente
        troca porque desconfia de alguém — deixar a sessão do outro viva anula
        o motivo da troca. */
     const rid = ridDe(req);
     for (const [k, s] of sessoes) if (s.usuarioId === sessao.usuarioId && k !== rid) sessoes.delete(k);
+
+    /* E destrava ESTA sessão: a pessoa continua de onde parou, sem entrar de
+       novo. Entrar duas vezes seguidas parece erro do sistema. */
+    sessao.provisoria = false;
     return responder(res, 200, { ok: true });
   }
 
@@ -1383,9 +1462,10 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     /* A SENHA É GERADA, NUNCA DIGITADA por quem cadastra. Um administrador com
        sete operadores para criar põe "123456" em todos, e o sistema que separa
        a produção de cada um passa a não separar nada. */
-    const senha = senhaDitavel();
+    const senha = senhaProvisoria();
     const id = await Q.inserir(
-      "INSERT INTO usuarios (usuario, nome, senha_hash, papel) VALUES (?,?,?,?) RETURNING id",
+      `INSERT INTO usuarios (usuario, nome, senha_hash, papel, senha_provisoria)
+       VALUES (?,?,?,?,TRUE) RETURNING id`,
       usuario, String(corpo.nome || usuario).trim(), gerarHash(senha), papel);
 
     /* A senha volta UMA vez, para a tela mostrar e a pessoa anotar. Não fica
@@ -1400,8 +1480,9 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     const u = await Q.get("SELECT id, usuario FROM usuarios WHERE id = ?", id);
     if (!u) return responder(res, 404, { error: "usuário não encontrado" });
 
-    const senha = senhaDitavel();
-    await Q.run("UPDATE usuarios SET senha_hash = ? WHERE id = ?", gerarHash(senha), id);
+    const senha = senhaProvisoria();
+    await Q.run("UPDATE usuarios SET senha_hash = ?, senha_provisoria = TRUE WHERE id = ?",
+      gerarHash(senha), id);
 
     /* Redefinir derruba as sessões da pessoa. É o caso "perdi o celular" ou
        "desconfio que alguém entrou": deixar a sessão viva anularia a redefinição. */
@@ -1493,6 +1574,6 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
 }
 
 module.exports = {
-  rotas, sessaoDe, gerarHash, conferirSenha, prepararCadastro, senhaDitavel,
+  rotas, sessaoDe, gerarHash, conferirSenha, prepararCadastro, senhaProvisoria, conferirSenhaNova,
   CADASTROS,
 };

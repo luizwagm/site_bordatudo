@@ -391,6 +391,29 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   </form>
 </div>
 
+<!-- ============================================ TROCA OBRIGATÓRIA ======== -->
+<!-- Tela própria, e não um modal por cima do sistema: a pessoa não vê o
+     sistema antes de trocar. Um modal daria a impressão de que dá para fechar
+     e usar assim mesmo — e, nas telas em que dá, é o que se faz. -->
+<div class="entrar" id="tela-trocar" hidden>
+  <form class="entrar__caixa" id="form-trocar">
+    <div class="entrar__marca">Bem-vindo, <span id="trocar-nome">—</span></div>
+    <p class="entrar__sub">Aquela senha de 6 números serve só para esta primeira vez.
+      Escolha a sua agora — ela é o que separa a sua produção da dos outros.</p>
+    <label class="campo"><span>Senha nova</span>
+      <input type="password" name="nova" autocomplete="new-password" required></label>
+    <label class="campo"><span>Repita a senha nova</span>
+      <input type="password" name="repetir" autocomplete="new-password" required></label>
+    <button class="btn btn--verde btn--largo" type="submit">Trocar e entrar</button>
+    <div class="aviso aviso--erro" id="erro-trocar" hidden></div>
+    <p style="margin:14px 0 0;font-size:13px;color:#77778a">
+      Pelo menos 6 caracteres. Pode ser número, mas não vale <b>111111</b> nem
+      <b>123456</b> — nem a mesma que você acabou de digitar.</p>
+    <p style="margin:10px 0 0;text-align:center">
+      <button class="btn btn--fantasma btn--mini" type="button" data-acao="sair">Não sou eu — sair</button></p>
+  </form>
+</div>
+
 <!-- ============================================================ APP ====== -->
 <div id="app" hidden>
   <header class="topo">
@@ -1685,8 +1708,9 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
           ? '<label style="display:flex;gap:9px;align-items:center;font-size:15px;margin-top:4px">' +
             '<input type="checkbox" id="us-ativo" style="width:18px;height:18px;accent-color:var(--tinta)"' +
             (u.ativo ? " checked" : "") + "> conta ativa (pode entrar)</label>"
-          : '<p style="margin:0;font-size:13.5px;color:#77778a">A senha é gerada agora e mostrada ' +
-            "<b>uma vez</b>. Anote antes de fechar a tela.</p>"),
+          : '<p style="margin:0;font-size:13.5px;color:#77778a">Uma senha de <b>seis números</b> é ' +
+            "gerada agora e mostrada <b>uma vez</b>. Ela serve só para o primeiro acesso: " +
+            "a pessoa é obrigada a trocá-la antes de usar o sistema.</p>"),
       confirmar: id ? "Salvar" : "Criar usuário",
       classe: "btn--laranja",
       aoAbrir: function (caixa) {
@@ -1734,9 +1758,9 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         '<p style="margin:0 0 12px">Login <b>' + esc(usuario) + "</b>. Esta senha aparece " +
         "<b>uma única vez</b> — anote ou mande para a pessoa agora.</p>" +
         '<div class="senha-nova" id="sn-senha">' + esc(senha) + "</div>" +
-        '<p style="margin:12px 0 0;font-size:13.5px;color:#77778a">Ela não tem vogal nem os ' +
-        "caracteres que se confundem (0 e O, 1 e l), justamente para poder ser ditada por telefone. " +
-        "Quem receber pode trocá-la no menu da própria conta.</p>",
+        '<p style="margin:12px 0 0;font-size:13.5px;color:#77778a">São seis números, para se ditar ' +
+        "por telefone e digitar no teclado do celular sem errar. É de <b>uso único</b>: " +
+        "no primeiro acesso o sistema exige a troca e não deixa fazer mais nada antes disso.</p>",
       confirmar: "Copiar e fechar",
       classe: "btn--verde",
       extra: '<button class="btn btn--fantasma" data-fechar>Já anotei</button>',
@@ -2011,7 +2035,8 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             '<label class="campo"><span>Senha atual</span><input type="password" id="ts-atual" autocomplete="current-password"></label>' +
             '<label class="campo"><span>Senha nova</span><input type="password" id="ts-nova" autocomplete="new-password"></label>' +
             '<label class="campo"><span>Repita a nova</span><input type="password" id="ts-rep" autocomplete="new-password"></label>' +
-            '<p style="margin:0;font-size:13.5px;color:#77778a">Pelo menos 8 caracteres. ' +
+            '<p style="margin:0;font-size:13.5px;color:#77778a">Pelo menos 6 caracteres — ' +
+            "mas não <b>111111</b> nem <b>123456</b>. " +
             "Ao trocar, as outras sessões desta conta são desconectadas.</p>",
           confirmar: "Trocar senha",
           aoConfirmar: async function (caixa) {
@@ -2057,9 +2082,44 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     }
   });
 
+  /* A senha provisória abriu a porta. Daqui a pessoa só sai trocando — o
+     servidor recusa qualquer outra rota até lá, então a tela não está
+     "escondendo" o sistema: ele realmente não responde. */
+  function pedirTroca(eu) {
+    document.getElementById("tela-entrar").hidden = true;
+    document.getElementById("app").hidden = true;
+    document.getElementById("tela-trocar").hidden = false;
+    document.getElementById("trocar-nome").textContent = (eu.nome || eu.usuario).split(" ")[0];
+    setTimeout(() => document.querySelector("#form-trocar [name=nova]").focus(), 80);
+  }
+
+  document.getElementById("form-trocar").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    const form = ev.target;
+    const erro = document.getElementById("erro-trocar");
+    erro.hidden = true;
+    const botao = form.querySelector("button[type=submit]");
+    botao.disabled = true;
+    try {
+      if (form.nova.value !== form.repetir.value) throw new Error("As duas senhas não batem.");
+      await enviar("/restrito/api/eu/senha", "PUT", { nova: form.nova.value });
+      document.getElementById("tela-trocar").hidden = true;
+      recado("Senha trocada. Bom trabalho!");
+      await comecar();
+    } catch (e) {
+      erro.textContent = e.message; erro.hidden = false;
+      botao.disabled = false;
+      form.nova.value = ""; form.repetir.value = "";
+      form.nova.focus();
+    }
+  });
+
   async function comecar() {
     EU = await api("/restrito/api/eu");
+    if (EU.trocarSenha) return pedirTroca(EU);
+
     document.getElementById("tela-entrar").hidden = true;
+    document.getElementById("tela-trocar").hidden = true;
     document.getElementById("app").hidden = false;
 
     const nomeCurto = (EU.nome || EU.usuario).split(" ")[0];

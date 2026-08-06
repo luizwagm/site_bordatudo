@@ -96,15 +96,49 @@ const PAGINAS = ["/", "/servicos/", "/vitrine/", "/empresa/", "/orcamento/",
                  "/privacidade/", "/busca/", "/sitemap.xml", "/robots.txt"];
 
 (async () => {
-  console.log("\n  1. site no ar");
+  /* A TRAVA vem primeiro porque muda o significado de tudo o que vem depois.
+     Enquanto ela estiver de pé, o site não abre nem com a situação "no ar" —
+     e é isso que o cliente pediu: "o site não pode abrir". */
+  console.log("\n  0. trava de construção");
+  const fonte = fs.readFileSync(path.join(__dirname, "server.js"), "utf8");
+  const TRAVADO = /const TRAVA_CONSTRUCAO = true;/.test(fonte);
+  ok(/const TRAVA_CONSTRUCAO = (true|false);/.test(fonte),
+     "a trava existe e é uma constante — não uma configuração que se muda sem querer");
+
   let saida = await subir();
+  let r;
+  if (TRAVADO) {
+    porFora("site_estado", "no-ar");
+    await subir();
+    r = await pedir("/");
+    eq(r.status, 503, "com a trava, o site NÃO abre nem com a situação 'no ar'");
+    ok(r.texto.includes("sendo bordado"), "e mostra a página de construção");
+    eq((await pedir("/servicos/")).status, 503, "nenhuma página do site escapa");
+    eq((await pedir("/restrito")).status, 200, "o /restrito continua sendo o que se acessa");
+
+    /* Painel travado que não AVISA é pior que painel travado: a pessoa muda
+       para "no ar", vê que nada acontece e vai procurar defeito no servidor. */
+    await pedir("/api/login", "POST", { senha: SENHA_PADRAO });
+    r = await pedir("/api/conteudo");
+    ok(r.texto.includes('"travaConstrucao":true'), "e o painel sabe que está travado");
+    cookie = "";
+  } else {
+    ok(false, "a trava está DESLIGADA — o site vai abrir; confirme se é isso mesmo");
+  }
+
+  console.log("  1. site no ar");
   ok(!/situação do site migrada/.test(saida), "banco novo não anuncia migração");
   eq(lerChave("site_estado"), "no-ar", "banco novo nasce no ar");
 
-  let r = await pedir("/");
-  eq(r.status, 200, "a home responde");
-  ok(r.texto.includes("Borda Tudo"), "e é o site de verdade");
-  ok(!r.texto.includes("sendo bordado"), "não é a página de construção");
+  /* Sem a trava, é a situação que manda. Como não dá para desligar a constante
+     em tempo de execução, este trecho só roda quando ela já estiver desligada —
+     no dia do lançamento. */
+  if (!TRAVADO) {
+    r = await pedir("/");
+    eq(r.status, 200, "a home responde");
+    ok(r.texto.includes("Borda Tudo"), "e é o site de verdade");
+    ok(!r.texto.includes("sendo bordado"), "não é a página de construção");
+  }
 
   /* ---------------------------------------------------- 2. construção --- */
   console.log("  2. em construção");
@@ -137,9 +171,14 @@ const PAGINAS = ["/", "/servicos/", "/vitrine/", "/empresa/", "/orcamento/",
   await subir();
   r = await pedir("/");
   eq(r.status, 503, "a home sai do ar");
-  ok(r.texto.includes("trocando a linha"), "e mostra a página de MANUTENÇÃO, não a de construção");
-  ok(!r.texto.includes("sendo bordado"), "as duas páginas não se misturam");
-  eq(r.retry, "600", "Retry-After curto: manutenção promete voltar logo");
+  if (TRAVADO) {
+    ok(r.texto.includes("sendo bordado"),
+       "com a trava, é a página de CONSTRUÇÃO que sai — a trava ganha do painel");
+  } else {
+    ok(r.texto.includes("trocando a linha"), "e mostra a página de MANUTENÇÃO, não a de construção");
+    ok(!r.texto.includes("sendo bordado"), "as duas páginas não se misturam");
+    eq(r.retry, "600", "Retry-After curto: manutenção promete voltar logo");
+  }
 
   /* ------------------------------------------------------ 4. o painel --- */
   console.log("  4. trocar pelo painel");
@@ -160,11 +199,12 @@ const PAGINAS = ["/", "/servicos/", "/vitrine/", "/empresa/", "/orcamento/",
 
   eq((await pedir("/api/conteudo", "PUT", { site_estado: "no-ar" })).status, 200, "o painel põe o site no ar");
   eq(lerChave("site_estado"), "no-ar", "e a chave foi gravada");
-  eq((await pedir("/")).status, 200, "a home volta na hora, sem reiniciar nada");
+  eq((await pedir("/")).status, TRAVADO ? 503 : 200,
+     TRAVADO ? "mas a TRAVA segura: a home continua fechada" : "a home volta na hora, sem reiniciar nada");
 
   eq((await pedir("/api/conteudo", "PUT", { site_estado: "construcao" })).status, 200,
      "e volta para construção pelo mesmo caminho");
-  eq((await pedir("/")).status, 503, "a home sai de novo");
+  eq((await pedir("/")).status, 503, "a home fica fechada");
 
   /* --------------------------------------------------- 5. a migração ---- */
   /* O `manutencao` de "0"/"1" virou `site_estado`. Um site que estivesse EM
@@ -188,7 +228,8 @@ const PAGINAS = ["/", "/servicos/", "/vitrine/", "/empresa/", "/orcamento/",
   db2.close();
   await subir();
   eq(lerChave("site_estado"), "no-ar", "manutencao=0 virou site_estado=no-ar");
-  eq((await pedir("/")).status, 200, "e o site continua no ar");
+  eq((await pedir("/")).status, TRAVADO ? 503 : 200,
+     TRAVADO ? "e o site segue fechado pela trava, como tem de ser hoje" : "e o site continua no ar");
 
   await subir();
   eq(lerChave("site_estado"), "no-ar", "rodar de novo não desfaz nada (a migração é idempotente)");

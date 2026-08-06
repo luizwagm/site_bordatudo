@@ -94,9 +94,10 @@ sudo grep -c . /etc/bordatudo.env               # tem de sair: 2
 ```bash
 node sql/rodar.cjs 02-esquema.sql
 node sql/rodar.cjs 04-cadastros.sql
+node sql/rodar.cjs 05-senha-provisoria.sql
 ```
 
-Rodar de novo não faz mal: os dois arquivos são `IF NOT EXISTS`.
+Rodar de novo não faz mal: os três arquivos são `IF NOT EXISTS`.
 
 **Conferir** — tem de listar 10 tabelas:
 
@@ -130,8 +131,12 @@ Quando os dados de verdade chegarem, `node sql/03-dados-de-teste.cjs
 node criar-usuario.cjs eduardo admin "Eduardo"
 ```
 
-A senha é **gerada**, aparece uma vez e não aparece mais. Anote antes de fechar
-o terminal.
+A senha é **gerada** com **seis números**, aparece uma vez e não aparece mais.
+Anote antes de fechar o terminal.
+
+Ela é de **uso único**: no primeiro acesso o sistema exige a troca e **não deixa
+fazer mais nada** antes disso. É o que impede que a senha que passou pelas mãos
+de quem cadastrou continue valendo como senha de verdade.
 
 Deste ponto em diante, usuário se cria **pela tela**: Cadastros → Usuários →
 Novo. Este comando existe só para o primeiro administrador e para o caso de
@@ -184,9 +189,12 @@ curl -s https://bordatudo.com/ | grep -c 'sendo bordado'                 # 1
 curl -s -o /dev/null -w '%{http_code}\n' https://bordatudo.com/restrito  # 200
 ```
 
-Depois entre em `https://bordatudo.com/restrito` e faça o caminho inteiro uma
-vez: **INÍCIO DE PRODUÇÃO → ABRIR FICHA → FECHAR FICHA**. É a única prova que
-vale.
+Depois entre em `https://bordatudo.com/restrito`. Na **primeira vez** o sistema
+vai pedir a troca da senha de seis números — troque, e ele continua de onde
+parou, sem entrar de novo.
+
+Aí faça o caminho inteiro uma vez: **INÍCIO DE PRODUÇÃO → ABRIR FICHA → FECHAR
+FICHA**. É a única prova que vale.
 
 > Use uma ficha própria para o teste e **cancele-a** depois — ficha cancelada
 > não conta na produção nem entra em lote.
@@ -259,8 +267,18 @@ para fora do servidor uma vez por semana é o que fecha essa porta.
 
 ## Quando o site for lançado
 
-Painel → **Situação do site** → *Site no ar*. Volta na hora, sem reiniciar nada.
-As páginas estiveram gravadas o tempo todo.
+O site está **travado** em construção: nem o painel o abre. A trava é uma
+constante no `server.js` (`TRAVA_CONSTRUCAO`), e não uma configuração, porque
+configuração se muda sem querer — e o efeito de mudar esta é o site inteiro
+aparecer antes da hora.
+
+Para lançar:
+
+1. `TRAVA_CONSTRUCAO = false` no `server.js`;
+2. painel → **Situação do site** → *Site no ar*;
+3. suba a versão e `sudo ./deploy.sh`.
+
+Volta na hora. As páginas estiveram gravadas o tempo todo.
 
 Antes de lançar, preencha o **CNPJ** no painel: hoje está `0`, e por isso ele
 não sai no rodapé do site nem no recibo do lote.

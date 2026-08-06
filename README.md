@@ -15,9 +15,10 @@ O `/restrito` usa Postgres porque é dado de faturamento: precisa de transação
 de coluna calculada pelo banco e de índice que **impede** o registro errado de
 existir. O site continua em SQLite porque é conteúdo, não dinheiro.
 
-> **Agora o site está EM CONSTRUÇÃO.** Quem visita vê uma página de aviso com o
-> caminho para o WhatsApp; nada do site é servido. As páginas continuam todas
-> gravadas — só não saem. Quem sobe primeiro é o `/restrito`.
+> **Agora o site está TRAVADO em construção.** Quem visita vê uma página de aviso
+> com o caminho para o WhatsApp; nada do site é servido, e **nem o painel abre o
+> site** enquanto a trava estiver de pé. As páginas continuam todas gravadas —
+> só não saem. O que está no ar é o `/restrito`.
 
 ---
 
@@ -33,6 +34,13 @@ Em **Painel → Situação do site**, três estados:
 
 A diferença não é enfeite: manutenção **promete que o site volta**, e prometer
 volta de um site que nunca subiu é a primeira impressão que a empresa dá.
+
+**Acima dos três está a TRAVA.** `TRAVA_CONSTRUCAO` no `server.js` é uma
+constante, não uma configuração: enquanto for `true`, escolher "Site no ar" no
+painel **não** abre o site. Configuração se muda sem querer, e o efeito de mudar
+esta é o site inteiro aparecer antes da hora — por isso sair dela leva commit,
+versão e deploy. O painel avisa que está travado, para ninguém passar a tarde
+procurando defeito no servidor.
 
 Fora do ar, as páginas respondem **503** (e não 200) para o Google entender que
 aquilo não é a home — senão o aviso fica indexado semanas depois do lançamento.
@@ -93,6 +101,12 @@ Um item do menu que abre quatro telas:
 | **Desenhos** | lista paginada com busca e **miniatura**; cadastro com cliente, pontuação e **uma ou mais fotos** |
 | **Mercadorias, cores e máquinas** | três abas — listas de palavras que nascem uma vez e quase não mudam. A cor tem um campo de **tom**, que vira a bolinha da lista: "Bege" escrito não distingue dois beges na mesma remessa |
 | **Usuários** | criar, editar e redefinir senha, tudo pela tela |
+
+**A senha nasce provisória.** O sistema gera **seis números** — para se ditar por
+telefone e digitar no teclado do celular preso à máquina — e ela serve para
+abrir a porta **uma vez**: no primeiro acesso a pessoa é obrigada a trocar, e o
+servidor recusa qualquer outra rota até lá. A senha passou pelas mãos de quem
+cadastrou; ela não pode valer como senha de verdade nem por um turno.
 
 **As fotos do desenho** ficam em `data/desenhos/`, **fora** de `assets/`, e só
 saem por uma rota que exige sessão. O desenho é propriedade do cliente: em
@@ -180,7 +194,7 @@ Um adesivo fotografado não dá acesso a nada. Se um adesivo se perder, use
 
 ```bash
 npm start                    # site + painel + /restrito na porta 5193
-npm test                     # as duas suítes (214 + 46 conferências)
+npm test                     # as duas suítes (247 + 47 conferências)
 node backup.js agora         # cópia dos DOIS bancos (site.db + pg_dump)
 ```
 

@@ -30,7 +30,7 @@ const restrito = require("./restrito");
    servidor). Tem de ser ANTES de qualquer consulta ao Postgres. */
 carregarAmbiente(__dirname);
 
-const APP_VERSION = "1.6.0";
+const APP_VERSION = "1.7.0";
 const PORTA = Number(process.env.PORT) || 5193;
 const HOST = process.env.HOST || "127.0.0.1";
 const RAIZ = __dirname;
@@ -266,6 +266,25 @@ for (const [k, v] of Object.entries(PADROES)) porFora.run(k, v);
    senão não haveria como desligar; o `/restrito` é tratado antes disto, porque
    a produção da fábrica não para quando o site institucional para. */
 const PAGINA_DO_ESTADO = { construcao: "construcao.html", manutencao: "manutencao.html" };
+
+/* ==========================================================================
+   TRAVA DE CONSTRUÇÃO
+
+   O site NÃO ABRE enquanto isto for `true` — nem que alguém mude a situação no
+   painel, nem que o banco venha de um backup antigo com o valor errado. O que
+   está no ar agora é só o /restrito.
+
+   É uma constante, e não uma configuração, de propósito: configuração se muda
+   sem querer, e o efeito de mudar esta é o site inteiro aparecer antes da hora.
+   Trocar para `false` é uma decisão consciente, com commit e versão — que é
+   exatamente o peso que "lançar o site" tem.
+
+   PARA LANÇAR O SITE:
+     1. troque para `false` aqui;
+     2. painel → Situação do site → "Site no ar";
+     3. suba a versão e faça o deploy.
+   ========================================================================== */
+const TRAVA_CONSTRUCAO = true;
 
 if (!pegar.get("senha_hash")?.value) {
   db.prepare("UPDATE settings SET value = ? WHERE key = 'senha_hash'").run(gerarHash("borda-admin"));
@@ -853,7 +872,9 @@ const servidor = http.createServer(async (req, res) => {
     return responder(res, 405, { error: "método não permitido" });
 
   const s = S();
-  const paginaEstado = PAGINA_DO_ESTADO[s.site_estado];
+  /* A trava ganha do painel. Enquanto ela estiver de pé, "Site no ar" no painel
+     não põe o site no ar — e é isso que a tela do painel avisa. */
+  const paginaEstado = TRAVA_CONSTRUCAO ? "construcao.html" : PAGINA_DO_ESTADO[s.site_estado];
   /* O favicon passa mesmo com o site fora do ar: a própria página de aviso o
      pede, e uma aba com o ícone quebrado é a diferença entre "estão
      trabalhando nisso" e "está tudo quebrado". */
@@ -865,7 +886,7 @@ const servidor = http.createServer(async (req, res) => {
          de deixá-lo indexar a página de aviso no lugar da home. O `Retry-After`
          de construção é longo — não adianta o robô voltar em 10 minutos. */
       return responder(res, 503, fs.readFileSync(p), TIPOS[".html"],
-        { "Retry-After": s.site_estado === "construcao" ? "86400" : "600" });
+        { "Retry-After": paginaEstado === "construcao.html" ? "86400" : "600" });
     }
   }
 
@@ -1009,6 +1030,10 @@ async function rotasApi(req, res, rota, url) {
       depoimentos: db.prepare("SELECT * FROM depoimentos ORDER BY ordem, id").all(),
       duvidas: db.prepare("SELECT * FROM duvidas ORDER BY ordem, id").all(),
       versao: APP_VERSION,
+      /* O painel precisa SABER que a trava existe. Sem isto ele mostraria
+         "Site no ar" selecionado com o site fora do ar, e a pessoa passaria a
+         tarde procurando o que está errado no servidor. */
+      travaConstrucao: TRAVA_CONSTRUCAO,
     });
   }
 

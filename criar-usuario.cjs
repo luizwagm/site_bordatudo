@@ -22,7 +22,7 @@
 
 const path = require("node:path");
 const { Q, carregarAmbiente } = require("./pg.js");
-const { gerarHash, senhaDitavel } = require("./restrito.js");
+const { gerarHash, senhaProvisoria } = require("./restrito.js");
 
 carregarAmbiente(__dirname);
 
@@ -46,23 +46,26 @@ if (!["admin", "operador"].includes(papel)) {
   /* A regra de senha é a MESMA do painel porque vem da mesma função. Duas
      cópias divergiriam, e a diferença só apareceria quando alguém não
      conseguisse ditar a senha por telefone. */
-  const senha = senhaDitavel();
+  const senha = senhaProvisoria();
   const hash = gerarHash(senha);
 
   const existe = await Q.get("SELECT id FROM usuarios WHERE usuario = ?", usuario);
   if (existe) {
-    await Q.run("UPDATE usuarios SET nome = ?, papel = ?, senha_hash = ?, ativo = TRUE WHERE id = ?",
+    await Q.run(`UPDATE usuarios SET nome = ?, papel = ?, senha_hash = ?, ativo = TRUE,
+                        senha_provisoria = TRUE WHERE id = ?`,
       nome, papel, hash, existe.id);
     console.log(`\n  usuário ATUALIZADO: ${usuario} (${papel})`);
   } else {
-    await Q.run("INSERT INTO usuarios (usuario, nome, senha_hash, papel) VALUES (?, ?, ?, ?)",
-      usuario, nome, hash, papel);
+    await Q.run(`INSERT INTO usuarios (usuario, nome, senha_hash, papel, senha_provisoria)
+                 VALUES (?, ?, ?, ?, TRUE)`, usuario, nome, hash, papel);
     console.log(`\n  usuário CRIADO: ${usuario} (${papel})`);
   }
 
   console.log(`  nome:  ${nome}`);
   console.log(`  senha: ${senha}`);
   console.log("\n  Anote agora — ela não é mostrada de novo.");
+  console.log("  É senha DE USO ÚNICO: no primeiro acesso o sistema exige a troca");
+  console.log("  e não deixa fazer mais nada antes disso.");
   console.log("  A partir daqui, use o painel: Cadastros → Usuários.\n");
 })().catch((e) => {
   console.error("\n  ✖ " + String(e.message).split("\n")[0]);

@@ -602,6 +602,13 @@ function desenharSistema() {
   };
   return '<div class="cabeca"><h2>Situação do site e backup</h2></div>' +
     '<section class="bloco"><h3>O que o visitante vê</h3>' +
+    (DADOS.travaConstrucao
+      ? '<div class="nota nota--atencao"><b>O site está TRAVADO em construção.</b><br>' +
+        "Enquanto a trava estiver de pé, escolher “Site no ar” aqui <b>não</b> põe o site no ar — " +
+        "quem visitar continua vendo a página de aviso. Só o /restrito está sendo usado agora.<br><br>" +
+        "Destravar é decisão de lançamento, não ajuste de painel: fale com o desenvolvedor " +
+        "(a trava fica no <code>server.js</code>, e sair dela leva commit, versão e deploy).</div>"
+      : "") +
     '<div class="nota nota--atencao">Fora do ar, quem visitar vê uma página de aviso e mais nada — ' +
     "as páginas continuam gravadas, só não são servidas. Este painel e o /restrito continuam " +
     "funcionando; senão não haveria como voltar atrás.</div>" +
