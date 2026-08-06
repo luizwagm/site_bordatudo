@@ -1,1 +1,160 @@
 # Borda Tudo
+
+Site institucional + **controle de produção** (`/restrito`) da Borda Tudo —
+Bordados Computadorizados, Caruaru-PE.
+
+São duas coisas no mesmo processo, com bancos separados:
+
+| Parte | O que é | Onde grava |
+|---|---|---|
+| **Site** (`/`) | páginas estáticas, reescritas na publicação | SQLite `data/site.db` |
+| **Painel** (`/admin/`) | edita textos, fotos e vitrine do site | SQLite `data/site.db` |
+| **Produção** (`/restrito`) | fichas, lotes, amálgama, nota | PostgreSQL `bordatudo_producao` |
+
+O `/restrito` usa Postgres porque é dado de faturamento: precisa de transação,
+de coluna calculada pelo banco e de índice que **impede** o registro errado de
+existir. O site continua em SQLite porque é conteúdo, não dinheiro.
+
+---
+
+## O que o /restrito substitui
+
+A folha de papel onde cada operador anotava cliente, desenho, pontuação e
+quantidade — e somava de cabeça no fim do turno.
+
+Três operações manuais viraram impossíveis de errar:
+
+| No papel | No sistema |
+|---|---|
+| a pontuação era decorada e escrita à mão | é **copiada do desenho** na hora de abrir a ficha |
+| o total era multiplicado de cabeça | é **coluna gerada pelo Postgres** — nem por SQL dá para escrever outro valor |
+| o "X" no canto marcava o que já tinha entrado na nota | o vínculo **ficha → lote** é uma coluna, e lote faturado tranca |
+
+### O dia do operador
+
+1. **INÍCIO DE PRODUÇÃO** — abre a jornada. Clicar duas vezes não abre duas.
+2. **ABRIR FICHA** — cliente → desenho (só os daquele cliente) → a pontuação
+   aparece na tela. A máquina vem do **QR colado nela**.
+3. **FECHAR FICHA** — quantidade de peças, mercadoria e cor. O total em pontos
+   aparece **enquanto se digita**, antes de confirmar.
+
+Só existe uma ficha aberta por operador, e a produção não encerra com ficha
+aberta.
+
+### O dia do administrativo
+
+- **Produção** — tudo que saiu das máquinas, com filtro por período, operador e
+  cliente, e a marca de quem ainda está **fora de lote**.
+- **Lotes e amálgama** — o lote é o serviço do cliente; as fichas são os
+  pedaços. "1500 abas" fecha somando 100 pretas + 500 brancas + 300 bege + …,
+  feitas por várias pessoas em vários dias. A tela mostra a quebra por cor, por
+  mercadoria e por operador, e quanto falta.
+- **Nota** — marcar como faturado exige o número da nota. Depois disso o lote
+  não aceita mais mexer nas fichas.
+
+---
+
+## Instalação do /restrito
+
+O banco é criado por você, no seu terminal — eu nunca peço senha de superusuário.
+
+```bash
+psql -U postgres -f sql/01-criar-banco.sql      # troque a senha dentro do arquivo antes
+```
+
+Ponha no `.env` da raiz (que **não** vai para o git):
+
+```
+PGPASSWORD=<a senha que você escolheu>
+DADOS_CHAVE=<32 bytes em hex — gere com: openssl rand -hex 32>
+```
+
+> **Perder `DADOS_CHAVE` é perder os dados cifrados para sempre.** Guarde-a fora
+> do servidor.
+
+Depois:
+
+```bash
+psql -U bordatudo -d bordatudo_producao -f sql/02-esquema.sql
+node sql/03-dados-de-teste.cjs --gravar
+node criar-usuario.cjs eduardo admin "Eduardo"
+```
+
+O `criar-usuario.cjs` **gera** a senha, mostra uma vez e não mostra mais. Rodar
+de novo com o mesmo usuário troca a senha — é assim que se atende "esqueci a
+senha" sem ninguém ler senha de ninguém.
+
+### Quando os dados de verdade chegarem
+
+Os cadastros que vieram das fotos (clientes, desenhos, mercadorias) e as
+máquinas MAQ 01–04 são **de teste**. Para zerar tudo, produção inclusive:
+
+```bash
+node sql/03-dados-de-teste.cjs --limpar-tudo
+```
+
+> **As pontuações são chute**, menos RECIFE1 (9.484) e RECIFE2 (34.422), que
+> vieram da foto. Bordado se cobra por ponto: confira TODAS antes de faturar em
+> cima delas.
+
+---
+
+## QR das máquinas
+
+Cadastre a máquina em **Cadastros → Máquinas** e imprima:
+
+```
+/restrito/etiquetas              todas as máquinas ativas
+/restrito/etiquetas?maquina=3    só uma
+```
+
+Recorte e cole na máquina. Quem lê o código cai na tela de produção já com a
+máquina escolhida.
+
+O QR **identifica, não autentica**: quem escaneia ainda precisa estar logado.
+Um adesivo fotografado não dá acesso a nada. Se um adesivo se perder, use
+**trocar QR** — o antigo deixa de valer na hora.
+
+---
+
+## Rodar
+
+```bash
+npm start                    # site + painel + /restrito na porta 5193
+node testar-restrito.cjs     # a suíte do /restrito (124 conferências)
+node backup.js agora         # cópia do banco do site
+```
+
+A suíte sobe o servidor numa porta própria, cria os registros dela com prefixo
+`ZZ QA` e apaga **por id** no fim. Se ela morrer no meio, os restos ficam
+visíveis com esse prefixo e somem na próxima execução — ou com
+`node testar-restrito.cjs --limpar`.
+
+---
+
+## Operação no servidor
+
+```bash
+./deploy.sh                  # publica (faz backup antes)
+./verificar.sh               # confere que subiu
+systemctl status bordatudo
+journalctl -u bordatudo -n 50
+```
+
+---
+
+## Duas coisas para saber antes de doer
+
+**A trava de senha é por IP.** Cinco erros do mesmo endereço em 15 minutos
+fecham por 15 minutos. Na fábrica todo mundo sai pelo mesmo IP público: se
+algumas pessoas errarem a senha na mesma manhã, a loja inteira fica de fora.
+Se isso acontecer na prática, os números estão em `limitador.js` (`ipMax`,
+`ipJanelaMin`) e vale afrouxar o balde do IP mantendo o da conta.
+
+**Cadastro nunca é apagado, é desativado.** Um cliente removido sumiria dos
+relatórios de três meses atrás. Ele sai da lista de escolha e continua no
+histórico.
+
+---
+
+Desenvolvido por [Luiz Augusto](https://luizaugust.me).

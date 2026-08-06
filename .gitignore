@@ -1,5 +1,11 @@
 node_modules/
 
+# SENHA DO BANCO E CHAVE DOS DADOS. Um `git add .` distraído publica as duas —
+# e a DADOS_CHAVE não se troca: quem a tem lê tudo que já foi cifrado.
+.env
+.env.*
+!.env.exemplo
+
 # O BANCO É O CONTEÚDO DO SITE e vive só no servidor. Versioná-lo faria o
 # `git pull` do deploy sobrescrever o que o cliente escreveu no painel.
 data/

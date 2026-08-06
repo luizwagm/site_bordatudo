@@ -1,0 +1,1519 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#1e275f">
+<title>Produção — Borda Tudo</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+/* ==========================================================================
+   TELA DE PRODUÇÃO — Borda Tudo
+
+   Duas plateias muito diferentes no mesmo arquivo:
+
+   O OPERADOR está em pé, na máquina, muitas vezes com o celular preso ao lado
+   dela. Ele tem três ações no dia inteiro — as mesmas três do papel que isto
+   substitui. Por isso a tela dele é um botão gigante de cada vez, e nada mais.
+
+   O ADMINISTRATIVO está sentado, no computador, cruzando o que sete pessoas
+   produziram. Ele precisa de tabela densa, filtro e soma — o oposto.
+
+   As cores são as do site (marinho #1e275f, laranja #d9440e), mas o layout não
+   é: site é vitrine, isto é ferramenta de turno.
+   ========================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  --tinta: #1e275f;
+  --tinta-fundo: #0d1240;
+  --tinta-suave: #3a4479;
+  --linha: #d9440e;
+  --linha-botao: #c03b0c;
+  --linha-viva: #f86519;
+  --prata: #adaec1;
+  --prata-fundo: #e6e7ee;
+  --algodao: #f7f5f2;
+  --papel: #ffffff;
+  --carvao: #2b2b30;
+  --verde: #157a4a;
+  --verde-fundo: #e7f4ed;
+  --vermelho: #a3231b;
+  --vermelho-fundo: #fbeceb;
+  --ambar: #8a5a00;
+  --ambar-fundo: #fdf3df;
+
+  --fonte: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --raio: 4px;
+  --topo: 60px;
+  --sombra: 0 1px 2px rgb(13 18 64 / .07), 0 4px 16px rgb(13 18 64 / .07);
+}
+
+html, body { height: 100%; }
+body {
+  margin: 0; font-family: var(--fonte); font-size: 16px; line-height: 1.45;
+  color: var(--carvao); background: var(--algodao);
+  -webkit-text-size-adjust: 100%;
+}
+[hidden] { display: none !important; }
+button, input, select, textarea { font: inherit; color: inherit; }
+
+/* ---------------------------------------------------------------- entrar - */
+.entrar {
+  min-height: 100dvh; display: grid; place-items: center; padding: 24px;
+  background: linear-gradient(160deg, var(--tinta) 0%, var(--tinta-fundo) 100%);
+}
+.entrar__caixa {
+  width: min(380px, 100%); background: var(--papel); border-radius: 8px;
+  padding: 32px 28px; box-shadow: 0 24px 64px rgb(0 0 0 / .3);
+}
+.entrar__marca { font-size: 22px; font-weight: 800; color: var(--tinta); letter-spacing: -.01em; }
+.entrar__sub { font-size: 13px; color: #6b6b78; margin: 2px 0 22px; }
+
+label.campo { display: block; margin-bottom: 14px; }
+label.campo > span { display: block; font-size: 12.5px; font-weight: 700; color: #55555f;
+  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; }
+input[type=text], input[type=password], input[type=number], input[type=date],
+input[type=tel], select, textarea {
+  width: 100%; padding: 11px 12px; border: 1.5px solid #ccccd6; border-radius: var(--raio);
+  background: var(--papel); outline: none; transition: border-color 140ms, box-shadow 140ms;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--tinta); box-shadow: 0 0 0 3px rgb(30 39 95 / .13);
+}
+textarea { min-height: 74px; resize: vertical; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 11px 18px; border: 1.5px solid transparent; border-radius: var(--raio);
+  background: var(--tinta); color: #fff; font-weight: 700; cursor: pointer;
+  transition: filter 140ms, transform 60ms;
+}
+.btn:hover { filter: brightness(1.12); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+.btn--largo { width: 100%; }
+.btn--laranja { background: var(--linha-botao); }
+.btn--verde { background: var(--verde); }
+.btn--vermelho { background: var(--vermelho); }
+.btn--fantasma { background: transparent; color: var(--tinta); border-color: #c8c8d4; }
+.btn--fantasma:hover { background: var(--prata-fundo); filter: none; }
+.btn--mini { padding: 5px 10px; font-size: 13px; font-weight: 600; }
+
+.aviso { margin-top: 14px; padding: 10px 12px; border-radius: var(--raio); font-size: 14px; }
+.aviso--erro { background: var(--vermelho-fundo); color: var(--vermelho); border: 1px solid #f0c8c5; }
+.aviso--ok   { background: var(--verde-fundo); color: var(--verde); border: 1px solid #bfe3d0; }
+
+/* ------------------------------------------------------------------ topo - */
+.topo {
+  position: sticky; top: 0; z-index: 40; height: var(--topo);
+  display: flex; align-items: center; gap: 12px; padding: 0 14px;
+  background: var(--tinta); color: #fff;
+}
+.topo__marca { font-weight: 800; letter-spacing: -.01em; white-space: nowrap; }
+.topo__marca small { display: block; font-size: 10.5px; font-weight: 600; opacity: .62;
+  letter-spacing: .1em; text-transform: uppercase; line-height: 1; }
+.topo__espaco { flex: 1; }
+.topo__maquina {
+  font: 700 12.5px/1 var(--mono); padding: 6px 10px; border-radius: 999px;
+  background: rgb(248 101 25 / .2); color: #ffcfb4; border: 1px solid rgb(248 101 25 / .45);
+  white-space: nowrap;
+}
+.topo__btn {
+  display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px;
+  background: transparent; border: 1px solid rgb(255 255 255 / .22); border-radius: var(--raio);
+  color: #fff; cursor: pointer; font-size: 14px; font-weight: 600;
+}
+.topo__btn:hover { background: rgb(255 255 255 / .12); }
+.topo__versao { font: 600 11px var(--mono); opacity: .5; }
+
+/* Os dois menus do topo são posicionados pelo contêiner, não pela página:
+   dentro de `position: sticky`, um menu com `position: fixed` fica preso ao
+   lugar errado quando a lista rola por baixo. */
+.suspenso { position: relative; }
+.suspenso__lista {
+  position: absolute; right: 0; top: calc(100% + 8px); min-width: 208px;
+  background: var(--papel); color: var(--carvao); border-radius: 6px;
+  box-shadow: 0 12px 36px rgb(13 18 64 / .26); padding: 6px; z-index: 60;
+}
+.suspenso__lista a, .suspenso__lista button {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  padding: 9px 11px; border: 0; background: transparent; border-radius: var(--raio);
+  color: inherit; text-decoration: none; font-size: 14.5px; cursor: pointer;
+}
+.suspenso__lista a:hover, .suspenso__lista button:hover { background: var(--prata-fundo); }
+.suspenso__cabeca { padding: 9px 11px 7px; border-bottom: 1px solid #e6e6ee; margin-bottom: 5px; }
+.suspenso__cabeca b { display: block; font-size: 14.5px; }
+.suspenso__cabeca span { font-size: 12px; color: #77778a; }
+.pontinhos { display: grid; grid-template-columns: repeat(3, 3px); gap: 2.5px; }
+.pontinhos i { width: 3px; height: 3px; background: #fff; border-radius: 50%; }
+
+/* ------------------------------------------------------------------ menu - */
+.corpo { display: flex; min-height: calc(100dvh - var(--topo)); }
+.menu {
+  width: 208px; flex: 0 0 208px; background: var(--papel);
+  border-right: 1px solid #e4e4ec; padding: 14px 10px; position: sticky;
+  top: var(--topo); height: calc(100dvh - var(--topo)); overflow: auto;
+}
+.menu__grupo { font-size: 10.5px; font-weight: 800; letter-spacing: .11em; text-transform: uppercase;
+  color: #9a9aab; padding: 14px 10px 6px; }
+.menu button {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 10px 11px; border: 0; background: transparent; border-radius: var(--raio);
+  font-size: 15px; font-weight: 600; color: #4a4a58; cursor: pointer;
+}
+.menu button:hover { background: var(--algodao); }
+.menu button[aria-current="true"] { background: var(--tinta); color: #fff; }
+.principal { flex: 1; min-width: 0; padding: 20px; }
+
+@media (max-width: 860px) {
+  .corpo { flex-direction: column; }
+  .menu {
+    width: auto; flex: none; position: static; height: auto; display: flex;
+    gap: 6px; overflow-x: auto; padding: 8px; border-right: 0; border-bottom: 1px solid #e4e4ec;
+  }
+  .menu__grupo { display: none; }
+  .menu button { width: auto; white-space: nowrap; padding: 8px 13px; }
+  .principal { padding: 14px; }
+}
+
+/* ---------------------------------------------------------------- blocos - */
+.bloco { background: var(--papel); border: 1px solid #e4e4ec; border-radius: 8px;
+  box-shadow: var(--sombra); margin-bottom: 18px; }
+.bloco__topo { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 14px 18px; border-bottom: 1px solid #edeef3; }
+.bloco__topo h2 { margin: 0; font-size: 17px; color: var(--tinta); }
+.bloco__topo .espaco { flex: 1; }
+.bloco__corpo { padding: 18px; }
+.titulo-tela { margin: 0 0 4px; font-size: 22px; color: var(--tinta); letter-spacing: -.015em; }
+.subtitulo-tela { margin: 0 0 18px; color: #6b6b78; font-size: 14.5px; }
+
+/* ---------------------------------------------------- OPERADOR: o grande - */
+/* Um cartão por vez. A tela nunca mostra dois caminhos ao mesmo tempo, porque
+   o operador não decide nada: ou ele não começou, ou está sem ficha, ou tem
+   uma ficha aberta. O estado manda; ele só confirma. */
+.palco { max-width: 660px; margin: 0 auto; }
+
+.gigante {
+  width: 100%; min-height: 148px; border: 0; border-radius: 12px; cursor: pointer;
+  background: var(--linha-botao); color: #fff; box-shadow: 0 8px 26px rgb(192 59 12 / .3);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+  font-size: clamp(21px, 5.5vw, 30px); font-weight: 800; letter-spacing: .01em;
+  text-transform: uppercase; transition: filter 140ms, transform 70ms;
+}
+.gigante small { font-size: 14px; font-weight: 600; text-transform: none; opacity: .9; letter-spacing: 0; }
+.gigante:hover { filter: brightness(1.09); }
+.gigante:active { transform: translateY(2px); }
+.gigante--verde { background: var(--verde); box-shadow: 0 8px 26px rgb(21 122 74 / .3); }
+.gigante--tinta { background: var(--tinta); box-shadow: 0 8px 26px rgb(30 39 95 / .3); }
+
+.emcurso {
+  border-radius: 12px; padding: 20px; margin-bottom: 16px;
+  background: var(--papel); border: 2px solid var(--tinta); box-shadow: var(--sombra);
+}
+.emcurso__marcador { font-size: 11px; font-weight: 800; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--linha); }
+.emcurso__linha { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.emcurso__cliente { font-size: clamp(22px, 5vw, 30px); font-weight: 800; color: var(--tinta);
+  letter-spacing: -.02em; }
+.emcurso__desenho { font: 700 clamp(16px, 3.6vw, 21px) var(--mono); color: var(--linha); }
+.emcurso__dados { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 12px;
+  padding-top: 12px; border-top: 1px solid #edeef3; }
+.dado b { display: block; font: 700 19px var(--mono); color: var(--tinta); }
+.dado span { font-size: 11.5px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: #8a8a99; }
+
+/* O total aparece ENQUANTO se digita a quantidade. No papel esta conta era
+   feita de cabeça, no fim do turno — e é exatamente ela que se errava. */
+.conta {
+  margin: 16px 0; padding: 14px 16px; border-radius: 8px; text-align: center;
+  background: var(--tinta-fundo); color: #fff;
+}
+.conta__formula { font: 600 13.5px var(--mono); color: var(--prata); }
+.conta__valor { font: 800 clamp(26px, 7vw, 38px)/1.1 var(--mono); color: var(--linha-viva); }
+.conta__rotulo { font-size: 11.5px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; opacity: .7; }
+
+.numerao { font: 800 34px/1 var(--mono) !important; text-align: center; padding: 16px 12px !important; }
+
+.resumo-dia { display: flex; gap: 10px; flex-wrap: wrap; }
+.resumo-dia > div { flex: 1 1 130px; padding: 12px 14px; border-radius: 8px;
+  background: var(--prata-fundo); border: 1px solid #dcdce7; }
+.resumo-dia b { display: block; font: 800 24px var(--mono); color: var(--tinta); }
+.resumo-dia span { font-size: 11.5px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: #75758a; }
+
+/* --------------------------------------------------------------- tabelas - */
+.rolagem { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+th, td { padding: 9px 11px; text-align: left; border-bottom: 1px solid #edeef3; vertical-align: middle; }
+th { font-size: 11.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: #77778a; background: #fafaFC; white-space: nowrap; position: sticky; top: 0; }
+tbody tr:hover { background: #fbfbfd; }
+td.num, th.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--tinta); border-bottom: 0; }
+.vazio { padding: 30px 18px; text-align: center; color: #8a8a99; }
+
+.etiqueta { display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
+.etiqueta--verde { background: var(--verde-fundo); color: var(--verde); }
+.etiqueta--ambar { background: var(--ambar-fundo); color: var(--ambar); }
+.etiqueta--cinza { background: var(--prata-fundo); color: #5c5c70; }
+.etiqueta--vermelha { background: var(--vermelho-fundo); color: var(--vermelho); }
+
+.filtros { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.filtros label.campo { margin: 0; min-width: 138px; }
+.filtros label.campo > span { font-size: 11px; }
+
+.abas { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 18px; border-bottom: 1px solid #edeef3; }
+.abas button { padding: 11px 14px; border: 0; background: transparent; cursor: pointer;
+  font-size: 14.5px; font-weight: 700; color: #77778a; border-bottom: 3px solid transparent; }
+.abas button[aria-current="true"] { color: var(--tinta); border-bottom-color: var(--linha); }
+
+.grade-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 14px; }
+.linha-botoes { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Barras da quebra por cor: proporção se lê em um relance; número exige
+   comparar de dois em dois. Aqui a pergunta é sempre "quanto falta de qual". */
+.quebra { display: grid; gap: 7px; }
+.quebra__item { display: grid; grid-template-columns: minmax(88px, 26%) 1fr auto; gap: 10px; align-items: center; }
+.quebra__nome { font-size: 13.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quebra__barra { height: 15px; background: var(--prata-fundo); border-radius: 999px; overflow: hidden; }
+.quebra__barra i { display: block; height: 100%; background: var(--tinta); border-radius: 999px; }
+.quebra__valor { font: 700 13.5px var(--mono); }
+
+/* ----------------------------------------------------------------- modal - */
+.modal { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center;
+  padding: 16px; background: rgb(13 18 64 / .55); }
+.modal__caixa { width: min(620px, 100%); max-height: 90dvh; overflow: auto;
+  background: var(--papel); border-radius: 10px; box-shadow: 0 30px 70px rgb(0 0 0 / .34); }
+.modal__topo { display: flex; align-items: center; gap: 12px; padding: 16px 20px;
+  border-bottom: 1px solid #edeef3; position: sticky; top: 0; background: var(--papel); }
+.modal__topo h3 { margin: 0; font-size: 18px; color: var(--tinta); }
+.modal__topo .espaco { flex: 1; }
+.modal__corpo { padding: 20px; }
+.modal__pe { display: flex; gap: 9px; justify-content: flex-end; padding: 14px 20px;
+  border-top: 1px solid #edeef3; position: sticky; bottom: 0; background: var(--papel); }
+.fechar-x { border: 0; background: transparent; font-size: 24px; line-height: 1; cursor: pointer; color: #9a9aab; }
+
+.escolha { display: grid; gap: 4px; max-height: 320px; overflow: auto;
+  border: 1px solid #e4e4ec; border-radius: var(--raio); padding: 6px; }
+.escolha label { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px;
+  border-radius: var(--raio); cursor: pointer; font-size: 14px; }
+.escolha label:hover { background: var(--algodao); }
+.escolha input { margin-top: 3px; width: 17px; height: 17px; flex: none; accent-color: var(--tinta); }
+.escolha b { color: var(--tinta); }
+.escolha small { display: block; color: #77778a; }
+
+.carregando { padding: 36px; text-align: center; color: #8a8a99; }
+.recado { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 120;
+  padding: 12px 20px; border-radius: 999px; background: var(--tinta-fundo); color: #fff;
+  font-weight: 600; box-shadow: 0 12px 34px rgb(0 0 0 / .3); max-width: 92vw; text-align: center; }
+.recado--erro { background: var(--vermelho); }
+</style>
+</head>
+<body>
+
+<!-- ======================================================== ENTRADA ====== -->
+<div class="entrar" id="tela-entrar">
+  <form class="entrar__caixa" id="form-entrar">
+    <div class="entrar__marca">Borda&nbsp;Tudo</div>
+    <p class="entrar__sub">Controle de produção</p>
+    <label class="campo"><span>Usuário</span>
+      <input type="text" name="usuario" autocomplete="username" autocapitalize="off" spellcheck="false" required></label>
+    <label class="campo"><span>Senha</span>
+      <input type="password" name="senha" autocomplete="current-password" required></label>
+    <button class="btn btn--laranja btn--largo" type="submit">Entrar</button>
+    <div class="aviso aviso--erro" id="erro-entrar" hidden></div>
+  </form>
+</div>
+
+<!-- ============================================================ APP ====== -->
+<div id="app" hidden>
+  <header class="topo">
+    <div class="topo__marca">Borda&nbsp;Tudo <small>Produção</small></div>
+    <span class="topo__maquina" id="chip-maquina" hidden></span>
+    <span class="topo__espaco"></span>
+    <span class="topo__versao">v{{VERSAO}}</span>
+
+    <div class="suspenso">
+      <button class="topo__btn" data-abrir="apps" aria-label="Atalhos">
+        <span class="pontinhos"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      </button>
+      <div class="suspenso__lista" id="menu-apps" hidden>
+        <a href="/" target="_blank" rel="noopener">Ver o site</a>
+        <a href="/admin/" target="_blank" rel="noopener">Painel do site</a>
+        <a href="/restrito/etiquetas" target="_blank" rel="noopener" data-so-admin>Etiquetas das máquinas</a>
+      </div>
+    </div>
+
+    <div class="suspenso">
+      <button class="topo__btn" data-abrir="conta"><span id="topo-nome">—</span> ▾</button>
+      <div class="suspenso__lista" id="menu-conta" hidden>
+        <div class="suspenso__cabeca"><b id="conta-nome">—</b><span id="conta-papel">—</span></div>
+        <button data-acao="trocar-senha">Trocar minha senha</button>
+        <button data-acao="sair">Sair</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="corpo">
+    <nav class="menu" id="menu" hidden>
+      <div class="menu__grupo">Chão de fábrica</div>
+      <button data-tela="operar">Minha produção</button>
+      <div class="menu__grupo">Administrativo</div>
+      <button data-tela="producao">Produção do dia</button>
+      <button data-tela="lotes">Lotes e amálgama</button>
+      <div class="menu__grupo">Cadastros</div>
+      <button data-tela="cadastros">Tabelas</button>
+      <button data-tela="usuarios">Usuários</button>
+    </nav>
+
+    <main class="principal" id="principal">
+      <div class="carregando">carregando…</div>
+    </main>
+  </div>
+</div>
+
+<div id="modais"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ========================================================================
+     1. CONVERSA COM O SERVIDOR
+     ====================================================================== */
+  async function api(caminho, opcoes) {
+    opcoes = opcoes || {};
+    const r = await fetch(caminho, Object.assign({
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+    }, opcoes));
+    const texto = await r.text();
+    let dados = {};
+    try { dados = texto ? JSON.parse(texto) : {}; } catch (e) { dados = {}; }
+    if (!r.ok) {
+      const erro = new Error(dados.error || ("erro " + r.status));
+      erro.status = r.status; erro.dados = dados;
+      throw erro;
+    }
+    return dados;
+  }
+  const enviar = (caminho, metodo, corpo) =>
+    api(caminho, { method: metodo, body: JSON.stringify(corpo || {}) });
+
+  /* ========================================================================
+     2. ESTADO
+
+     Uma variável por coisa que a tela precisa saber. Guardar o estado num só
+     lugar e redesenhar a partir dele evita o defeito clássico da tela de
+     turno: um pedaço atualiza, outro não, e o operador confia no pedaço velho.
+     ====================================================================== */
+  var EU = null;            // { usuario, nome, papel }
+  var TELA = "operar";
+  var DIA = null;           // resposta de /meu-dia
+  var LISTAS = {};          // cadastros carregados sob demanda
+  var LOTE_ABERTO = null;   // id do lote em detalhe
+  var CADASTRO_ABA = "clientes";
+
+  /* A máquina vem do QR (`?m=<token>`) e fica guardada na aba. Sem guardar,
+     qualquer recarregamento perderia a máquina e o operador teria de escanear
+     o adesivo de novo no meio do turno. */
+  var MAQUINA_TOKEN = null;
+  try {
+    var qs = new URLSearchParams(location.search);
+    MAQUINA_TOKEN = qs.get("m") || sessionStorage.getItem("bt_maquina") || null;
+    if (qs.get("m")) {
+      sessionStorage.setItem("bt_maquina", qs.get("m"));
+      /* Tira o token da barra de endereço: um QR fotografado e mandado no
+         grupo do WhatsApp não deve carregar junto o identificador da máquina. */
+      history.replaceState(null, "", location.pathname);
+    }
+  } catch (e) { /* aba sem sessionStorage: segue sem lembrar a máquina */ }
+
+  /* ========================================================================
+     3. FERRAMENTAS DE TEXTO
+     ====================================================================== */
+  const N = new Intl.NumberFormat("pt-BR");
+  const num = (v) => N.format(Number(v || 0));
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  function hora(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  }
+  function dataHora(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) + " " +
+           d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  }
+  function decorrido(iso) {
+    if (!iso) return "—";
+    const min = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+    return min < 60 ? min + " min" : Math.floor(min / 60) + "h" + String(min % 60).padStart(2, "0");
+  }
+  const hoje = () => new Date().toISOString().slice(0, 10);
+
+  var recadoTimer = null;
+  function recado(texto, ehErro) {
+    const antigo = document.querySelector(".recado");
+    if (antigo) antigo.remove();
+    clearTimeout(recadoTimer);
+    const d = document.createElement("div");
+    d.className = "recado" + (ehErro ? " recado--erro" : "");
+    d.textContent = texto;
+    document.body.appendChild(d);
+    recadoTimer = setTimeout(() => d.remove(), ehErro ? 6000 : 3000);
+  }
+
+  /* ========================================================================
+     4. CADASTROS EM MEMÓRIA
+     ====================================================================== */
+  async function lista(nome, todos) {
+    const chave = nome + (todos ? ":todos" : "");
+    if (LISTAS[chave]) return LISTAS[chave];
+    const r = await api("/restrito/api/" + nome + (todos ? "?todos=1" : ""));
+    LISTAS[chave] = r.itens || [];
+    return LISTAS[chave];
+  }
+  function esquecer(nome) {
+    delete LISTAS[nome]; delete LISTAS[nome + ":todos"];
+  }
+  function opcoes(itens, selecionado, vazio) {
+    return (vazio ? '<option value="">' + esc(vazio) + "</option>" : "") +
+      itens.map((i) => '<option value="' + i.id + '"' +
+        (String(i.id) === String(selecionado) ? " selected" : "") + ">" +
+        esc(i.nome) + "</option>").join("");
+  }
+
+  /* ========================================================================
+     5. TELA DO OPERADOR
+
+     Três estados, um cartão cada:
+       a) sem jornada  → INÍCIO DE PRODUÇÃO
+       b) sem ficha    → ABRIR FICHA
+       c) ficha aberta → FECHAR FICHA
+     ====================================================================== */
+  async function carregarDia() {
+    DIA = await api("/restrito/api/meu-dia");
+  }
+
+  function pintarOperar() {
+    const alvo = document.getElementById("principal");
+    if (!DIA) { alvo.innerHTML = '<div class="carregando">carregando…</div>'; return; }
+
+    const j = DIA.jornada, f = DIA.ficha;
+    let html = '<div class="palco">';
+
+    /* --- a) ainda não começou --------------------------------------- */
+    if (!j) {
+      html +=
+        '<h1 class="titulo-tela">Bom dia, ' + esc((EU.nome || EU.usuario).split(" ")[0]) + "</h1>" +
+        '<p class="subtitulo-tela">Marque o início para começar a registrar a produção.</p>' +
+        '<button class="gigante" data-acao="iniciar-jornada">Início de produção' +
+        "<small>agora são " + hora(new Date().toISOString()) + "</small></button>";
+    } else {
+      /* --- c) ficha aberta ------------------------------------------ */
+      if (f) {
+        html +=
+          '<div class="emcurso">' +
+            '<div class="emcurso__marcador">Ficha aberta</div>' +
+            '<div class="emcurso__linha">' +
+              '<span class="emcurso__cliente">' + esc(f.cliente_nome) + "</span>" +
+              '<span class="emcurso__desenho">' + esc(f.desenho_nome) + "</span>" +
+            "</div>" +
+            '<div class="emcurso__dados">' +
+              '<div class="dado"><b>' + num(f.pontuacao) + "</b><span>pontos/peça</span></div>" +
+              '<div class="dado"><b>' + hora(f.aberta_em) + "</b><span>aberta às</span></div>" +
+              '<div class="dado"><b>' + decorrido(f.aberta_em) + "</b><span>tempo</span></div>" +
+              (f.maquina_nome ? '<div class="dado"><b>' + esc(f.maquina_nome) + "</b><span>máquina</span></div>" : "") +
+            "</div>" +
+          "</div>" +
+          '<button class="gigante gigante--verde" data-acao="fechar-ficha">Fechar ficha' +
+          "<small>informe quantas peças saíram</small></button>" +
+          '<p style="text-align:center;margin:14px 0 0">' +
+          '<button class="btn btn--fantasma btn--mini" data-acao="cancelar-ficha">Cancelar esta ficha</button></p>';
+      } else {
+        /* --- b) em produção, sem ficha ------------------------------ */
+        html +=
+          '<div class="emcurso">' +
+            '<div class="emcurso__marcador">Em produção</div>' +
+            '<div class="emcurso__linha"><span class="emcurso__cliente">Desde ' + hora(j.inicio) + "</span></div>" +
+            '<div class="emcurso__dados">' +
+              '<div class="dado"><b>' + decorrido(j.inicio) + "</b><span>na fábrica</span></div>" +
+              '<div class="dado"><b>' + num(DIA.soma.pecas) + "</b><span>peças hoje</span></div>" +
+              '<div class="dado"><b>' + num(DIA.soma.pontos) + "</b><span>pontos hoje</span></div>" +
+            "</div>" +
+          "</div>" +
+          '<button class="gigante" data-acao="abrir-ficha">Abrir ficha' +
+          "<small>escolha o cliente e o desenho</small></button>";
+      }
+    }
+
+    /* --- o que já foi feito hoje ------------------------------------ */
+    if (DIA.fechadas.length) {
+      html +=
+        '<div class="bloco" style="margin-top:22px">' +
+          '<div class="bloco__topo"><h2>Fichas de hoje</h2><span class="espaco"></span>' +
+            '<span class="etiqueta etiqueta--cinza">' + DIA.fechadas.length + " ficha" +
+            (DIA.fechadas.length > 1 ? "s" : "") + "</span></div>" +
+          '<div class="bloco__corpo"><div class="resumo-dia">' +
+            "<div><b>" + num(DIA.soma.pecas) + "</b><span>peças</span></div>" +
+            "<div><b>" + num(DIA.soma.pontos) + "</b><span>pontos</span></div>" +
+          "</div></div>" +
+          '<div class="rolagem"><table><thead><tr>' +
+            "<th>Hora</th><th>Cliente</th><th>Desenho</th><th>Mercadoria</th><th>Cor</th>" +
+            '<th class="num">Peças</th><th class="num">Pontos</th>' +
+          "</tr></thead><tbody>" +
+          DIA.fechadas.map((x) =>
+            "<tr><td>" + hora(x.fechada_em) + "</td><td>" + esc(x.cliente_nome) + "</td>" +
+            "<td>" + esc(x.desenho_nome) + "</td><td>" + esc(x.mercadoria_nome || "—") + "</td>" +
+            "<td>" + esc(x.cor_nome || "—") + "</td>" +
+            '<td class="num">' + num(x.quantidade) + "</td>" +
+            '<td class="num">' + num(x.total_pontos) + "</td></tr>").join("") +
+          "</tbody></table></div>" +
+        "</div>";
+    }
+
+    if (j && !f) {
+      html += '<p style="text-align:center;margin:20px 0 0">' +
+        '<button class="btn btn--fantasma" data-acao="encerrar-jornada">Encerrar produção do dia</button></p>';
+    }
+
+    html += "</div>";
+    alvo.innerHTML = html;
+  }
+
+  /* ---- abrir ficha ------------------------------------------------ */
+  async function modalAbrirFicha() {
+    const clientes = await lista("clientes");
+    const desenhos = await lista("desenhos");
+    const maquinas = await lista("maquinas");
+
+    abrirModal({
+      titulo: "Abrir ficha",
+      corpo:
+        '<label class="campo"><span>Cliente</span><select id="ff-cliente">' +
+          opcoes(clientes, "", "— escolha —") + "</select></label>" +
+        '<label class="campo"><span>Desenho</span><select id="ff-desenho" disabled>' +
+          '<option value="">— escolha o cliente antes —</option></select></label>' +
+        '<div id="ff-pontos"></div>' +
+        (MAQUINA_TOKEN ? "" :
+          '<label class="campo"><span>Máquina <small style="font-weight:600;text-transform:none;color:#8a8a99">(ou leia o QR colado nela)</small></span>' +
+          '<select id="ff-maquina">' + opcoes(maquinas, "", "— não informar —") + "</select></label>"),
+      confirmar: "Abrir ficha",
+      classe: "btn--laranja",
+      aoAbrir: function (caixa) {
+        const selCliente = caixa.querySelector("#ff-cliente");
+        const selDesenho = caixa.querySelector("#ff-desenho");
+        const painel = caixa.querySelector("#ff-pontos");
+
+        function mostrarPontos() {
+          const d = desenhos.filter((x) => String(x.id) === selDesenho.value)[0];
+          painel.innerHTML = d
+            ? '<div class="conta"><div class="conta__rotulo">Pontuação do desenho</div>' +
+              '<div class="conta__valor">' + num(d.pontuacao) + "</div>" +
+              '<div class="conta__formula">pontos por peça</div></div>'
+            : "";
+        }
+        selCliente.addEventListener("change", function () {
+          /* Só os desenhos DESTE cliente. Bordar o desenho de um cliente na
+             peça de outro é o erro que a lista inteira convidaria a cometer. */
+          const meus = desenhos.filter((x) => String(x.cliente_id) === selCliente.value);
+          selDesenho.disabled = !meus.length;
+          selDesenho.innerHTML = meus.length
+            ? opcoes(meus, "", "— escolha —")
+            : '<option value="">— este cliente não tem desenho cadastrado —</option>';
+          painel.innerHTML = "";
+        });
+        selDesenho.addEventListener("change", mostrarPontos);
+      },
+      aoConfirmar: async function (caixa) {
+        const cliente = caixa.querySelector("#ff-cliente").value;
+        const desenho = caixa.querySelector("#ff-desenho").value;
+        if (!cliente) throw new Error("Escolha o cliente.");
+        if (!desenho) throw new Error("Escolha o desenho.");
+        const corpo = { cliente_id: cliente, desenho_id: desenho };
+        if (MAQUINA_TOKEN) corpo.maquina_token = MAQUINA_TOKEN;
+        else {
+          const m = caixa.querySelector("#ff-maquina");
+          if (m && m.value) corpo.maquina_id = m.value;
+        }
+        await enviar("/restrito/api/fichas", "POST", corpo);
+        await carregarDia(); pintarOperar();
+        recado("Ficha aberta.");
+      },
+    });
+  }
+
+  /* ---- fechar ficha ----------------------------------------------- */
+  async function modalFecharFicha() {
+    const f = DIA && DIA.ficha;
+    if (!f) return;
+    const mercadorias = await lista("mercadorias");
+    const cores = await lista("cores");
+
+    abrirModal({
+      titulo: "Fechar ficha — " + f.cliente_nome + " · " + f.desenho_nome,
+      corpo:
+        '<label class="campo"><span>Quantas peças foram feitas</span>' +
+          '<input type="text" inputmode="numeric" id="fz-qtd" class="numerao" placeholder="0"></label>' +
+        '<div id="fz-conta"></div>' +
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Mercadoria</span><select id="fz-merc">' +
+            opcoes(mercadorias, "", "— não informar —") + "</select></label>" +
+          '<label class="campo"><span>Cor</span><select id="fz-cor">' +
+            opcoes(cores, "", "— não informar —") + "</select></label>" +
+        "</div>" +
+        '<label class="campo"><span>Observação</span><textarea id="fz-obs" rows="2"></textarea></label>',
+      confirmar: "Fechar ficha",
+      classe: "btn--verde",
+      aoAbrir: function (caixa) {
+        const campo = caixa.querySelector("#fz-qtd");
+        const conta = caixa.querySelector("#fz-conta");
+        function recalcular() {
+          const q = Number(String(campo.value).replace(/\D/g, "")) || 0;
+          conta.innerHTML = q
+            ? '<div class="conta"><div class="conta__formula">' + num(q) + " peças × " +
+              num(f.pontuacao) + " pontos</div>" +
+              '<div class="conta__valor">' + num(q * Number(f.pontuacao)) + "</div>" +
+              '<div class="conta__rotulo">pontos no total</div></div>'
+            : "";
+        }
+        campo.addEventListener("input", function () {
+          const limpo = String(campo.value).replace(/\D/g, "");
+          if (limpo !== campo.value) campo.value = limpo;
+          recalcular();
+        });
+        setTimeout(() => campo.focus(), 60);
+      },
+      aoConfirmar: async function (caixa) {
+        const q = String(caixa.querySelector("#fz-qtd").value).replace(/\D/g, "");
+        if (!q || Number(q) <= 0) throw new Error("Informe quantas peças foram feitas.");
+        await enviar("/restrito/api/fichas/" + f.id + "/fechar", "PUT", {
+          quantidade: q,
+          mercadoria_id: caixa.querySelector("#fz-merc").value || null,
+          cor_id: caixa.querySelector("#fz-cor").value || null,
+          observacao: caixa.querySelector("#fz-obs").value,
+        });
+        await carregarDia(); pintarOperar();
+        recado(num(q) + " peças registradas.");
+      },
+    });
+  }
+
+  /* ========================================================================
+     6. ADMINISTRATIVO — produção
+     ====================================================================== */
+  var filtroProducao = { de: hoje(), ate: hoje(), usuario: "", cliente: "", soltas: false };
+
+  async function pintarProducao() {
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+
+    const clientes = await lista("clientes", true);
+    const usuarios = (await api("/restrito/api/usuarios")).itens.map((u) =>
+      ({ id: u.id, nome: u.nome || u.usuario }));
+
+    const q = new URLSearchParams();
+    if (filtroProducao.de) q.set("de", filtroProducao.de);
+    if (filtroProducao.ate) q.set("ate", filtroProducao.ate);
+    if (filtroProducao.usuario) q.set("usuario", filtroProducao.usuario);
+    if (filtroProducao.cliente) q.set("cliente", filtroProducao.cliente);
+    if (filtroProducao.soltas) q.set("soltas", "1");
+    const r = await api("/restrito/api/producao?" + q.toString());
+
+    const porOp = Object.keys(r.porOperador).map((k) =>
+      Object.assign({ nome: k }, r.porOperador[k])).sort((a, b) => b.pontos - a.pontos);
+
+    alvo.innerHTML =
+      '<h1 class="titulo-tela">Produção</h1>' +
+      '<p class="subtitulo-tela">O que saiu das máquinas, ficha por ficha.</p>' +
+
+      '<div class="bloco"><div class="bloco__corpo"><div class="filtros">' +
+        '<label class="campo"><span>De</span><input type="date" id="fp-de" value="' + filtroProducao.de + '"></label>' +
+        '<label class="campo"><span>Até</span><input type="date" id="fp-ate" value="' + filtroProducao.ate + '"></label>' +
+        '<label class="campo"><span>Operador</span><select id="fp-usuario">' +
+          opcoes(usuarios, filtroProducao.usuario, "todos") + "</select></label>" +
+        '<label class="campo"><span>Cliente</span><select id="fp-cliente">' +
+          opcoes(clientes, filtroProducao.cliente, "todos") + "</select></label>" +
+        '<label class="campo" style="min-width:auto"><span>&nbsp;</span>' +
+          '<label style="display:flex;gap:7px;align-items:center;padding:11px 0;white-space:nowrap">' +
+          '<input type="checkbox" id="fp-soltas" style="width:17px;height:17px;accent-color:var(--tinta)"' +
+          (filtroProducao.soltas ? " checked" : "") + "> só fora de lote</label></label>" +
+        '<button class="btn" data-acao="filtrar-producao">Filtrar</button>' +
+      "</div></div></div>" +
+
+      '<div class="bloco"><div class="bloco__corpo"><div class="resumo-dia">' +
+        "<div><b>" + r.fichas.length + "</b><span>fichas</span></div>" +
+        "<div><b>" + num(r.soma.pecas) + "</b><span>peças</span></div>" +
+        "<div><b>" + num(r.soma.pontos) + "</b><span>pontos</span></div>" +
+      "</div>" +
+      (porOp.length > 1
+        ? '<div class="quebra" style="margin-top:16px">' + barras(porOp.map((o) =>
+            ({ nome: o.nome, valor: o.pecas, extra: num(o.pontos) + " pts" }))) + "</div>"
+        : "") +
+      "</div></div>" +
+
+      '<div class="bloco">' +
+        '<div class="bloco__topo"><h2>Fichas</h2></div>' +
+        (r.fichas.length ? '<div class="rolagem"><table><thead><tr>' +
+          "<th>Fechada</th><th>Operador</th><th>Cliente</th><th>Desenho</th>" +
+          "<th>Mercadoria</th><th>Cor</th><th>Máquina</th>" +
+          '<th class="num">Peças</th><th class="num">Pontos</th><th>Lote</th><th></th>' +
+        "</tr></thead><tbody>" +
+        r.fichas.map((f) =>
+          "<tr>" +
+          "<td>" + dataHora(f.fechada_em) + "</td>" +
+          "<td>" + esc(f.operador_nome) + "</td>" +
+          "<td><b>" + esc(f.cliente_nome) + "</b></td>" +
+          "<td>" + esc(f.desenho_nome) + "</td>" +
+          "<td>" + esc(f.mercadoria_nome || "—") + "</td>" +
+          "<td>" + esc(f.cor_nome || "—") + "</td>" +
+          "<td>" + esc(f.maquina_nome || "—") + "</td>" +
+          '<td class="num">' + num(f.quantidade) + "</td>" +
+          '<td class="num">' + num(f.total_pontos) + "</td>" +
+          "<td>" + (f.lote_codigo
+            ? '<span class="etiqueta etiqueta--verde">' + esc(f.lote_codigo) + "</span>"
+            : '<span class="etiqueta etiqueta--ambar">solta</span>') + "</td>" +
+          '<td><button class="btn btn--fantasma btn--mini" data-acao="editar-ficha" data-id="' + f.id + '">corrigir</button></td>' +
+          "</tr>").join("") +
+        '</tbody><tfoot><tr><td colspan="7">Total</td>' +
+        '<td class="num">' + num(r.soma.pecas) + "</td>" +
+        '<td class="num">' + num(r.soma.pontos) + '</td><td colspan="2"></td></tr></tfoot></table></div>'
+        : '<div class="vazio">Nenhuma ficha fechada no período.</div>') +
+      "</div>";
+  }
+
+  function barras(itens) {
+    const maior = Math.max.apply(null, itens.map((i) => i.valor).concat([1]));
+    return itens.map((i) =>
+      '<div class="quebra__item">' +
+        '<span class="quebra__nome" title="' + esc(i.nome) + '">' + esc(i.nome) + "</span>" +
+        '<span class="quebra__barra"><i style="width:' + Math.max(2, (i.valor / maior) * 100) + '%"></i></span>' +
+        '<span class="quebra__valor">' + num(i.valor) + (i.extra ? " · " + i.extra : "") + "</span>" +
+      "</div>").join("");
+  }
+
+  async function modalEditarFicha(id) {
+    const f = await api("/restrito/api/fichas/" + id);
+    const mercadorias = await lista("mercadorias");
+    const cores = await lista("cores");
+    abrirModal({
+      titulo: "Corrigir ficha #" + id,
+      corpo:
+        '<div class="aviso aviso--erro" style="margin:0 0 16px">Este número vira nota. ' +
+        "Corrija só depois de conferir com quem produziu.</div>" +
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Peças</span><input type="text" inputmode="numeric" id="ef-qtd" value="' +
+            esc(f.quantidade == null ? "" : f.quantidade) + '"></label>' +
+          '<label class="campo"><span>Pontuação por peça</span><input type="text" inputmode="numeric" id="ef-pts" value="' +
+            esc(f.pontuacao) + '"></label>' +
+          '<label class="campo"><span>Mercadoria</span><select id="ef-merc">' +
+            opcoes(mercadorias, f.mercadoria_id, "— não informar —") + "</select></label>" +
+          '<label class="campo"><span>Cor</span><select id="ef-cor">' +
+            opcoes(cores, f.cor_id, "— não informar —") + "</select></label>" +
+        "</div>" +
+        '<label class="campo"><span>Observação</span><textarea id="ef-obs" rows="2">' +
+          esc(f.observacao || "") + "</textarea></label>",
+      confirmar: "Salvar correção",
+      extra: f.situacao !== "cancelada"
+        ? '<button class="btn btn--fantasma" data-acao="cancelar-ficha-admin" data-id="' + id + '">Cancelar ficha</button>'
+        : "",
+      aoConfirmar: async function (caixa) {
+        await enviar("/restrito/api/fichas/" + id, "PUT", {
+          quantidade: caixa.querySelector("#ef-qtd").value,
+          pontuacao: caixa.querySelector("#ef-pts").value,
+          mercadoria_id: caixa.querySelector("#ef-merc").value || null,
+          cor_id: caixa.querySelector("#ef-cor").value || null,
+          observacao: caixa.querySelector("#ef-obs").value,
+        });
+        recado("Ficha corrigida."); pintarProducao();
+      },
+    });
+  }
+
+  /* ========================================================================
+     7. ADMINISTRATIVO — lotes e amálgama
+
+     A amálgama é o coração do administrativo: o cliente mandou UM serviço, mas
+     ele foi feito por várias pessoas, em vários dias, em várias cores. O lote
+     é o serviço; as fichas são os pedaços. Juntar é dizer quais pedaços são
+     daquele serviço — e o sistema soma, quebra por cor e diz o que falta.
+     ====================================================================== */
+  async function pintarLotes() {
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+    const r = await api("/restrito/api/lotes");
+
+    alvo.innerHTML =
+      '<h1 class="titulo-tela">Lotes</h1>' +
+      '<p class="subtitulo-tela">Um lote é o serviço do cliente. As fichas dos operadores entram nele.</p>' +
+      '<div class="bloco"><div class="bloco__topo"><h2>Lotes abertos e fechados</h2>' +
+        '<span class="espaco"></span>' +
+        '<button class="btn btn--laranja" data-acao="novo-lote">Novo lote</button></div>' +
+      (r.lotes.length ? '<div class="rolagem"><table><thead><tr>' +
+        "<th>Código</th><th>Cliente</th><th>Descrição</th>" +
+        '<th class="num">Previsto</th><th class="num">Produzido</th><th class="num">Falta</th>' +
+        "<th>Situação</th><th>Nota</th><th></th></tr></thead><tbody>" +
+      r.lotes.map(function (l) {
+        const prev = l.quantidade_prevista == null ? null : Number(l.quantidade_prevista);
+        const feito = Number(l.pecas);
+        const falta = prev == null ? null : prev - feito;
+        return "<tr>" +
+          "<td><b>" + esc(l.codigo) + "</b></td>" +
+          "<td>" + esc(l.cliente_nome) + "</td>" +
+          "<td>" + esc(l.descricao || "—") + "</td>" +
+          '<td class="num">' + (prev == null ? "—" : num(prev)) + "</td>" +
+          '<td class="num">' + num(feito) + "</td>" +
+          '<td class="num">' + (falta == null ? "—" :
+            (falta > 0 ? '<span style="color:var(--ambar)">' + num(falta) + "</span>"
+             : falta < 0 ? '<span style="color:var(--vermelho)">+' + num(-falta) + "</span>"
+             : '<span style="color:var(--verde)">0</span>')) + "</td>" +
+          "<td>" + selo(l.situacao) + "</td>" +
+          "<td>" + esc(l.nota || "—") + "</td>" +
+          '<td><button class="btn btn--mini" data-acao="abrir-lote" data-id="' + l.id + '">abrir</button></td>' +
+          "</tr>";
+      }).join("") + "</tbody></table></div>"
+      : '<div class="vazio">Nenhum lote ainda. Crie um para começar a juntar as fichas.</div>') +
+      "</div>";
+  }
+
+  function selo(s) {
+    const m = { aberto: ["ambar", "aberto"], fechado: ["cinza", "fechado"], faturado: ["verde", "faturado"] };
+    const x = m[s] || ["cinza", s];
+    return '<span class="etiqueta etiqueta--' + x[0] + '">' + x[1] + "</span>";
+  }
+
+  async function pintarLote(id) {
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+    const r = await api("/restrito/api/lotes/" + id);
+    const l = r.lote;
+    LOTE_ABERTO = id;
+
+    const prev = l.quantidade_prevista == null ? null : Number(l.quantidade_prevista);
+    const falta = prev == null ? null : prev - r.pecas;
+
+    alvo.innerHTML =
+      '<p style="margin:0 0 10px"><button class="btn btn--fantasma btn--mini" data-acao="voltar-lotes">← todos os lotes</button></p>' +
+      '<h1 class="titulo-tela">' + esc(l.codigo) + " · " + esc(l.cliente_nome) + "</h1>" +
+      '<p class="subtitulo-tela">' + esc(l.descricao || "sem descrição") + " — " + selo(l.situacao) +
+        (l.nota ? " · nota " + esc(l.nota) : "") + "</p>" +
+
+      '<div class="bloco"><div class="bloco__corpo"><div class="resumo-dia">' +
+        "<div><b>" + (prev == null ? "—" : num(prev)) + "</b><span>previsto</span></div>" +
+        "<div><b>" + num(r.pecas) + "</b><span>produzido</span></div>" +
+        "<div><b>" + (falta == null ? "—" : num(falta)) + "</b><span>" +
+          (falta != null && falta < 0 ? "excedente" : "falta") + "</span></div>" +
+        "<div><b>" + num(r.pontos) + "</b><span>pontos</span></div>" +
+      "</div></div></div>" +
+
+      '<div class="bloco"><div class="bloco__topo"><h2>Composição</h2><span class="espaco"></span>' +
+        '<button class="btn btn--laranja" data-acao="amalgamar" data-id="' + id + '">Juntar fichas</button>' +
+        '<button class="btn btn--fantasma" data-acao="editar-lote" data-id="' + id + '">Editar lote</button>' +
+      "</div><div class=\"bloco__corpo\">" +
+        (r.fichas.length
+          ? '<div class="grade-form" style="gap:22px">' +
+              quebraBloco("Por cor", r.porCor) +
+              quebraBloco("Por mercadoria", r.porMercadoria) +
+              quebraBloco("Por operador", r.porOperador) +
+            "</div>"
+          : '<p style="margin:0;color:#77778a">Nenhuma ficha neste lote ainda. Use <b>Juntar fichas</b>.</p>') +
+      "</div>" +
+      (r.fichas.length ? '<div class="rolagem"><table><thead><tr>' +
+        "<th>Fechada</th><th>Operador</th><th>Desenho</th><th>Mercadoria</th><th>Cor</th>" +
+        '<th class="num">Peças</th><th class="num">Pontos</th></tr></thead><tbody>' +
+        r.fichas.map((f) =>
+          "<tr><td>" + dataHora(f.fechada_em) + "</td><td>" + esc(f.operador_nome) + "</td>" +
+          "<td>" + esc(f.desenho_nome) + "</td><td>" + esc(f.mercadoria_nome || "—") + "</td>" +
+          "<td>" + esc(f.cor_nome || "—") + "</td>" +
+          '<td class="num">' + num(f.quantidade) + "</td>" +
+          '<td class="num">' + num(f.total_pontos) + "</td></tr>").join("") +
+        '</tbody><tfoot><tr><td colspan="5">Total</td><td class="num">' + num(r.pecas) +
+        '</td><td class="num">' + num(r.pontos) + "</td></tr></tfoot></table></div>" : "") +
+      "</div>" +
+
+      '<div class="bloco"><div class="bloco__topo"><h2>Fechamento</h2></div><div class="bloco__corpo">' +
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Número da nota</span><input type="text" id="lt-nota" value="' +
+            esc(l.nota || "") + '" placeholder="ex.: 12345"></label>' +
+          '<label class="campo"><span>Situação</span><select id="lt-situacao">' +
+            '<option value="aberto"' + (l.situacao === "aberto" ? " selected" : "") + ">aberto — ainda entra ficha</option>" +
+            '<option value="fechado"' + (l.situacao === "fechado" ? " selected" : "") + ">fechado — conferido</option>" +
+            '<option value="faturado"' + (l.situacao === "faturado" ? " selected" : "") + ">faturado — nota emitida</option>" +
+          "</select></label>" +
+        "</div>" +
+        '<div class="linha-botoes"><button class="btn btn--verde" data-acao="salvar-fechamento" data-id="' + id + '">Salvar</button>' +
+        (l.situacao !== "faturado"
+          ? '<button class="btn btn--fantasma" data-acao="apagar-lote" data-id="' + id + '">Apagar lote</button>' : "") +
+        "</div>" +
+        '<p style="margin:12px 0 0;font-size:13.5px;color:#77778a">Lote faturado não aceita mais mudança de fichas — ' +
+        "é a garantia de que o que está na nota é o que estava no sistema.</p>" +
+      "</div></div>";
+  }
+
+  function quebraBloco(titulo, itens) {
+    if (!itens || !itens.length) return "";
+    return "<div><div style=\"font-size:11.5px;font-weight:800;letter-spacing:.07em;" +
+      "text-transform:uppercase;color:#8a8a99;margin-bottom:9px\">" + esc(titulo) + "</div>" +
+      '<div class="quebra">' + barras(itens.map((i) => ({ nome: i.nome, valor: i.pecas }))) + "</div></div>";
+  }
+
+  /* A tela de juntar mostra, numa lista só, as fichas QUE JÁ ESTÃO no lote e as
+     que estão soltas do mesmo cliente. Marcar e desmarcar é a operação inteira;
+     salvar manda a lista completa, e o servidor reconcilia. Assim, clicar duas
+     vezes não duplica nada. */
+  async function modalAmalgamar(id) {
+    const detalhe = await api("/restrito/api/lotes/" + id);
+    const dentro = detalhe.fichas.map((f) => f.id);
+    const soltas = (await api("/restrito/api/producao?soltas=1&cliente=" + detalhe.lote.cliente_id)).fichas;
+
+    const todas = detalhe.fichas.map((f) => Object.assign({}, f, { _dentro: true }))
+      .concat(soltas.map((f) => Object.assign({}, f, { _dentro: false })))
+      .sort((a, b) => String(a.fechada_em).localeCompare(String(b.fechada_em)));
+
+    if (!todas.length) {
+      recado("Não há fichas fechadas deste cliente para juntar.", true);
+      return;
+    }
+
+    abrirModal({
+      titulo: "Juntar fichas em " + detalhe.lote.codigo,
+      corpo:
+        '<p style="margin:0 0 14px;color:#55555f">Marque tudo que faz parte deste serviço de ' +
+        "<b>" + esc(detalhe.lote.cliente_nome) + "</b>. Desmarcar tira do lote e devolve para a lista de soltas.</p>" +
+        '<div class="linha-botoes" style="margin-bottom:10px">' +
+          '<button type="button" class="btn btn--fantasma btn--mini" data-marcar="todas">Marcar todas</button>' +
+          '<button type="button" class="btn btn--fantasma btn--mini" data-marcar="nenhuma">Desmarcar todas</button>' +
+        "</div>" +
+        '<div class="escolha" id="am-lista">' +
+        todas.map((f) =>
+          "<label><input type=\"checkbox\" value=\"" + f.id + "\"" + (f._dentro ? " checked" : "") + ">" +
+          "<span><b>" + num(f.quantidade) + " peças</b> · " + esc(f.desenho_nome) +
+          (f.cor_nome ? " · " + esc(f.cor_nome) : "") +
+          (f.mercadoria_nome ? " · " + esc(f.mercadoria_nome) : "") +
+          "<small>" + dataHora(f.fechada_em) + " — " + esc(f.operador_nome) + " · " +
+          num(f.total_pontos) + " pontos</small></span></label>").join("") +
+        "</div>" +
+        '<div class="conta" id="am-total"></div>',
+      confirmar: "Salvar composição",
+      classe: "btn--laranja",
+      aoAbrir: function (caixa) {
+        const listaEl = caixa.querySelector("#am-lista");
+        const totalEl = caixa.querySelector("#am-total");
+        function somar() {
+          let pecas = 0, n = 0;
+          caixa.querySelectorAll("#am-lista input:checked").forEach(function (c) {
+            const f = todas.filter((x) => String(x.id) === c.value)[0];
+            if (f) { pecas += Number(f.quantidade || 0); n++; }
+          });
+          const prev = detalhe.lote.quantidade_prevista;
+          totalEl.innerHTML =
+            '<div class="conta__formula">' + n + " ficha" + (n === 1 ? "" : "s") + " marcada" + (n === 1 ? "" : "s") + "</div>" +
+            '<div class="conta__valor">' + num(pecas) + "</div>" +
+            '<div class="conta__rotulo">peças' +
+            (prev == null ? "" : " · previsto " + num(prev) + " · " +
+              (prev - pecas > 0 ? "faltam " + num(prev - pecas)
+               : prev - pecas < 0 ? "excedem " + num(pecas - prev) : "bate exato")) + "</div>";
+        }
+        listaEl.addEventListener("change", somar);
+        caixa.addEventListener("click", function (ev) {
+          const b = ev.target.closest("[data-marcar]");
+          if (!b) return;
+          const marcar = b.getAttribute("data-marcar") === "todas";
+          listaEl.querySelectorAll("input").forEach((c) => { c.checked = marcar; });
+          somar();
+        });
+        somar();
+      },
+      aoConfirmar: async function (caixa) {
+        const ids = Array.prototype.map.call(
+          caixa.querySelectorAll("#am-lista input:checked"), (c) => Number(c.value));
+        const r = await enviar("/restrito/api/lotes/" + id + "/fichas", "PUT", { fichas: ids });
+        /* O servidor recusa ficha de outro cliente e ficha ainda aberta. Se
+           recusou alguma, DIZ — "3 fichas no lote" depois de marcar 5 pareceria
+           sucesso, e a diferença só apareceria na hora de conferir a nota. */
+        if (r.anexadas < r.pedidas)
+          recado(r.anexadas + " de " + r.pedidas + " entraram — as outras não são deste cliente " +
+                 "ou não estão fechadas.", true);
+        else recado(r.anexadas + " ficha(s) no lote.");
+        pintarLote(id);
+      },
+    });
+  }
+
+  async function modalNovoLote(loteExistente) {
+    const clientes = await lista("clientes");
+    const l = loteExistente || {};
+    abrirModal({
+      titulo: l.id ? "Editar " + l.codigo : "Novo lote",
+      corpo:
+        (l.id ? "" : '<label class="campo"><span>Cliente</span><select id="nl-cliente">' +
+          opcoes(clientes, "", "— escolha —") + "</select></label>") +
+        '<label class="campo"><span>Descrição do serviço</span>' +
+          '<input type="text" id="nl-desc" placeholder="ex.: 1500 abas" value="' + esc(l.descricao || "") + '"></label>' +
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Quantidade combinada</span>' +
+            '<input type="text" inputmode="numeric" id="nl-prev" placeholder="ex.: 1500" value="' +
+            esc(l.quantidade_prevista == null ? "" : l.quantidade_prevista) + '"></label>' +
+          '<label class="campo"><span>Entrada da mercadoria</span>' +
+            '<input type="date" id="nl-data" value="' + esc(l.entrada_em ? String(l.entrada_em).slice(0, 10) : "") + '"></label>' +
+        "</div>" +
+        '<label class="campo"><span>Observação</span><textarea id="nl-obs" rows="2">' +
+          esc(l.observacao || "") + "</textarea></label>",
+      confirmar: l.id ? "Salvar" : "Criar lote",
+      classe: "btn--laranja",
+      aoConfirmar: async function (caixa) {
+        const corpo = {
+          descricao: caixa.querySelector("#nl-desc").value,
+          quantidade_prevista: caixa.querySelector("#nl-prev").value,
+          entrada_em: caixa.querySelector("#nl-data").value || null,
+          observacao: caixa.querySelector("#nl-obs").value,
+        };
+        if (l.id) {
+          await enviar("/restrito/api/lotes/" + l.id, "PUT", corpo);
+          recado("Lote salvo."); pintarLote(l.id);
+        } else {
+          const cliente = caixa.querySelector("#nl-cliente").value;
+          if (!cliente) throw new Error("Escolha o cliente.");
+          corpo.cliente_id = cliente;
+          const r = await enviar("/restrito/api/lotes", "POST", corpo);
+          recado("Lote " + r.codigo + " criado."); pintarLote(r.id);
+        }
+      },
+    });
+  }
+
+  /* ========================================================================
+     8. CADASTROS
+     ====================================================================== */
+  var CAD = {
+    clientes:    { rotulo: "Clientes",    campos: [["nome", "Nome", "text", true], ["telefone", "Telefone", "tel"], ["observacao", "Observação", "textarea"]] },
+    desenhos:    { rotulo: "Desenhos",    campos: [["nome", "Nome do desenho", "text", true], ["cliente_id", "Cliente", "cliente", true], ["pontuacao", "Pontos por peça", "numero", true], ["observacao", "Observação", "textarea"]] },
+    mercadorias: { rotulo: "Mercadorias", campos: [["nome", "Nome", "text", true]] },
+    cores:       { rotulo: "Cores",       campos: [["nome", "Nome", "text", true]] },
+    maquinas:    { rotulo: "Máquinas",    campos: [["nome", "Nome", "text", true], ["cabecas", "Cabeças", "numero"]] },
+  };
+
+  async function pintarCadastros() {
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+    const def = CAD[CADASTRO_ABA];
+    const itens = await lista(CADASTRO_ABA, true);
+    const clientes = CADASTRO_ABA === "desenhos" ? await lista("clientes", true) : [];
+    const nomeCliente = (id) => {
+      const c = clientes.filter((x) => String(x.id) === String(id))[0];
+      return c ? c.nome : "—";
+    };
+
+    alvo.innerHTML =
+      '<h1 class="titulo-tela">Cadastros</h1>' +
+      '<p class="subtitulo-tela">O vocabulário da fábrica. Cadastro nunca é apagado — é desativado, ' +
+      "para não sumir do que já foi produzido.</p>" +
+      '<div class="bloco">' +
+        '<div class="abas">' + Object.keys(CAD).map((k) =>
+          '<button data-cad="' + k + '" aria-current="' + (k === CADASTRO_ABA) + '">' +
+          CAD[k].rotulo + "</button>").join("") + "</div>" +
+        '<div class="bloco__topo"><h2>' + def.rotulo + "</h2><span class=\"espaco\"></span>" +
+          (CADASTRO_ABA === "maquinas"
+            ? '<a class="btn btn--fantasma" href="/restrito/etiquetas" target="_blank" rel="noopener">Imprimir etiquetas</a>' : "") +
+          '<button class="btn btn--laranja" data-acao="novo-cadastro">Novo</button></div>' +
+        (itens.length ? '<div class="rolagem"><table><thead><tr>' +
+          def.campos.map((c) => "<th>" + c[1] + "</th>").join("") +
+          "<th>Situação</th><th></th></tr></thead><tbody>" +
+          itens.map((i) => "<tr" + (i.ativo ? "" : ' style="opacity:.5"') + ">" +
+            def.campos.map(function (c) {
+              const v = i[c[0]];
+              if (c[2] === "cliente") return "<td>" + esc(i.cliente_nome || nomeCliente(v)) + "</td>";
+              if (c[2] === "numero") return '<td class="num">' + num(v) + "</td>";
+              return "<td>" + esc(v || "—") + "</td>";
+            }).join("") +
+            "<td>" + (i.ativo ? '<span class="etiqueta etiqueta--verde">ativo</span>'
+                              : '<span class="etiqueta etiqueta--cinza">inativo</span>') + "</td>" +
+            '<td class="linha-botoes"><button class="btn btn--fantasma btn--mini" data-acao="editar-cadastro" data-id="' + i.id + '">editar</button>' +
+            (i.ativo
+              ? '<button class="btn btn--fantasma btn--mini" data-acao="desativar-cadastro" data-id="' + i.id + '">desativar</button>'
+              : '<button class="btn btn--fantasma btn--mini" data-acao="reativar-cadastro" data-id="' + i.id + '">reativar</button>') +
+            (CADASTRO_ABA === "maquinas"
+              ? '<a class="btn btn--fantasma btn--mini" href="/restrito/etiquetas?maquina=' + i.id +
+                '" target="_blank" rel="noopener">QR</a>' +
+                '<button class="btn btn--fantasma btn--mini" data-acao="trocar-qr" data-id="' + i.id + '">trocar QR</button>'
+              : "") +
+            "</td></tr>").join("") +
+          "</tbody></table></div>"
+        : '<div class="vazio">Nada cadastrado ainda.</div>') +
+      "</div>";
+  }
+
+  async function modalCadastro(id) {
+    const def = CAD[CADASTRO_ABA];
+    const itens = await lista(CADASTRO_ABA, true);
+    const atual = id ? itens.filter((x) => String(x.id) === String(id))[0] : null;
+    const clientes = await lista("clientes", true);
+
+    const corpo = def.campos.map(function (c) {
+      const chave = c[0], rotulo = c[1], tipo = c[2];
+      const v = atual ? atual[chave] : "";
+      if (tipo === "cliente")
+        return '<label class="campo"><span>' + rotulo + "</span><select data-campo=\"" + chave + "\">" +
+          opcoes(clientes, v, "— escolha —") + "</select></label>";
+      if (tipo === "textarea")
+        return '<label class="campo"><span>' + rotulo + '</span><textarea data-campo="' + chave +
+          '" rows="2">' + esc(v || "") + "</textarea></label>";
+      return '<label class="campo"><span>' + rotulo + '</span><input type="text"' +
+        (tipo === "numero" ? ' inputmode="numeric"' : "") + ' data-campo="' + chave +
+        '" value="' + esc(v == null ? "" : v) + '"></label>';
+    }).join("");
+
+    abrirModal({
+      titulo: (id ? "Editar " : "Novo em ") + def.rotulo.toLowerCase(),
+      corpo: corpo + (CADASTRO_ABA === "desenhos"
+        ? '<p style="margin:0;font-size:13.5px;color:#77778a">A pontuação é copiada para a ficha ' +
+          "no momento em que ela é aberta. Mudar aqui não mexe no que já foi produzido.</p>" : ""),
+      confirmar: id ? "Salvar" : "Cadastrar",
+      classe: "btn--laranja",
+      aoConfirmar: async function (caixa) {
+        const dados = {};
+        caixa.querySelectorAll("[data-campo]").forEach(function (el) {
+          dados[el.getAttribute("data-campo")] = el.value;
+        });
+        if (id) await enviar("/restrito/api/" + CADASTRO_ABA + "/" + id, "PUT", dados);
+        else await enviar("/restrito/api/" + CADASTRO_ABA, "POST", dados);
+        esquecer(CADASTRO_ABA);
+        recado("Salvo."); pintarCadastros();
+      },
+    });
+  }
+
+  /* ========================================================================
+     9. USUÁRIOS
+     ====================================================================== */
+  async function pintarUsuarios() {
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+    const r = await api("/restrito/api/usuarios");
+    alvo.innerHTML =
+      '<h1 class="titulo-tela">Usuários</h1>' +
+      '<p class="subtitulo-tela">Quem entra no sistema. Senha nova só pelo terminal do servidor — ' +
+      "ninguém, nem o administrador, lê a senha de outra pessoa.</p>" +
+      '<div class="bloco"><div class="rolagem"><table><thead><tr>' +
+        "<th>Usuário</th><th>Nome</th><th>Papel</th><th>Situação</th><th>Desde</th><th></th>" +
+      "</tr></thead><tbody>" +
+      r.itens.map((u) => "<tr" + (u.ativo ? "" : ' style="opacity:.5"') + ">" +
+        "<td><b>" + esc(u.usuario) + "</b></td><td>" + esc(u.nome || "—") + "</td>" +
+        "<td>" + (u.papel === "admin"
+          ? '<span class="etiqueta etiqueta--verde">administrador</span>'
+          : '<span class="etiqueta etiqueta--cinza">operador</span>') + "</td>" +
+        "<td>" + (u.ativo ? "ativo" : "inativo") + "</td>" +
+        "<td>" + dataHora(u.criado_em) + "</td>" +
+        '<td class="linha-botoes">' +
+          '<button class="btn btn--fantasma btn--mini" data-acao="papel-usuario" data-id="' + u.id +
+          '" data-papel="' + (u.papel === "admin" ? "operador" : "admin") + '">' +
+          (u.papel === "admin" ? "tornar operador" : "tornar administrador") + "</button>" +
+          '<button class="btn btn--fantasma btn--mini" data-acao="ativo-usuario" data-id="' + u.id +
+          '" data-ativo="' + (u.ativo ? "0" : "1") + '">' + (u.ativo ? "desativar" : "reativar") + "</button>" +
+        "</td></tr>").join("") +
+      "</tbody></table></div></div>" +
+      '<div class="bloco"><div class="bloco__corpo" style="font-size:14.5px;color:#55555f">' +
+        "<b>Para criar um usuário ou redefinir uma senha</b>, no servidor:<br>" +
+        '<code style="display:inline-block;margin-top:8px;padding:9px 12px;background:var(--prata-fundo);' +
+        'border-radius:4px;font-family:var(--mono);font-size:13.5px">' +
+        'node criar-usuario.cjs joao operador "João da Silva"</code>' +
+        "<p style=\"margin:10px 0 0\">A senha é gerada e mostrada UMA vez. Rodar de novo com o mesmo " +
+        "usuário troca a senha — é assim que se atende “esqueci a senha” sem ninguém ler senha de ninguém.</p>" +
+      "</div></div>";
+  }
+
+  /* ========================================================================
+     10. MODAL GENÉRICO
+     ====================================================================== */
+  function abrirModal(cfg) {
+    const raiz = document.getElementById("modais");
+    raiz.innerHTML =
+      '<div class="modal"><div class="modal__caixa">' +
+        '<div class="modal__topo"><h3>' + esc(cfg.titulo) + "</h3><span class=\"espaco\"></span>" +
+        '<button class="fechar-x" data-fechar>&times;</button></div>' +
+        '<div class="modal__corpo">' + cfg.corpo +
+          '<div class="aviso aviso--erro" data-erro hidden></div></div>' +
+        '<div class="modal__pe">' + (cfg.extra || "") +
+          '<button class="btn btn--fantasma" data-fechar>Cancelar</button>' +
+          '<button class="btn ' + (cfg.classe || "") + '" data-confirmar>' + esc(cfg.confirmar || "Salvar") + "</button>" +
+        "</div>" +
+      "</div></div>";
+
+    const caixa = raiz.querySelector(".modal__caixa");
+    if (cfg.aoAbrir) cfg.aoAbrir(caixa);
+
+    /* Delegação, não `onclick` no HTML: este script roda dentro de uma função,
+       e um `onclick` escrito na marcação procuraria a função no escopo global,
+       onde ela não existe — o botão simplesmente não faria nada. */
+    caixa.addEventListener("click", async function (ev) {
+      if (ev.target.closest("[data-fechar]")) { fecharModal(); return; }
+      const ok = ev.target.closest("[data-confirmar]");
+      if (!ok) return;
+      const erroEl = caixa.querySelector("[data-erro]");
+      erroEl.hidden = true;
+      ok.disabled = true;
+      try {
+        await cfg.aoConfirmar(caixa);
+        fecharModal();
+      } catch (e) {
+        erroEl.textContent = e.message;
+        erroEl.hidden = false;
+        ok.disabled = false;
+      }
+    });
+  }
+  function fecharModal() { document.getElementById("modais").innerHTML = ""; }
+
+  /* ========================================================================
+     11. NAVEGAÇÃO E EVENTOS
+     ====================================================================== */
+  async function irPara(tela) {
+    TELA = tela;
+    document.querySelectorAll("#menu button").forEach(function (b) {
+      b.setAttribute("aria-current", String(b.getAttribute("data-tela") === tela));
+    });
+    try {
+      if (tela === "operar") { await carregarDia(); pintarOperar(); }
+      else if (tela === "producao") await pintarProducao();
+      else if (tela === "lotes") await pintarLotes();
+      else if (tela === "cadastros") await pintarCadastros();
+      else if (tela === "usuarios") await pintarUsuarios();
+    } catch (e) {
+      document.getElementById("principal").innerHTML =
+        '<div class="bloco"><div class="bloco__corpo"><div class="aviso aviso--erro">' +
+        esc(e.message) + "</div></div></div>";
+    }
+  }
+
+  function fecharSuspensos() {
+    document.querySelectorAll(".suspenso__lista").forEach((l) => { l.hidden = true; });
+  }
+
+  document.addEventListener("click", async function (ev) {
+    const abrir = ev.target.closest("[data-abrir]");
+    if (abrir) {
+      const alvo = document.getElementById("menu-" + abrir.getAttribute("data-abrir"));
+      const estava = alvo.hidden;
+      fecharSuspensos();
+      alvo.hidden = !estava;
+      return;
+    }
+    if (!ev.target.closest(".suspenso")) fecharSuspensos();
+
+    const item = ev.target.closest("#menu [data-tela]");
+    if (item) { irPara(item.getAttribute("data-tela")); return; }
+
+    const aba = ev.target.closest("[data-cad]");
+    if (aba) { CADASTRO_ABA = aba.getAttribute("data-cad"); pintarCadastros(); return; }
+
+    const b = ev.target.closest("[data-acao]");
+    if (!b) return;
+    const acao = b.getAttribute("data-acao");
+    const id = b.getAttribute("data-id");
+
+    try {
+      /* ---- operador ---- */
+      if (acao === "iniciar-jornada") {
+        b.disabled = true;
+        await enviar("/restrito/api/jornadas", "POST");
+        await carregarDia(); pintarOperar();
+        recado("Produção iniciada. Bom trabalho!");
+      }
+      else if (acao === "abrir-ficha") await modalAbrirFicha();
+      else if (acao === "fechar-ficha") await modalFecharFicha();
+      else if (acao === "cancelar-ficha") {
+        if (!confirm("Cancelar a ficha aberta? Ela não será contada na produção.")) return;
+        await enviar("/restrito/api/fichas/" + DIA.ficha.id + "/cancelar", "PUT");
+        await carregarDia(); pintarOperar();
+        recado("Ficha cancelada.");
+      }
+      else if (acao === "encerrar-jornada") {
+        if (!confirm("Encerrar a produção do dia?")) return;
+        await enviar("/restrito/api/jornadas/" + DIA.jornada.id + "/encerrar", "PUT");
+        await carregarDia(); pintarOperar();
+        recado("Produção encerrada. Até amanhã!");
+      }
+
+      /* ---- produção ---- */
+      else if (acao === "filtrar-producao") {
+        filtroProducao = {
+          de: document.getElementById("fp-de").value,
+          ate: document.getElementById("fp-ate").value,
+          usuario: document.getElementById("fp-usuario").value,
+          cliente: document.getElementById("fp-cliente").value,
+          soltas: document.getElementById("fp-soltas").checked,
+        };
+        await pintarProducao();
+      }
+      else if (acao === "editar-ficha") await modalEditarFicha(id);
+      else if (acao === "cancelar-ficha-admin") {
+        if (!confirm("Cancelar esta ficha? Ela sai da produção e de qualquer lote.")) return;
+        await enviar("/restrito/api/fichas/" + id + "/cancelar", "PUT");
+        fecharModal(); recado("Ficha cancelada."); await pintarProducao();
+      }
+
+      /* ---- lotes ---- */
+      else if (acao === "novo-lote") await modalNovoLote(null);
+      else if (acao === "abrir-lote") await pintarLote(id);
+      else if (acao === "voltar-lotes") await pintarLotes();
+      else if (acao === "amalgamar") await modalAmalgamar(id);
+      else if (acao === "editar-lote") {
+        const r = await api("/restrito/api/lotes/" + id);
+        await modalNovoLote(r.lote);
+      }
+      else if (acao === "salvar-fechamento") {
+        await enviar("/restrito/api/lotes/" + id, "PUT", {
+          nota: document.getElementById("lt-nota").value,
+          situacao: document.getElementById("lt-situacao").value,
+        });
+        recado("Lote salvo."); await pintarLote(id);
+      }
+      else if (acao === "apagar-lote") {
+        if (!confirm("Apagar este lote? As fichas NÃO são apagadas — elas voltam para a lista de soltas.")) return;
+        await enviar("/restrito/api/lotes/" + id, "DELETE");
+        recado("Lote apagado."); await pintarLotes();
+      }
+
+      /* ---- cadastros ---- */
+      else if (acao === "novo-cadastro") await modalCadastro(null);
+      else if (acao === "editar-cadastro") await modalCadastro(id);
+      else if (acao === "desativar-cadastro") {
+        await enviar("/restrito/api/" + CADASTRO_ABA + "/" + id, "DELETE");
+        esquecer(CADASTRO_ABA); recado("Desativado."); await pintarCadastros();
+      }
+      else if (acao === "reativar-cadastro") {
+        await enviar("/restrito/api/" + CADASTRO_ABA + "/" + id, "PUT", { ativo: true });
+        esquecer(CADASTRO_ABA); recado("Reativado."); await pintarCadastros();
+      }
+      else if (acao === "trocar-qr") {
+        if (!confirm("Gerar um QR novo para esta máquina? O adesivo antigo deixa de valer.")) return;
+        await enviar("/restrito/api/maquinas/" + id + "/qr/trocar", "POST");
+        recado("QR trocado — imprima a etiqueta nova.");
+      }
+
+      /* ---- usuários ---- */
+      else if (acao === "papel-usuario") {
+        await enviar("/restrito/api/usuarios/" + id, "PUT", { papel: b.getAttribute("data-papel") });
+        recado("Papel alterado."); await pintarUsuarios();
+      }
+      else if (acao === "ativo-usuario") {
+        await enviar("/restrito/api/usuarios/" + id, "PUT", { ativo: b.getAttribute("data-ativo") === "1" });
+        recado("Salvo."); await pintarUsuarios();
+      }
+
+      /* ---- conta ---- */
+      else if (acao === "trocar-senha") {
+        fecharSuspensos();
+        abrirModal({
+          titulo: "Trocar minha senha",
+          corpo:
+            '<label class="campo"><span>Senha atual</span><input type="password" id="ts-atual" autocomplete="current-password"></label>' +
+            '<label class="campo"><span>Senha nova</span><input type="password" id="ts-nova" autocomplete="new-password"></label>' +
+            '<label class="campo"><span>Repita a nova</span><input type="password" id="ts-rep" autocomplete="new-password"></label>' +
+            '<p style="margin:0;font-size:13.5px;color:#77778a">Pelo menos 8 caracteres. ' +
+            "Ao trocar, as outras sessões desta conta são desconectadas.</p>",
+          confirmar: "Trocar senha",
+          aoConfirmar: async function (caixa) {
+            const nova = caixa.querySelector("#ts-nova").value;
+            if (nova !== caixa.querySelector("#ts-rep").value) throw new Error("As duas senhas novas não batem.");
+            await enviar("/restrito/api/eu/senha", "PUT", { atual: caixa.querySelector("#ts-atual").value, nova: nova });
+            recado("Senha trocada.");
+          },
+        });
+      }
+      else if (acao === "sair") {
+        await enviar("/restrito/api/sair", "POST");
+        location.reload();
+      }
+    } catch (e) {
+      b.disabled = false;
+      recado(e.message, true);
+      /* Sessão expirada no meio do turno: recarregar devolve a tela de entrada
+         em vez de deixar o operador clicando em botões que já não respondem. */
+      if (e.status === 401) setTimeout(() => location.reload(), 1200);
+    }
+  });
+
+  /* ========================================================================
+     12. ENTRADA E PARTIDA
+     ====================================================================== */
+  document.getElementById("form-entrar").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    const form = ev.target;
+    const erro = document.getElementById("erro-entrar");
+    erro.hidden = true;
+    const botao = form.querySelector("button");
+    botao.disabled = true;
+    try {
+      await enviar("/restrito/api/entrar", "POST", {
+        usuario: form.usuario.value, senha: form.senha.value,
+      });
+      await comecar();
+    } catch (e) {
+      erro.textContent = e.message; erro.hidden = false;
+      botao.disabled = false;
+      form.senha.value = "";
+    }
+  });
+
+  async function comecar() {
+    EU = await api("/restrito/api/eu");
+    document.getElementById("tela-entrar").hidden = true;
+    document.getElementById("app").hidden = false;
+
+    const nomeCurto = (EU.nome || EU.usuario).split(" ")[0];
+    document.getElementById("topo-nome").textContent = nomeCurto;
+    document.getElementById("conta-nome").textContent = EU.nome || EU.usuario;
+    document.getElementById("conta-papel").textContent =
+      EU.papel === "admin" ? "administrador" : "operador";
+
+    /* O operador não tem menu: a tela dele é a única que existe. Menu com um
+       item só é ruído numa tela que se olha de relance, com a máquina rodando. */
+    const admin = EU.papel === "admin";
+    document.getElementById("menu").hidden = !admin;
+    document.querySelectorAll("[data-so-admin]").forEach((el) => { el.hidden = !admin; });
+
+    if (MAQUINA_TOKEN) {
+      const chip = document.getElementById("chip-maquina");
+      chip.hidden = false;
+      try {
+        const m = await api("/restrito/api/maquina-do-qr?m=" + encodeURIComponent(MAQUINA_TOKEN));
+        chip.textContent = m.nome;
+      } catch (e) {
+        /* Adesivo velho depois de trocar o QR, ou máquina desativada. Esquecer
+           o token é melhor que carregá-lo: com ele guardado, toda ficha aberta
+           daí em diante seria recusada e ninguém saberia por quê. */
+        chip.textContent = "QR não reconhecido";
+        MAQUINA_TOKEN = null;
+        try { sessionStorage.removeItem("bt_maquina"); } catch (e2) {}
+      }
+    }
+
+    /* O administrador cai na produção do dia, não na tela de operar: ele não
+       fica na máquina, e a primeira pergunta dele é sempre o que a fábrica
+       produziu. Operar continua no menu, para quando ele mesmo bordar. */
+    await irPara(admin ? "producao" : "operar");
+
+    /* O tempo decorrido na tela do operador envelhece: sem isto, "12 min"
+       continuaria dizendo 12 minutos duas horas depois. */
+    setInterval(function () { if (TELA === "operar" && DIA && DIA.jornada) pintarOperar(); }, 60000);
+  }
+
+  /* Ao abrir: tenta seguir com a sessão que já existe. É o caso comum — a tela
+     fica aberta o turno inteiro e é recarregada às cegas. */
+  api("/restrito/api/eu").then(comecar).catch(function () {
+    document.getElementById("tela-entrar").hidden = false;
+  });
+})();
+</script>
+</body>
+</html>

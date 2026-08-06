@@ -23,8 +23,14 @@ const crypto = require("node:crypto");
 const { abrirBanco } = require("./db");
 const { criarLimitador } = require("./limitador");
 const { agendarBackups } = require("./backup");
+const { carregarAmbiente } = require("./pg");
+const restrito = require("./restrito");
 
-const APP_VERSION = "1.1.4";
+/* PGPASSWORD e DADOS_CHAVE saem do `.env` (ou de /etc/bordatudo.env no
+   servidor). Tem de ser ANTES de qualquer consulta ao Postgres. */
+carregarAmbiente(__dirname);
+
+const APP_VERSION = "1.2.0";
 const PORTA = Number(process.env.PORT) || 5193;
 const HOST = process.env.HOST || "127.0.0.1";
 const RAIZ = __dirname;
@@ -635,7 +641,12 @@ const backups = agendarBackups({
 const sessoes = new Map();
 const DURACAO_SESSAO = 8 * 3600e3;
 
-const limitador = criarLimitador({ arquivo: path.join(RAIZ, "data", "limites.json") });
+/* O arquivo da trava é configurável para a SUÍTE poder usar o dela. Sem isso o
+   teste envenena o estado de produção: ele erra senhas de propósito, e as
+   próximas cinco tentativas de quem for entrar de verdade caem no bloqueio. */
+const limitador = criarLimitador({
+  arquivo: process.env.LIMITES_ARQUIVO || path.join(RAIZ, "data", "limites.json"),
+});
 limitador.carregar();
 
 /* O nginx ACRESCENTA ao X-Forwarded-For, então o primeiro item dele é texto
@@ -760,6 +771,30 @@ const servidor = http.createServer(async (req, res) => {
   /* ------------------------------------------------------------- API ---- */
   if (rota.startsWith("/api/")) return rotasApi(req, res, rota, url);
 
+  /* ---------------------------------------------------------- /restrito -- */
+  /* O sistema de produção é OUTRA aplicação, com outro banco (Postgres) e
+     outra autenticação. Ele mora no mesmo processo só para dividir a porta e o
+     certificado — o site cai se o Postgres cair? Não: o `catch` abaixo devolve
+     erro só de quem pediu /restrito, e o site institucional segue servindo. */
+  if (rota === "/restrito" || rota.startsWith("/restrito/")) {
+    if (rota === "/restrito") {
+      /* Sem a barra, o `?m=` do QR se perderia num redirecionamento mal feito.
+         Aqui a tela é servida direto e a busca fica intacta. */
+      return servirRestrito(req, res);
+    }
+    if (rota === "/restrito/" || rota === "/restrito/index.html") return servirRestrito(req, res);
+    try {
+      return await restrito.rotas(req, res, rota, limitador, ipDoCliente);
+    } catch (e) {
+      console.error("  ✖ /restrito:", e.message);
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: "erro interno" }));
+      }
+      return;
+    }
+  }
+
   if (req.method !== "GET" && req.method !== "HEAD")
     return responder(res, 405, { error: "método não permitido" });
 
@@ -809,6 +844,28 @@ const servidor = http.createServer(async (req, res) => {
   res.writeHead(200, { "Content-Type": tipo, "Content-Length": corpo.length });
   res.end(req.method === "HEAD" ? undefined : corpo);
 });
+
+/* A tela do /restrito é UM arquivo só. Ele carrega logado ou não: quando não
+   há sessão, o próprio JavaScript mostra a entrada. Servir telas diferentes
+   para os dois casos duplicaria o cabeçalho e o rodapé em dois lugares. */
+function servirRestrito(req, res) {
+  const alvo = path.join(RAIZ, "restrito", "app.html");
+  if (!fs.existsSync(alvo)) return pagina404(res);
+  const corpo = Buffer.from(
+    fs.readFileSync(alvo, "utf8").replace(/\{\{VERSAO\}\}/g, APP_VERSION), "utf8");
+  cabecalhosBase(res, {
+    /* Sem `frame-ancestors`, a tela poderia ser posta dentro de um iframe
+       invisível e o operador clicaria em "fechar ficha" sem saber. */
+    "Content-Security-Policy":
+      "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; " +
+      "script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    "X-Frame-Options": "DENY",
+    "X-Robots-Tag": "noindex, nofollow",
+    "Cache-Control": "no-store",
+  });
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": corpo.length });
+  res.end(req.method === "HEAD" ? undefined : corpo);
+}
 
 function pagina404(res) {
   const p = path.join(RAIZ, "404.html");
