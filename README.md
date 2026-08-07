@@ -132,7 +132,7 @@ Ponha no `.env` da raiz (que **não** vai para o git):
 
 ```
 PGPASSWORD=<a senha que você escolheu>
-DADOS_CHAVE=<32 bytes em hex — gere com: openssl rand -hex 32>
+DADOS_CHAVE=<32 bytes em BASE64 — gere com: openssl rand -base64 32>
 ```
 
 > **Perder `DADOS_CHAVE` é perder os dados cifrados para sempre.** Guarde-a fora

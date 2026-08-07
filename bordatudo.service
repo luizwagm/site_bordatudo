@@ -49,7 +49,7 @@ Environment=NODE_ENV=production
 # Ficam num arquivo do sistema, fora do projeto e fora do git:
 #
 #     PGPASSWORD=<a senha do papel bordatudo>
-#     DADOS_CHAVE=<32 bytes em hex — openssl rand -hex 32>
+#     DADOS_CHAVE=<32 bytes em BASE64 — openssl rand -base64 32>
 #
 #     install -o root -g __GRUPO__ -m 640 /dev/null /etc/bordatudo.env
 #

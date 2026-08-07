@@ -7,7 +7,7 @@
 --
 --  Depois ponha a senha que você escolheu no `.env` da raiz do projeto:
 --      PGPASSWORD=<a senha>
---      DADOS_CHAVE=<32 bytes em hex — gere com: openssl rand -hex 32>
+--      DADOS_CHAVE=<32 bytes em BASE64 — gere com: openssl rand -base64 32>
 --
 --  TROQUE A SENHA ABAIXO ANTES DE RODAR. Ela está aqui como texto visível de
 --  propósito: senha em arquivo versionado é senha pública. Este arquivo é o

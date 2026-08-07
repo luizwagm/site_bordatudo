@@ -127,6 +127,52 @@ else
 fi
 echo
 
+# --------------------------------------------------------------------------
+#  A CHAVE DOS DADOS PESSOAIS
+#
+#  Hoje o /restrito ainda NÃO cifra nada ao gravar: `pg.js` só sabe DECIFRAR o
+#  que vier com o prefixo, e nada escreve com ele. `DADOS_CHAVE` é preparação
+#  para quando o telefone do cliente passar a ser cifrado.
+#
+#  Conferir mesmo assim, e desde já, porque a chave falha TARDE: uma chave em
+#  formato errado deixa tudo subir — serviço no ar, /restrito abrindo, banco
+#  respondendo — e só se revela na primeira gravação cifrada. Se ninguém
+#  conferir antes, o dia em que o telefone virar dado cifrado será o dia em que
+#  o cadastro para de salvar, com a causa a semanas de distância.
+#
+#  O engano é fácil e já aconteceu duas vezes aqui: `openssl rand -hex 32`
+#  também tem "32" no nome, mas dá 32 BYTES em 64 caracteres, que o base64 lê
+#  como 48. O formato certo é BASE64: `openssl rand -base64 32`.
+# --------------------------------------------------------------------------
+echo "--- Chave dos dados pessoais (DADOS_CHAVE) ---"
+CHAVE_ARQ=""
+[ -f /etc/bordatudo.env ] && CHAVE_ARQ=/etc/bordatudo.env
+[ -z "$CHAVE_ARQ" ] && [ -f .env ] && CHAVE_ARQ=.env
+if [ -z "$CHAVE_ARQ" ]; then
+  echo "  sem /etc/bordatudo.env nem .env"
+else
+  VALOR=$(grep -m1 '^DADOS_CHAVE=' "$CHAVE_ARQ" 2>/dev/null | cut -d= -f2-)
+  if [ -z "$VALOR" ]; then
+    echo "  DADOS_CHAVE NÃO está definida em $CHAVE_ARQ"
+    echo "  Gere com:  openssl rand -base64 32"
+  else
+    BYTES=$(printf %s "$VALOR" | base64 -d 2>/dev/null | wc -c)
+    if [ "$BYTES" = "32" ]; then
+      echo "  ok: 32 bytes em base64"
+    else
+      echo "  ERRADA: decodifica para ${BYTES:-0} bytes, e o esperado são 32."
+      case "$VALOR" in
+        *[!0-9a-fA-F]*) : ;;
+        *) echo "  o valor só tem dígitos hexadecimais — o formato é BASE64." ;;
+      esac
+      echo "  Gere de novo:  openssl rand -base64 32"
+      echo "  Trocar agora é livre: nada foi cifrado com ela ainda. Quando"
+      echo "  passar a cifrar, trocar apaga o acesso ao que já estava gravado."
+    fi
+  fi
+fi
+echo
+
 echo "--- Freio de tentativas de senha ---"
 if [ -f data/limites.json ]; then
   node -e '

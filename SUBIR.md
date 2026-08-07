@@ -70,7 +70,7 @@ Conteúdo:
 
 ```
 PGPASSWORD=<a senha que você escolheu no passo 2>
-DADOS_CHAVE=<cole aqui o resultado de: openssl rand -hex 32>
+DADOS_CHAVE=<cole aqui o resultado de: openssl rand -base64 32>
 ```
 
 O `640` com o grupo do serviço é o ponto: o processo lê, e nenhum outro usuário
