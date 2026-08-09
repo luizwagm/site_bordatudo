@@ -244,10 +244,6 @@ async function limparRestos() {
          com o arquivo de produção, quem fosse entrar depois pegaria o bloqueio
          que o teste provocou. */
       LIMITES_ARQUIVO: ARQ_LIMITES,
-      /* Teto da LISTA de produção baixado a 3. É o que permite provar o corte
-         e o aviso com quatro fichas em vez de quinhentas e uma — um teto que
-         só se alcança com meio milhar de registros nunca seria testado. */
-      TETO_PRODUCAO: "3",
     }),
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1248,23 +1244,26 @@ async function limparRestos() {
      "com as mais recentes no começo", JSON.stringify(datas.slice(0, 3)));
 
   /* ------------------------------------------------------------------
-     O CORTE NÃO PODE MENTIR
+     A PÁGINA NÃO PODE MENTIR SOBRE O TOTAL
 
-     A lista tem teto (aqui, 3 pelo ambiente da suíte); os totais NÃO têm.
-     Antes os totais eram somados sobre as linhas devolvidas — o que só nunca
-     deu problema porque a tela abria no dia e o teto nunca era alcançado.
-     Aberta em "tudo", a primeira oficina com produção acumulada veria os
-     números pararem de crescer, calados, no valor das últimas 500 fichas.
+     Os totais são contados no BANCO, sobre o filtro inteiro. Antes eram
+     somados sobre as linhas devolvidas — o que só nunca deu problema porque a
+     tela abria no dia e a lista nunca enchia. Aberta em "tudo" e paginada, os
+     números do alto passariam a ser os da PÁGINA: virar a página mudaria o
+     total de peças, e o número que vai para a nota seria o que coube na tela.
      ------------------------------------------------------------------ */
-  eq(r.dados.teto, 3, "o teto da lista é o do ambiente");
-  ok(r.dados.fichas.length <= 3, "a LISTA respeita o teto", String(r.dados.fichas.length));
-  eq(r.dados.truncado, true, "e a resposta AVISA que foi cortada");
-  ok(Number(r.dados.total) > r.dados.fichas.length,
-     "o total conta o filtro inteiro, não a página devolvida");
+  /* `>=` passaria com o total saindo do tamanho da página. Pedindo UMA por
+     página com mais de uma ficha no banco, só o total do FILTRO satisfaz o
+     `>`: é o que separa "contou o banco" de "contou o que devolveu". */
+  const umaSo = await admin("/restrito/api/producao?por=1&pagina=1");
+  eq(umaSo.dados.fichas.length, 1, "com `por=1` vem uma ficha só");
+  ok(Number(umaSo.dados.total) > 1,
+     "e o total continua sendo o do filtro inteiro, maior que a página",
+     "total " + umaSo.dados.total);
 
-  /* A prova que separa "somou o banco" de "somou as 3 linhas": o total de
-     peças tem de bater com a soma de TODAS as fichas fechadas, contada aqui
-     por fora, por SQL. */
+  /* A prova que separa "somou o banco" de "somou as linhas da página": o
+     total de peças tem de bater com a soma de TODAS as fichas fechadas,
+     contada aqui por fora, por SQL. */
   const conferencia = await Q.get(
     "SELECT COUNT(*) c, COALESCE(SUM(quantidade),0) p, COALESCE(SUM(total_pontos),0) pt FROM fichas WHERE situacao = 'fechada'");
   eq(Number(r.dados.total), Number(conferencia.c), "o número de fichas bate com o banco");
@@ -1276,11 +1275,43 @@ async function limparRestos() {
   const somaOp = Object.values(r.dados.porOperador).reduce((a, o) => a + Number(o.pecas), 0);
   eq(somaOp, Number(conferencia.p), "a quebra por operador soma o mesmo que o total");
 
-  /* Com filtro que cabe no teto, nada de aviso — senão ele viraria ruído
-     permanente e ninguém leria quando importasse. */
-  r = await admin("/restrito/api/producao?soltas=1&cliente=" + cliB);
-  ok(r.dados.fichas.length === Number(r.dados.total), "filtro pequeno cabe inteiro na lista");
-  eq(r.dados.truncado, false, "e aí NÃO há aviso de corte");
+  /* ------------------------------------------------------------------
+     A PAGINAÇÃO EM SI
+
+     Pedindo duas por página, a lista tem de partir — e as duas páginas juntas
+     têm de dar exatamente o conjunto, sem repetir nem perder ninguém. Repetir
+     é o que acontece quando o ORDER BY não é determinístico; perder é o que
+     acontece quando o OFFSET é calculado com a página começando em zero.
+     ------------------------------------------------------------------ */
+  const pag1 = await admin("/restrito/api/producao?por=2&pagina=1");
+  const pag2 = await admin("/restrito/api/producao?por=2&pagina=2");
+  eq(pag1.dados.porPagina, 2, "a página respeita o `por` pedido");
+  ok(pag1.dados.fichas.length <= 2, "e devolve no máximo isso", String(pag1.dados.fichas.length));
+  eq(pag1.dados.paginas, Math.ceil(Number(pag1.dados.total) / 2), "o número de páginas fecha com o total");
+  eq(pag1.dados.pagina, 1, "a página 1 se identifica");
+  eq(pag2.dados.pagina, 2, "e a 2 também");
+  eq(Number(pag2.dados.total), Number(pag1.dados.total), "o total NÃO muda de uma página para a outra");
+  eq(Number(pag2.dados.soma.pecas), Number(pag1.dados.soma.pecas), "nem a soma de peças");
+
+  const ids1 = pag1.dados.fichas.map((f) => f.id), ids2 = pag2.dados.fichas.map((f) => f.id);
+  ok(!ids1.some((x) => ids2.indexOf(x) >= 0), "nenhuma ficha aparece nas duas páginas",
+     JSON.stringify({ ids1, ids2 }));
+
+  /* `?pagina=0` viraria OFFSET negativo, que o Postgres recusa — a tela
+     inteira quebraria com erro de driver por causa de uma URL editada à mão. */
+  /* `pagina=0` cai no `|| 1` sozinho (zero é falso em JavaScript) — quem
+     produz OFFSET NEGATIVO, que o Postgres recusa com erro de driver, é o
+     número negativo. É esse que a trava precisa segurar, e por isso é esse
+     que se testa. */
+  eq((await admin("/restrito/api/producao?por=2&pagina=0")).dados.pagina, 1, "página 0 vira 1");
+  r = await admin("/restrito/api/producao?por=2&pagina=-3");
+  eq(r.status, 200, "página NEGATIVA não derruba a consulta");
+  eq(r.dados.pagina, 1, "e é tratada como a primeira");
+  ok(r.dados.fichas.length > 0, "devolvendo conteúdo, não erro de driver");
+
+  /* E o teto do `por`: sem ele, uma requisição pediria a tabela inteira. */
+  eq((await admin("/restrito/api/producao?por=99999")).dados.porPagina, 500,
+     "o `por` tem teto — ninguém pede a tabela inteira numa requisição");
 
   /* Filtro de data continua valendo, e é o que estreita quando o corte incomoda. */
   r = await admin("/restrito/api/producao?de=2099-01-01");
@@ -1401,6 +1432,44 @@ async function limparRestos() {
 
   eq((await oper("/restrito/api/clientes/" + cliB + "/lotes")).status, 403,
      "e o operador não entra na gaveta financeira");
+
+  /* ==================== 12k-quater. paginação das outras listas ========= */
+  console.log("  12k-quater. paginação de lotes e cadastros");
+
+  /* LOTES paginam no servidor, como a produção: a lista cresce com o tempo e
+     o caixa do topo tem de contar TODOS, não a página. */
+  r = await admin("/restrito/api/lotes?por=1&pagina=1");
+  eq(r.status, 200, "lotes aceita paginação");
+  ok(r.dados.lotes.length <= 1, "e devolve o tamanho pedido", String(r.dados.lotes.length));
+  ok(Number(r.dados.total) >= r.dados.lotes.length, "com o total do filtro inteiro");
+  eq(r.dados.paginas, Math.ceil(Number(r.dados.total) / 1), "e o número de páginas fecha");
+
+  /* O caixa NÃO pode mudar quando se vira a página — ele é o que ainda tem de
+     entrar no total, não o que aparece na tela. */
+  /* Para a conferência ter valor, as duas páginas precisam ter conteúdo
+     DIFERENTE: com dois lotes vazios, somar a página e somar o banco dariam
+     zero nos dois casos e o teste aprovaria a soma errada. Um dos lotes tem
+     ficha com valor; o outro, nada. */
+  r = await admin("/restrito/api/lotes", "POST", { cliente_id: cliB, descricao: "ZZ QA Lote Sem Ficha" });
+  const loteSemFicha = r.dados.id; CRIADO.lotes.push(loteSemFicha);
+
+  const cx1 = (await admin("/restrito/api/lotes?por=1&pagina=1")).dados.conta;
+  const cx2 = (await admin("/restrito/api/lotes?por=1&pagina=2")).dados.conta;
+  ok(cx1.total > 0, "há valor em lote para a conferência valer", String(cx1.total));
+  eq(cx2.total, cx1.total, "o caixa é o mesmo em qualquer página — soma o filtro, não a página");
+  eq(cx2.a_receber, cx1.a_receber, "o a receber também");
+  eq(cx2.pagos + cx2.abertos, cx1.pagos + cx1.abertos, "e a contagem de lotes também");
+
+  /* Os CADASTROS já paginavam; o que mudou foi passarem pelo mesmo cortador.
+     Sem `?pagina=`, continuam devolvendo a lista inteira — é o que as caixas
+     de seleção da tela do operador consomem, e paginá-las deixaria o operador
+     sem metade dos clientes sem nada avisando. */
+  r = await admin("/restrito/api/clientes?todos=1");
+  ok(!("paginas" in r.dados), "sem `pagina=`, o cadastro devolve tudo, sem envelope");
+  r = await admin("/restrito/api/clientes?todos=1&pagina=1&por=2");
+  eq(r.dados.porPagina, 2, "com `pagina=`, pagina");
+  ok(r.dados.itens.length <= 2, "e respeita o tamanho");
+  ok(Number(r.dados.total) >= r.dados.itens.length, "com o total de todos");
 
   /* ==================================== 12m. tempo real (SSE) =========== */
   console.log("  12m. tempo real");

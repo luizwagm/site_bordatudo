@@ -196,7 +196,17 @@ textarea { min-height: 74px; resize: vertical; }
 .paginacao { display: flex; align-items: center; justify-content: space-between;
   gap: 12px; flex-wrap: wrap; padding: 12px 18px; border-top: 1px solid #edeef3; }
 .paginacao__conta { font-size: 13.5px; color: #77778a; }
-.paginacao__botoes { display: flex; gap: 6px; align-items: center; }
+.paginacao__botoes { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* O seletor de quantidade acompanha os botões. `white-space:nowrap` porque
+   "por página" quebrando em duas linhas empurra a barra inteira para baixo
+   numa tela de 375px. */
+.paginacao__por { display: flex; gap: 6px; align-items: center; font-size: 13px;
+  color: #77778a; white-space: nowrap; }
+.paginacao__por select { font: inherit; padding: 3px 6px; border-radius: 6px;
+  border: 1px solid #dcdce7; background: #fff; color: var(--tinta); }
+/* Dentro da gaveta do cliente a barra é mais apertada: ela divide a modal com
+   o formulário do cadastro. */
+.gaveta .paginacao { padding: 8px 0 4px; font-size: 12.5px; }
 
 /* A miniatura do desenho. `contain` e não `cover`: bordado é forma, e cortar
    as bordas para preencher o quadrado esconde justamente o contorno. */
@@ -747,6 +757,10 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   }
 
   function pintarOperar() {
+    /* O turno inteiro de um operador rápido passa de vinte fichas, e a tela
+       dele é a que se olha de relance com a máquina rodando. Os indicadores
+       acima da tabela somam o dia todo (vêm de `DIA.soma`), não a página. */
+    const fatiaDoDia = fatiar("operar", (DIA && DIA.fechadas) || []);
     const alvo = document.getElementById("principal");
     if (!DIA) { alvo.innerHTML = '<div class="carregando">carregando…</div>'; return; }
 
@@ -813,13 +827,13 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             "<th>Hora</th><th>Cliente</th><th>Desenho</th><th>Mercadoria</th><th>Cor</th>" +
             '<th class="num">Peças</th><th class="num">Pontos</th>' +
           "</tr></thead><tbody>" +
-          DIA.fechadas.map((x) =>
+          fatiaDoDia.itens.map((x) =>
             "<tr><td>" + hora(x.fechada_em) + "</td><td>" + esc(x.cliente_nome) + "</td>" +
             "<td>" + esc(x.desenho_nome) + "</td><td>" + esc(x.mercadoria_nome || "—") + "</td>" +
             "<td>" + esc(x.cor_nome || "—") + "</td>" +
             '<td class="num">' + num(x.quantidade) + "</td>" +
             '<td class="num">' + num(x.total_pontos) + "</td></tr>").join("") +
-          "</tbody></table></div>" +
+          "</tbody></table></div>" + paginacao(fatiaDoDia, "operar") +
         "</div>";
     }
 
@@ -1107,7 +1121,12 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     if (filtroProducao.usuario) q.set("usuario", filtroProducao.usuario);
     if (filtroProducao.cliente) q.set("cliente", filtroProducao.cliente);
     if (filtroProducao.soltas) q.set("soltas", "1");
+    q.set("pagina", pag("producao").pagina);
+    q.set("por", pag("producao").por);
     const r = await api("/restrito/api/producao?" + q.toString());
+    /* A página volta para dentro quando o filtro encolhe a lista: filtrar
+       estando na 4 deixaria a tela vazia com a barra dizendo "4 de 1". */
+    if (r.pagina !== pag("producao").pagina) pag("producao").pagina = r.pagina;
 
     const porOp = Object.keys(r.porOperador).map((k) =>
       Object.assign({ nome: k }, r.porOperador[k])).sort((a, b) => b.pontos - a.pontos);
@@ -1195,9 +1214,14 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             : '<span class="etiqueta etiqueta--ambar">solta</span>') + "</td>" +
           '<td><button class="btn btn--fantasma btn--mini" data-acao="editar-ficha" data-id="' + f.id + '">corrigir</button></td>' +
           "</tr>").join("") +
-        '</tbody><tfoot><tr><td colspan="7">Total</td>' +
+        /* O rodapé soma o FILTRO INTEIRO, não a página — por isso o rótulo
+           diz "total do período" e não "total". Uma linha "Total" embaixo de
+           vinte fichas, valendo por quatrocentas, é a leitura errada mais
+           fácil de fazer numa tabela paginada. */
+        '</tbody><tfoot><tr><td colspan="7">Total do período</td>' +
         '<td class="num">' + num(r.soma.pecas) + "</td>" +
-        '<td class="num">' + num(r.soma.pontos) + '</td><td colspan="2"></td></tr></tfoot></table></div>'
+        '<td class="num">' + num(r.soma.pontos) + '</td><td colspan="2"></td></tr></tfoot></table></div>' +
+        paginacao(r, "producao")
         : '<div class="vazio">Nenhuma ficha fechada no período.</div>') +
       "</div>";
   }
@@ -1318,7 +1342,9 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   async function pintarLotes() {
     const alvo = document.getElementById("principal");
     alvo.innerHTML = '<div class="carregando">carregando…</div>';
-    const r = await api("/restrito/api/lotes");
+    const qp = new URLSearchParams({ pagina: pag("lotes").pagina, por: pag("lotes").por });
+    const r = await api("/restrito/api/lotes?" + qp.toString());
+    if (r.pagina !== pag("lotes").pagina) pag("lotes").pagina = r.pagina;
 
     alvo.innerHTML =
       '<h1 class="titulo-tela">Lotes</h1>' +
@@ -1368,7 +1394,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
           '<a class="btn btn--fantasma btn--mini" href="/restrito/lotes/' + l.id + '/recibo" ' +
             'target="_blank" rel="noopener">recibo</a></td>' +
           "</tr>";
-      }).join("") + "</tbody></table></div>"
+      }).join("") + "</tbody></table></div>" + paginacao(r, "lotes")
       : '<div class="vazio">Nenhum lote ainda. Crie um para começar a juntar as fichas.</div>') +
       "</div>";
   }
@@ -1388,6 +1414,9 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
 
     const prev = l.quantidade_prevista == null ? null : Number(l.quantidade_prevista);
     const falta = prev == null ? null : prev - r.pecas;
+    /* A composição de um lote grande passa das cem fichas, e ela é conferida
+       linha a linha antes de faturar — é a tabela que mais precisa de página. */
+    const fatiaLote = fatiar("lote", r.fichas);
 
     alvo.innerHTML =
       '<p style="margin:0 0 10px"><button class="btn btn--fantasma btn--mini" data-acao="voltar-lotes">← todos os lotes</button></p>' +
@@ -1433,14 +1462,17 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       (r.fichas.length ? '<div class="rolagem"><table><thead><tr>' +
         "<th>Fechada</th><th>Operador</th><th>Desenho</th><th>Mercadoria</th><th>Cor</th>" +
         '<th class="num">Peças</th><th class="num">Pontos</th></tr></thead><tbody>' +
-        r.fichas.map((f) =>
+        fatiaLote.itens.map((f) =>
           "<tr><td>" + dataHora(f.fechada_em) + "</td><td>" + esc(f.operador_nome) + "</td>" +
           "<td>" + esc(f.desenho_nome) + "</td><td>" + esc(f.mercadoria_nome || "—") + "</td>" +
           "<td>" + esc(f.cor_nome || "—") + "</td>" +
           '<td class="num">' + num(f.quantidade) + "</td>" +
           '<td class="num">' + num(f.total_pontos) + "</td></tr>").join("") +
-        '</tbody><tfoot><tr><td colspan="5">Total</td><td class="num">' + num(r.pecas) +
-        '</td><td class="num">' + num(r.pontos) + "</td></tr></tfoot></table></div>" : "") +
+        /* O rodapé é do LOTE INTEIRO — é ele que sustenta a nota. Diz isso no
+           rótulo para ninguém ler "Total" como o total da página. */
+        '</tbody><tfoot><tr><td colspan="5">Total do lote</td><td class="num">' + num(r.pecas) +
+        '</td><td class="num">' + num(r.pontos) + "</td></tr></tfoot></table></div>" +
+        paginacao(fatiaLote, "lote") : "") +
       "</div>" +
 
       '<div class="bloco"><div class="bloco__topo"><h2>Fechamento</h2></div><div class="bloco__corpo">' +
@@ -1623,13 +1655,13 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
      e trava com quinhentos — e é justamente quando trava que ninguém mais
      consegue trocar o servidor de lugar.
      ====================================================================== */
-  var filtroClientes = { pagina: 1, busca: "", todos: true };
+  var filtroClientes = { pagina: 1, por: 20, busca: "", todos: true };
 
   async function pintarClientes() {
     const alvo = document.getElementById("principal");
     alvo.innerHTML = '<div class="carregando">carregando…</div>';
 
-    const q = new URLSearchParams({ pagina: filtroClientes.pagina, por: 20 });
+    const q = new URLSearchParams({ pagina: filtroClientes.pagina, por: filtroClientes.por });
     if (filtroClientes.busca) q.set("busca", filtroClientes.busca);
     if (filtroClientes.todos) q.set("todos", "1");
     const r = await api("/restrito/api/clientes?" + q);
@@ -1693,22 +1725,94 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     else await pintarTabelas();
   }
 
-  /* Um só desenho de paginação para as duas telas. Duas cópias divergiriam, e
-     a que ficasse para trás mostraria "página 3 de 2". */
-  function paginacao(r, tela) {
-    if (r.paginas <= 1) return "";
-    const de = (r.pagina - 1) * r.porPagina + 1;
+  /* ========================================================================
+     PAGINAÇÃO — uma só, para as onze tabelas do sistema
+
+     DOIS MECANISMOS, UM DESENHO. Há listas que o servidor pagina (clientes,
+     desenhos, produção, lotes: crescem sem limite e não cabem na memória do
+     celular preso na máquina) e listas que já chegam inteiras porque a tela
+     precisa delas por outro motivo — os totais do lote, a soma da gaveta do
+     cliente, as três abas de tabelas. Nestas, paginar no navegador não custa
+     requisição nenhuma.
+
+     O que NÃO pode haver é duas BARRAS. O `fatiar` abaixo devolve o mesmo
+     envelope que o servidor manda (`total`, `pagina`, `porPagina`, `paginas`),
+     e daí para baixo tudo é igual: uma função desenha, um manipulador
+     responde. Duas barras divergiriam no primeiro ajuste, e a que ficasse
+     para trás mostraria "página 3 de 2".
+     ====================================================================== */
+  var PAGINAS = {};                 // chave -> { pagina, por }
+  const POR_PAGINA = [10, 20, 50, 100];
+
+  function pag(chave) {
+    if (!PAGINAS[chave]) PAGINAS[chave] = { pagina: 1, por: 20 };
+    return PAGINAS[chave];
+  }
+
+  /* Corta a lista que já está na memória e devolve o envelope do servidor. */
+  function fatiar(chave, itens) {
+    const p = pag(chave);
+    const total = itens.length;
+    const paginas = Math.max(1, Math.ceil(total / p.por));
+    /* A PÁGINA VOLTA PARA DENTRO quando a lista encolhe. Filtrar estando na
+       página 4 deixaria a tela vazia com a barra dizendo "página 4 de 1" — e
+       vazio, para quem olha, é o sistema tendo perdido os registros. */
+    if (p.pagina > paginas) p.pagina = paginas;
+    const de = (p.pagina - 1) * p.por;
+    return { itens: itens.slice(de, de + p.por), total, pagina: p.pagina, porPagina: p.por, paginas };
+  }
+
+  /* A barra. `chave` identifica QUAL lista está sendo paginada — é o que o
+     manipulador usa para saber o que repintar. */
+  function paginacao(r, chave) {
+    /* A barra aparece em TODA tabela com conteúdo — inclusive na de cinco
+       linhas, onde ela vira só "1–5 de 5" com o seletor de quantidade. É o
+       que faz a contagem estar sempre à vista e o comportamento ser o mesmo
+       em todas as telas: uma barra que às vezes existe e às vezes não obriga
+       quem usa a descobrir a regra.
+
+       O que some quando tudo cabe são as SETAS — botão de virar página numa
+       lista de uma página é botão que não faz nada. */
+    const cabeTudo = r.paginas <= 1;
+    if (!r.total) return "";
+
+    const de = r.total ? (r.pagina - 1) * r.porPagina + 1 : 0;
     const ate = Math.min(r.total, r.pagina * r.porPagina);
+    const bt = (ir, rot, desligado) =>
+      '<button class="btn btn--fantasma btn--mini" data-acao="pagina" data-pag="' + chave +
+      '" data-ir="' + ir + '"' + (desligado ? " disabled" : "") + ">" + rot + "</button>";
+
     return '<div class="paginacao">' +
-      '<span class="paginacao__conta">' + de + "–" + ate + " de " + num(r.total) + "</span>" +
+      '<span class="paginacao__conta">' + num(de) + "–" + num(ate) + " de " + num(r.total) + "</span>" +
       '<span class="paginacao__botoes">' +
-        '<button class="btn btn--fantasma btn--mini" data-acao="pagina" data-tela="' + tela +
-          '" data-ir="' + (r.pagina - 1) + '"' + (r.pagina <= 1 ? " disabled" : "") + ">← anterior</button>" +
-        '<span class="paginacao__conta">página ' + r.pagina + " de " + r.paginas + "</span>" +
-        '<button class="btn btn--fantasma btn--mini" data-acao="pagina" data-tela="' + tela +
-          '" data-ir="' + (r.pagina + 1) + '"' + (r.pagina >= r.paginas ? " disabled" : "") + ">próxima →</button>" +
+        '<label class="paginacao__por">por página' +
+          '<select data-acao="por-pagina" data-pag="' + chave + '">' +
+          POR_PAGINA.map((n) => '<option value="' + n + '"' +
+            (n === r.porPagina ? " selected" : "") + ">" + n + "</option>").join("") +
+          "</select></label>" +
+        (cabeTudo ? "" :
+          bt(1, "«", r.pagina <= 1) +
+          bt(r.pagina - 1, "← anterior", r.pagina <= 1) +
+          '<span class="paginacao__conta">página ' + r.pagina + " de " + r.paginas + "</span>" +
+          bt(r.pagina + 1, "próxima →", r.pagina >= r.paginas) +
+          bt(r.paginas, "»", r.pagina >= r.paginas)) +
       "</span></div>";
   }
+
+  /* Quem repinta cada lista. Registro em vez de uma cadeia de `if`: a tabela
+     que alguém acrescentar amanhã entra com uma linha aqui, e esquecer a linha
+     dá botão que não faz nada — barulhento o bastante para ser notado, ao
+     contrário de um `else` que repinta a tela errada em silêncio. */
+  var REPINTAR = {
+    clientes: () => pintarClientes(),
+    desenhos: () => pintarDesenhos(),
+    producao: () => pintarProducao(),
+    lotes: () => pintarLotes(),
+    lote: () => pintarLote(LOTE_ABERTO),
+    tabelas: () => pintarTabelas(),
+    usuarios: () => pintarUsuarios(),
+    operar: () => pintarOperar(),
+  };
 
   async function modalCliente(id) {
     const c = id ? await api("/restrito/api/clientes/" + id) : {};
@@ -1793,8 +1897,18 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     if (!painel) return;
     var aberta = null;
 
-    async function abrir(qual) {
-      if (aberta === qual) { painel.hidden = true; aberta = null; marcar(); return; }
+    painel.addEventListener("change", async function (ev) {
+      const sel = ev.target.closest('[data-acao="por-pagina"]');
+      if (!sel) return;
+      const p = pag(sel.getAttribute("data-pag"));
+      p.por = Number(sel.value) || 20; p.pagina = 1;
+      abrir(aberta, true);
+    });
+
+    /* `manter` = redesenhar sem fechar. Sem ele, virar a página chamaria o
+       mesmo `abrir` que a aba usa e a gaveta se fecharia a cada clique. */
+    async function abrir(qual, manter) {
+      if (aberta === qual && !manter) { painel.hidden = true; aberta = null; marcar(); return; }
       aberta = qual; marcar();
       painel.hidden = false;
       painel.innerHTML = '<div class="carregando">carregando…</div>';
@@ -1814,6 +1928,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
 
     async function gavetaDesenhos() {
       const r = await api("/restrito/api/desenhos?todos=1&cliente=" + clienteId);
+      const fatia = fatiar("gaveta:desenhos", r.itens);
       const admin = !!(EU && EU.admin);
       return '<div class="gaveta__topo"><b>Bordados deste cliente</b>' +
         '<button type="button" class="btn btn--laranja btn--mini" id="cl-novo-desenho">+ novo bordado</button></div>' +
@@ -1821,7 +1936,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
           ? '<div class="rolagem"><table><thead><tr><th style="width:44px"></th><th>Desenho</th>' +
             '<th class="num">Pontos</th>' + (admin ? '<th class="num">Preço</th>' : "") +
             "<th></th></tr></thead><tbody>" +
-            r.itens.map((d) => "<tr" + (d.ativo ? "" : ' style="opacity:.5"') + ">" +
+            fatia.itens.map((d) => "<tr" + (d.ativo ? "" : ' style="opacity:.5"') + ">" +
               "<td>" + (d.capa
                 ? '<img class="miniatura" src="/restrito/foto/' + esc(d.capa) + '" alt="">'
                 : '<span class="miniatura miniatura--vazia">✳</span>') + "</td>" +
@@ -1832,12 +1947,13 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
                 : dinheiro(d.preco)) + "</td>" : "") +
               '<td class="linha-botoes"><button type="button" class="btn btn--fantasma btn--mini" ' +
                 'data-abrir-desenho="' + d.id + '">abrir</button></td></tr>').join("") +
-            "</tbody></table></div>"
+            "</tbody></table></div>" + paginacao(fatia, "gaveta:desenhos")
           : '<div class="vazio">Nenhum bordado cadastrado para este cliente.</div>');
     }
 
     async function gavetaLotes() {
       const r = await api("/restrito/api/clientes/" + clienteId + "/lotes");
+      const fatia = fatiar("gaveta:lotes", r.lotes);
       const c = r.conta;
       return '<div class="gaveta__topo"><b>Lotes</b><span style="font-size:13.5px;color:#55555f">' +
           "recebido " + dinheiro(c.recebido) + " · <b style=\"color:var(--laranja)\">a receber " +
@@ -1846,7 +1962,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
           ? '<div class="rolagem"><table><thead><tr><th>Lote</th><th>Descrição</th>' +
             '<th class="num">Peças</th><th class="num">Valor</th><th>Situação</th><th>Pagamento</th>' +
             "</tr></thead><tbody>" +
-            r.lotes.map((l) => "<tr>" +
+            fatia.itens.map((l) => "<tr>" +
               "<td><b>" + esc(l.codigo) + "</b></td>" +
               "<td>" + esc(l.descricao || "—") + "</td>" +
               '<td class="num">' + num(l.pecas) + "</td>" +
@@ -1860,12 +1976,13 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
                 ? '<span class="etiqueta etiqueta--verde">pago ' + soData(l.pago_em) + "</span>"
                 : '<span class="etiqueta etiqueta--cinza">em aberto</span>') + "</td>" +
               "</tr>").join("") +
-            "</tbody></table></div>"
+            "</tbody></table></div>" + paginacao(fatia, "gaveta:lotes")
           : '<div class="vazio">Nenhum lote para este cliente.</div>');
     }
 
     async function gavetaFichas() {
       const r = await api("/restrito/api/clientes/" + clienteId + "/fichas");
+      const fatia = fatiar("gaveta:fichas", r.fichas);
       return '<div class="gaveta__topo"><b>Peças produzidas</b>' +
         '<span style="font-size:13.5px;color:#55555f">' + num(r.soma.pecas) + " peças · " +
         num(r.soma.pontos) + " pontos · " + dinheiro(r.soma.valor) + "</span></div>" +
@@ -1873,7 +1990,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
           ? '<div class="rolagem"><table><thead><tr><th>Quando</th><th>Desenho</th><th>Operador</th>' +
             '<th class="num">Peças</th><th class="num">Valor</th><th>Lote</th>' +
             "</tr></thead><tbody>" +
-            r.fichas.map((f) => "<tr>" +
+            fatia.itens.map((f) => "<tr>" +
               "<td>" + dataHora(f.fechada_em) + "</td>" +
               "<td><b>" + esc(f.desenho_nome) + "</b>" +
                 (f.cor_nome ? ' <span style="color:#77778a">· ' + esc(f.cor_nome) + "</span>" : "") + "</td>" +
@@ -1883,18 +2000,28 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
               "<td>" + (f.lote_codigo ? esc(f.lote_codigo)
                 : '<span style="color:#8a8a99">solta</span>') + "</td>" +
               "</tr>").join("") +
-            "</tbody></table></div>" +
+            "</tbody></table></div>" + paginacao(fatia, "gaveta:fichas") +
+            /* O teto de 300 do servidor continua, e a gaveta continua dizendo
+               quando bateu nele: a paginação percorre o que CHEGOU, não o que
+               existe. Quem precisa do resto vai à Produção, que pagina no
+               servidor. */
             (r.fichas.length >= 300
-              /* Aviso e não silêncio: uma lista cortada em 300 sem dizer nada
-                 é lida como "é tudo isso que existe", e a soma no topo passa a
-                 parecer errada sem que ninguém saiba por quê. */
-              ? '<p style="margin:10px 0 0;font-size:13px;color:#77778a">Mostrando as 300 ' +
-                "mais recentes. Use <b>Produção</b> para o período completo.</p>"
+              ? '<p style="margin:10px 0 0;font-size:13px;color:#77778a">São as 300 ' +
+                "mais recentes deste cliente. Use <b>Produção</b> para o período completo.</p>"
               : "")
           : '<div class="vazio">Nenhuma peça produzida para este cliente ainda.</div>');
     }
 
+    /* A barra de paginação dentro da modal não passa pelo manipulador da
+       tela: a modal é outra árvore. Aqui o clique e a troca de quantidade
+       redesenham SÓ a gaveta — redesenhar a tela de trás fecharia a modal com
+       o cadastro aberto no meio da digitação. */
     painel.addEventListener("click", async function (ev) {
+      const bp = ev.target.closest('[data-acao="pagina"]');
+      if (bp) {
+        pag(bp.getAttribute("data-pag")).pagina = Math.max(1, Number(bp.getAttribute("data-ir")) || 1);
+        return abrir(aberta, true);
+      }
       const abrirD = ev.target.closest("[data-abrir-desenho]");
       if (abrirD) {
         /* Abre o desenho e, ao fechar, volta para a gaveta atualizada — o
@@ -1962,13 +2089,13 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
      número que multiplica a nota. A foto existe para ninguém bordar o
      "CORECT1" achando que é o "CORECT2".
      ====================================================================== */
-  var filtroDesenhos = { pagina: 1, busca: "", todos: true, semPreco: false };
+  var filtroDesenhos = { pagina: 1, por: 20, busca: "", todos: true, semPreco: false };
 
   async function pintarDesenhos() {
     const alvo = document.getElementById("principal");
     alvo.innerHTML = '<div class="carregando">carregando…</div>';
 
-    const q = new URLSearchParams({ pagina: filtroDesenhos.pagina, por: 20 });
+    const q = new URLSearchParams({ pagina: filtroDesenhos.pagina, por: filtroDesenhos.por });
     if (filtroDesenhos.busca) q.set("busca", filtroDesenhos.busca);
     if (filtroDesenhos.todos) q.set("todos", "1");
     if (filtroDesenhos.semPreco) q.set("sem_preco", "1");
@@ -2253,6 +2380,10 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     alvo.innerHTML = '<div class="carregando">carregando…</div>';
     const def = TAB[TAB_ABA];
     const itens = await lista(TAB_ABA, true);
+    /* Cada aba tem a sua pagina. Sem a aba na chave, ir para a pagina 3 em
+       Cores e trocar para Maquinas abriria Maquinas na pagina 3 — vazia, se
+       houver tres maquinas. */
+    const fatiaTab = fatiar("tabelas:" + TAB_ABA, itens);
 
     alvo.innerHTML =
       '<h1 class="titulo-tela">Mercadorias, cores e máquinas</h1>' +
@@ -2269,7 +2400,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         (itens.length ? '<div class="rolagem"><table><thead><tr>' +
           def.campos.map((c) => "<th>" + c[1] + "</th>").join("") +
           "<th>Situação</th><th></th></tr></thead><tbody>" +
-          itens.map((i) => "<tr" + (i.ativo ? "" : ' style="opacity:.5"') + ">" +
+          fatiaTab.itens.map((i) => "<tr" + (i.ativo ? "" : ' style="opacity:.5"') + ">" +
             def.campos.map(function (c) {
               const v = i[c[0]];
               if (c[2] === "cor")
@@ -2290,7 +2421,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
                 '<button class="btn btn--fantasma btn--mini" data-acao="trocar-qr" data-id="' + i.id + '">trocar QR</button>'
               : "") +
             "</td></tr>").join("") +
-          "</tbody></table></div>"
+          "</tbody></table></div>" + paginacao(fatiaTab, "tabelas")
         : '<div class="vazio">Nada cadastrado ainda.</div>') +
       "</div>";
   }
@@ -2353,6 +2484,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     const alvo = document.getElementById("principal");
     alvo.innerHTML = '<div class="carregando">carregando…</div>';
     const r = await api("/restrito/api/usuarios");
+    const fatiaUsr = fatiar("usuarios", r.itens);
     alvo.innerHTML =
       '<h1 class="titulo-tela">Usuários</h1>' +
       '<p class="subtitulo-tela">Quem entra no sistema. A senha é sempre <b>gerada</b> e mostrada uma vez — ' +
@@ -2363,7 +2495,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         '<div class="rolagem"><table><thead><tr>' +
           "<th>Login</th><th>Nome</th><th>Papel</th><th>Situação</th><th>Desde</th><th></th>" +
         "</tr></thead><tbody>" +
-        r.itens.map((u) => "<tr" + (u.ativo ? "" : ' style="opacity:.5"') + ">" +
+        fatiaUsr.itens.map((u) => "<tr" + (u.ativo ? "" : ' style="opacity:.5"') + ">" +
           "<td><b>" + esc(u.usuario) + "</b></td><td>" + esc(u.nome || "—") + "</td>" +
           "<td>" + (u.papel === "admin"
             ? '<span class="etiqueta etiqueta--verde">administrador</span>'
@@ -2376,7 +2508,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
               '" data-usuario="' + esc(u.usuario) + '">redefinir senha</button>' +
             botoesDeVida("usuarios", { id: u.id, ativo: u.ativo, nome: u.usuario }) +
           "</td></tr>").join("") +
-        "</tbody></table></div>" +
+        "</tbody></table></div>" + paginacao(fatiaUsr, "usuarios") +
       "</div>" +
       '<div class="bloco"><div class="bloco__corpo" style="font-size:14.5px;color:#55555f">' +
         "O login não muda depois de criado — ele é a identidade da pessoa na produção de meses atrás. " +
@@ -2599,6 +2731,26 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   /* Girar o celular com o menu aberto o deixaria pendurado no lugar antigo. */
   window.addEventListener("resize", fecharSuspensos);
 
+  /* O SELETOR DE QUANTIDADE POR PÁGINA.
+
+     Num `change`, e não no clique: um `<select>` não dispara clique
+     aproveitável quando a escolha vem do teclado ou do seletor nativo do
+     celular — e é no celular preso na máquina que esta tela mais vive.
+
+     Trocar a quantidade volta para a PÁGINA 1. Ficar na 7 depois de passar de
+     10 para 100 por página deixaria a tela vazia com a barra dizendo que há
+     conteúdo. */
+  document.addEventListener("change", async function (ev) {
+    const sel = ev.target.closest && ev.target.closest('[data-acao="por-pagina"]');
+    if (!sel) return;
+    const chave = sel.getAttribute("data-pag");
+    const por = Number(sel.value) || 20;
+    if (chave === "clientes") { filtroClientes.por = por; filtroClientes.pagina = 1; }
+    else if (chave === "desenhos") { filtroDesenhos.por = por; filtroDesenhos.pagina = 1; }
+    else { const p = pag(chave); p.por = por; p.pagina = 1; }
+    if (REPINTAR[chave]) await REPINTAR[chave]();
+  });
+
   document.addEventListener("click", async function (ev) {
     const abrir = ev.target.closest("[data-abrir]");
     if (abrir) {
@@ -2734,10 +2886,16 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       }
 
       else if (acao === "pagina") {
-        const ir = Number(b.getAttribute("data-ir"));
-        if (b.getAttribute("data-tela") === "clientes") { filtroClientes.pagina = ir; await pintarClientes(); }
-        else { filtroDesenhos.pagina = ir; await pintarDesenhos(); }
+        const chave = b.getAttribute("data-pag");
+        const ir = Math.max(1, Number(b.getAttribute("data-ir")) || 1);
+        /* Clientes e desenhos guardam a página no filtro deles porque ela vai
+           na URL da consulta ao servidor; o resto guarda em PAGINAS. */
+        if (chave === "clientes") filtroClientes.pagina = ir;
+        else if (chave === "desenhos") filtroDesenhos.pagina = ir;
+        else pag(chave).pagina = ir;
+        if (REPINTAR[chave]) await REPINTAR[chave]();
       }
+      else if (acao === "por-pagina") { /* tratado no `change`, não no clique */ }
 
       /* ---- tabelas ---- */
       else if (acao === "novo-tabela") await modalTabela(null);

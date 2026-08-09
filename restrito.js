@@ -138,11 +138,39 @@ const ouvintes = new Set();       // { res, papel }
    teto — são contados pelo banco sobre o filtro inteiro — e a resposta avisa
    quando a lista foi cortada, para a tela dizer isso em vez de deixar parecer
    que aquilo é tudo o que existe. */
-/* Vem do ambiente para a suíte poder baixá-lo e provar o corte de verdade,
-   com quatro fichas em vez de quinhentas e uma. Um teto que só se alcança com
-   meio milhar de registros é um teto que nunca seria testado — e o aviso de
-   lista cortada só serve se alguém já o tiver visto aparecer. */
-const TETO_PRODUCAO = Number(process.env.TETO_PRODUCAO) || 500;
+/* ==========================================================================
+   PAGINAÇÃO — o mesmo recorte para todas as listas do servidor
+
+   Teto no `por` (quantas linhas por página) para uma requisição não poder
+   pedir a tabela inteira e derrubar o servidor de propósito ou por engano.
+   Vem do ambiente para a suíte poder baixá-lo e provar a paginação com quatro
+   registros em vez de quinhentos e um: um limite que só se alcança com meio
+   milhar de linhas é um limite que nunca seria testado.
+
+   A CONTA DO TOTAL É SEMPRE SOBRE O FILTRO INTEIRO, nunca sobre a página.
+   Sem isso a barra diria "página 1 de 1" com mais oito páginas de produção
+   escondidas atrás — e o número grande no alto da tela, que é o que vai para
+   a nota, mostraria só o que coube na tela.
+   ========================================================================== */
+const TETO_POR_PAGINA = Number(process.env.TETO_POR_PAGINA) || 500;
+
+/* Lê `?pagina=` e `?por=` com os limites aplicados. `pagina` nunca é menor
+   que 1: um `?pagina=0` viraria OFFSET negativo, que o Postgres recusa. */
+function recorteDaPagina(url, padraoPor) {
+  /* Piso 1, e não 5: `por=2` é pedido legítimo, e o `||` logo acima já trata
+     texto e zero (viram o padrão). O piso serve só contra número negativo, que
+     produziria LIMIT inválido. */
+  const por = Math.min(TETO_POR_PAGINA, Math.max(1, Number(url.searchParams.get("por")) || padraoPor || 20));
+  const pagina = Math.max(1, Number(url.searchParams.get("pagina")) || 1);
+  return { por, pagina, offset: (pagina - 1) * por };
+}
+
+/* O envelope que a barra de paginação da tela espera. Um só formato para
+   todas as listas — duas formas diferentes fariam a barra ter dois caminhos,
+   e o que ficasse para trás mostraria "página 3 de 2". */
+function envelope(total, r) {
+  return { total, pagina: r.pagina, porPagina: r.por, paginas: Math.max(1, Math.ceil(total / r.por)) };
+}
 
 function assinarEventos(req, res, sessao) {
   res.writeHead(200, {
@@ -1257,9 +1285,8 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
          resposta é a lista inteira, que é o que as caixas de seleção da tela
          do operador esperam: paginar um <select> o deixaria com metade das
          opções, e ninguém perceberia até faltar um cliente. */
-      const pagina = Math.max(1, Number(url.searchParams.get("pagina")) || 0);
+      const rec = recorteDaPagina(url, 20);
       const paginando = def.paginavel && url.searchParams.has("pagina");
-      const porPagina = Math.min(100, Math.max(5, Number(url.searchParams.get("por")) || 20));
       const busca = String(url.searchParams.get("busca") || "").trim();
 
       const onde = [], args = [];
@@ -1284,7 +1311,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
         onde.push("d.preco IS NULL");
 
       const clausula = onde.length ? "WHERE " + onde.join(" AND ") : "";
-      const limite = paginando ? `LIMIT ${porPagina} OFFSET ${(pagina - 1) * porPagina}` : "";
+      const limite = paginando ? `LIMIT ${rec.por} OFFSET ${rec.offset}` : "";
 
       let linhas, total = null;
       if (def.tabela === "desenhos") {
@@ -1325,10 +1352,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
             ? `SELECT COUNT(*) c FROM desenhos d LEFT JOIN clientes c ON c.id = d.cliente_id ${clausula}`
             : `SELECT COUNT(*) c FROM ${def.tabela} ${clausula}`, ...args);
         total = Number(t.c);
-        return responder(res, 200, {
-          itens: linhas, total, pagina, porPagina,
-          paginas: Math.max(1, Math.ceil(total / porPagina)),
-        });
+        return responder(res, 200, Object.assign({ itens: linhas }, envelope(total, rec)));
       }
       return responder(res, 200, { itens: linhas });
     }
@@ -1969,6 +1993,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     const clienteId = Number(url.searchParams.get("cliente")) || null;
     const soltas = url.searchParams.get("soltas") === "1";
 
+    const rec = recorteDaPagina(url, 20);
     const onde = ["f.situacao = 'fechada'"];
     const args = [];
     /* `::date` dos dois lados: sem isso, "até 05/08" não pega o que foi
@@ -1992,7 +2017,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
          LEFT JOIN maquinas ma ON ma.id = f.maquina_id
          LEFT JOIN lotes l ON l.id = f.lote_id
         WHERE ${onde.join(" AND ")}
-        ORDER BY f.fechada_em DESC LIMIT ${TETO_PRODUCAO}`, ...args);
+        ORDER BY f.fechada_em DESC LIMIT ${rec.por} OFFSET ${rec.offset}`, ...args);
 
     /* ------------------------------------------------------------------
        OS TOTAIS SAEM DO BANCO, NÃO DAS LINHAS DEVOLVIDAS
@@ -2038,12 +2063,9 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       };
     }
 
-    return responder(res, 200, {
-      fichas, soma, porOperador, total,
-      /* A tela mostra `total` fichas nos indicadores e `fichas.length` linhas.
-         Quando os dois diferem, ela precisa dizer por quê. */
-      truncado: total > fichas.length, teto: TETO_PRODUCAO,
-    });
+    /* `total` sai da contagem do BANCO, não do tamanho da página — é ele que
+       alimenta tanto os indicadores quanto a barra de paginação. */
+    return responder(res, 200, Object.assign({ fichas, soma, porOperador }, envelope(total, rec)));
   }
 
   /* ---------------------------------------------------------- lotes ----- */
@@ -2064,6 +2086,14 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     /* Os totais saem das FICHAS, por subconsulta — o lote não guarda soma.
        Guardar criaria duas verdades, e a errada seria justamente a que alguém
        leria na hora de fazer a nota. */
+    const rec = recorteDaPagina(url, 20);
+    const clausula = onde.length ? "WHERE " + onde.join(" AND ") : "";
+
+    /* Contado antes da página, sobre o mesmo filtro: é o que a barra usa para
+       saber quantas páginas existem, e o que o caixa usa para não somar só a
+       página que está na tela. */
+    const tot = await Q.get(`SELECT COUNT(*) c FROM lotes l ${clausula}`, ...args);
+
     const lotes = await Q.all(
       `SELECT l.*, c.nome AS cliente_nome,
               (SELECT COUNT(*) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS fichas,
@@ -2071,20 +2101,35 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
               (SELECT COALESCE(SUM(f.total_pontos),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS pontos,
               (SELECT COALESCE(SUM(f.total_valor),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS valor
          FROM lotes l JOIN clientes c ON c.id = l.cliente_id
-        ${onde.length ? "WHERE " + onde.join(" AND ") : ""}
-        ORDER BY l.criado_em DESC LIMIT 300`, ...args);
+        ${clausula}
+        ORDER BY l.criado_em DESC LIMIT ${rec.por} OFFSET ${rec.offset}`, ...args);
 
-    /* O caixa da lista, calculado sobre as MESMAS linhas que a tela mostra.
-       Somar no navegador daria um número diferente do da consulta seguinte
-       assim que o limite de 300 entrasse em jogo. */
-    const conta = lotes.reduce((a, l) => {
-      const v = Number(l.valor || 0);
-      a.total += v;
-      if (l.pago_em) { a.recebido += v; a.pagos++; } else { a.a_receber += v; a.abertos++; }
-      return a;
-    }, { total: 0, recebido: 0, a_receber: 0, pagos: 0, abertos: 0 });
+    /* ------------------------------------------------------------------
+       O CAIXA É DE TODOS OS LOTES DO FILTRO, NÃO DA PÁGINA
 
-    return responder(res, 200, { lotes, conta });
+       Somar as linhas da página daria um "a receber" que muda quando alguém
+       vira a página — e o número que interessa a esta tela é justamente quanto
+       ainda tem de entrar no total. Por isso a soma desce para o banco.
+       ------------------------------------------------------------------ */
+    const cx = await Q.get(
+      `SELECT COALESCE(SUM(v.valor),0) total,
+              COALESCE(SUM(CASE WHEN l.pago_em IS NOT NULL THEN v.valor ELSE 0 END),0) recebido,
+              COALESCE(SUM(CASE WHEN l.pago_em IS NULL     THEN v.valor ELSE 0 END),0) a_receber,
+              COUNT(*) FILTER (WHERE l.pago_em IS NOT NULL) pagos,
+              COUNT(*) FILTER (WHERE l.pago_em IS NULL)     abertos
+         FROM lotes l
+         JOIN clientes c ON c.id = l.cliente_id
+         CROSS JOIN LATERAL (
+           SELECT COALESCE(SUM(f.total_valor),0) valor FROM fichas f
+            WHERE f.lote_id = l.id AND f.situacao = 'fechada') v
+        ${clausula}`, ...args);
+
+    const conta = {
+      total: Number(cx.total), recebido: Number(cx.recebido), a_receber: Number(cx.a_receber),
+      pagos: Number(cx.pagos), abertos: Number(cx.abertos),
+    };
+
+    return responder(res, 200, Object.assign({ lotes, conta }, envelope(Number(tot.c), rec)));
   }
 
   if (caminho === "/restrito/api/lotes" && req.method === "POST") {

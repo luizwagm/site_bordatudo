@@ -258,12 +258,25 @@ período — digitar à mão o intervalo de uma aba acende essa aba, e um interv
 que não corresponde a nenhuma mostra "Período escolhido". Duas fontes para o
 mesmo recorte fariam a tela dizer uma coisa e os números serem de outra.
 
-> **A lista tem teto (500 linhas); os totais NÃO.** Fichas, peças, pontos e a
-> quebra por operador são contados pelo banco sobre o filtro inteiro. Enquanto
-> a tela abria no dia, somar as linhas devolvidas dava certo porque o teto
-> nunca era alcançado — aberta em "tudo", a primeira oficina com produção
-> acumulada veria os números pararem de crescer, calados, no valor das últimas
-> 500 fichas. Quando a lista é cortada, ela **diz** que foi.
+**Todas as onze tabelas do sistema paginam**, com a mesma barra: quantas linhas
+de quantas, o seletor de 10/20/50/100 por página e as setas. A barra aparece em
+qualquer tabela com conteúdo — numa de cinco linhas ela é só a contagem, sem
+setas: uma barra que às vezes existe e às vezes não obriga quem usa a descobrir
+a regra.
+
+> **Dois mecanismos, um desenho.** Produção, lotes, clientes e desenhos paginam
+> no SERVIDOR — crescem sem limite e não cabem na memória do celular preso à
+> máquina. As outras sete paginam no navegador, sobre listas que já chegam
+> inteiras porque a tela precisa delas para os totais. O que não pode haver é
+> duas BARRAS: `fatiar()` devolve o mesmo envelope que o servidor manda, e daí
+> para baixo tudo é igual.
+
+> **OS TOTAIS NUNCA SÃO DA PÁGINA.** Fichas, peças, pontos, a quebra por
+> operador e o caixa dos lotes são contados pelo banco sobre o filtro inteiro.
+> Virar a página não muda nenhum deles — e é por isso que o rodapé da tabela
+> diz "Total do período" e "Total do lote", e não "Total": uma linha "Total"
+> embaixo de vinte fichas, valendo por quatrocentas, é a leitura errada mais
+> fácil de fazer numa tabela paginada.
 
 **O preço é do escritório e não sai para o operador.** O desenho tem preço por
 peça, e a API o REMOVE da resposta quando quem pergunta não é administrador —
