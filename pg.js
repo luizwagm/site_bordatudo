@@ -92,8 +92,24 @@ const exigirDriver = () => {
    ========================================================================== */
 if (pg) {
   pg.types.setTypeParser(20, (v) => (v === null ? null : Number(v)));
-  /* NUMERIC (1700) tem o mesmo dilema. Aqui ele só aparece em soma de valores,
-     que o sistema já trata como texto — converter mantém a aritmética simples. */
+  /* NUMERIC (1700) tem o mesmo dilema, e desde que existe PREÇO ele deixou de
+     ser detalhe: `desenhos.preco`, `fichas.preco_unitario` e o `total_valor`
+     gerado pelo banco passam todos por aqui.
+
+     ONDE ISTO É SEGURO, E ONDE DEIXARIA DE SER:
+
+     · GRAVAR é exato. O valor digitado vira string decimal ("12.50") antes de
+       chegar ao banco e nunca encosta em ponto flutuante. É o caminho que
+       importa: o que fica guardado está certo.
+     · SOMAR MUITO é trabalho do POSTGRES, em NUMERIC, dentro das consultas
+       (`SUM(f.total_valor)`). Só o resultado atravessa para o JavaScript.
+     · O que vira Number aqui é um preço isolado ou um total JÁ SOMADO. Somar
+       algumas centenas deles no JavaScript — o caixa da lista de lotes — erra
+       na décima segunda casa, invisível depois de arredondar para centavos.
+
+     A hora de trocar isto por string é o dia em que houver conta financeira
+     ENCADEADA no JavaScript: imposto sobre subtotal, desconto sobre imposto.
+     Aí a décima segunda casa vira centavo, e centavo vira divergência de nota. */
   pg.types.setTypeParser(1700, (v) => (v === null ? null : Number(v)));
 }
 

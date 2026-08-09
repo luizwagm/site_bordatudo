@@ -71,6 +71,107 @@ setInterval(() => {
 }, 30 * 60e3).unref();
 
 /* ==========================================================================
+   1b. QUEM PODE O QUÊ — e a conta de DONO
+
+   Três papéis: `operador` (a máquina), `admin` (o escritório) e `dono` (a
+   manutenção do sistema). O dono existe para consertar o que o admin não
+   alcança, e por isso não aparece na lista de usuários nem é criado, alterado
+   ou apagado por tela nenhuma — só pelo terminal do servidor. Só pode haver
+   um, e quem garante isso é um índice único no banco, não esta linha aqui.
+
+   `ehAdmin` É A ÚNICA PORTA. Antes destes ajustes o código comparava
+   `sessao.papel !== "admin"` em oito lugares. Cada uma dessas comparações que
+   sobrevivesse trancaria o dono para fora exatamente da tela que ele foi feito
+   para consertar — e o sintoma seria "a conta de manutenção não tem
+   permissão", que é o contrário do que se espera de uma conta com poder sobre
+   tudo. Por isso nenhuma comparação literal de papel deve voltar ao arquivo.
+   ========================================================================== */
+const ehAdmin = (sessao) => !!sessao && (sessao.papel === "admin" || sessao.papel === "dono");
+const ehDono = (sessao) => !!sessao && sessao.papel === "dono";
+
+/* No escopo do módulo, e não dentro de `rotas`: a rota de trocar a própria
+   senha usa esta frase e roda ANTES do bloco de usuários. Um `const` declarado
+   lá embaixo estaria na zona morta temporal aqui em cima — e o sintoma seria a
+   troca de senha estourar ReferenceError em vez de recusar com educação. */
+const SO_TERMINAL = "a senha desta conta só é trocada pelo terminal do servidor";
+
+/* ==========================================================================
+   1c. TEMPO REAL — Server-Sent Events
+
+   O problema: o Eduardo cadastra um desenho no escritório e o operador na
+   máquina continua com a lista velha até apertar F5. Ele não vai apertar F5,
+   e vai reclamar que o desenho "não foi salvo".
+
+   POR QUE SSE E NÃO WEBSOCKET
+   O tráfego é de mão única — servidor avisa, navegador ouve. Tudo que o
+   navegador manda já vai por POST, que funciona, tem sessão e tem limitador. O
+   WebSocket traria um canal de volta que ninguém usaria, e com ele: `Upgrade`
+   no nginx, ping/pong na mão, reconexão na mão e um protocolo a mais para
+   depurar quando algo parasse. O `EventSource` do navegador é nativo, RECONECTA
+   SOZINHO quando a rede da fábrica oscila, e atravessa qualquer proxy porque é
+   HTTP comum que não termina.
+
+   O QUE VAI NO EVENTO: SÓ O ASSUNTO. Nunca o dado.
+
+   Isso não é economia — são duas coisas ao mesmo tempo:
+
+   1. Custo. Dez máquinas ligadas o dia inteiro recebem algumas dezenas de
+      bytes por cadastro salvo. Empurrar a linha inteira multiplicaria o
+      tamanho por dez a cada tecla salva, e a tela que não está aberta pagaria
+      igual.
+
+   2. SEGREDO. O desenho agora tem PREÇO, e o operador não pode ver preço. Se
+      o evento carregasse a linha do desenho, o preço chegaria a todos os
+      navegadores da fábrica — inclusive aos que a API se dá ao trabalho de
+      filtrar. Mandando só "desenhos mudou", cada tela vai buscar pela rota
+      normal e recebe o que o PAPEL dela permite. A regra de quem vê o quê
+      continua num lugar só.
+
+   LIMITE CONHECIDO: o aviso vive na memória DESTE processo. Um dia que o
+   sistema rode em dois processos, cada um avisaria só os seus — e a correção
+   seria o `LISTEN/NOTIFY` do próprio PostgreSQL, não um servidor a mais.
+   ========================================================================== */
+const ouvintes = new Set();       // { res, papel }
+
+function assinarEventos(req, res, sessao) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    /* O nginx guarda resposta em buffer por padrão e seguraria os avisos até
+       encher o buffer — que num fluxo de 30 bytes por evento nunca enche. Sem
+       este cabeçalho o tempo real chega em lotes de minutos, e o sintoma é
+       "às vezes funciona". */
+    "X-Accel-Buffering": "no",
+  });
+  /* O `retry` diz ao navegador quanto esperar para reconectar. Três segundos:
+     rápido o bastante para o operador não perceber a queda, lento o bastante
+     para uma reinicialização do serviço não gerar uma enxurrada de conexões. */
+  res.write("retry: 3000\n\n");
+
+  const ouvinte = { res, papel: sessao.papel };
+  ouvintes.add(ouvinte);
+  req.on("close", () => ouvintes.delete(ouvinte));
+  return true;
+}
+
+/* Batimento. Uma conexão parada é fechada por proxies e por NAT de roteador
+   depois de alguns minutos de silêncio — e o `EventSource` só reconecta quando
+   percebe que caiu. O comentário (`:`) é ignorado pelo padrão: serve só para
+   haver tráfego. */
+setInterval(() => {
+  for (const o of ouvintes) { try { o.res.write(": ok\n\n"); } catch { ouvintes.delete(o); } }
+}, 25e3).unref();
+
+/* Avisa todo mundo que um assunto mudou. Nunca recebe o dado — ver acima. */
+function avisar(assunto) {
+  const linha = `event: mudou\ndata: ${JSON.stringify({ o: assunto })}\n\n`;
+  for (const o of ouvintes) {
+    try { o.res.write(linha); } catch { ouvintes.delete(o); }
+  }
+}
+
+/* ==========================================================================
    2. SENHA — scrypt com salt individual
 
    SHA-256 é rápido de propósito: uma GPU testa bilhões por segundo, e um banco
@@ -251,34 +352,53 @@ O código identifica a máquina — ele <strong>não</strong> dá acesso ao sist
    ========================================================================== */
 const PASTA_FOTOS = path.join(__dirname, "data", "desenhos");
 
+/* A EXTENSÃO SAI DA ASSINATURA, NÃO DO NOME.
+
+   Antes o nome do arquivo mandava, e isso tinha duas consequências. A pequena:
+   IMAGEM COLADA NÃO TEM NOME. O que vem da área de transferência é um blob sem
+   nome nenhum, e exigir `.png` obrigaria a tela a inventar um — inventar dado
+   para satisfazer uma validação é sinal de que a validação está olhando para o
+   lugar errado.
+
+   A que importa: a assinatura JÁ ERA conferida logo abaixo, então o formato
+   verdadeiro sempre foi conhecido. Deixar a extensão vir do nome permitia
+   gravar um JPEG chamado `.png` — e a rota que serve a foto escolhe o
+   `Content-Type` pela extensão. O arquivo era servido como o que ele não é.
+   Navegador nenhum reclama disso hoje, e é justamente por isso que ninguém
+   descobriria. */
+const ASSINATURAS = [
+  { ext: ".jpg",  bate: (c) => c[0] === 0xff && c[1] === 0xd8 },
+  { ext: ".png",  bate: (c) => c.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
+  { ext: ".webp", bate: (c) => c.subarray(0, 4).toString() === "RIFF" && c.subarray(8, 12).toString() === "WEBP" },
+  { ext: ".avif", bate: (c) => c.subarray(4, 8).toString() === "ftyp" },
+];
+
 function gravarFoto(nome, dados) {
   if (!dados) throw new Error("sem arquivo");
-  const ext = String(nome || "").toLowerCase().match(/\.(jpe?g|png|webp|avif)$/)?.[0];
-  if (!ext) throw new Error("formato não aceito — use jpg, png, webp ou avif");
-
-  /* O nome do arquivo é RECONSTRUÍDO, não higienizado. Limpar o que veio do
-     cliente é jogo de gato e rato com `..`, barra, dois-pontos, nome reservado
-     do Windows e caractere invisível. Aqui só a parte legível sobrevive. */
-  const bruto = String(nome).slice(0, String(nome).length - ext.length)
-    .normalize("NFD").replace(/[̀-ͯ]/g, "")
-    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "desenho";
-  const arquivo = `${bruto}-${crypto.randomBytes(5).toString("hex")}${ext}`;
 
   const conteudo = Buffer.from(String(dados).replace(/^data:[^,]+,/, ""), "base64");
   if (!conteudo.length) throw new Error("arquivo vazio");
   if (conteudo.length > 9e6) throw new Error("imagem acima de 9 MB");
 
-  /* Confere a ASSINATURA do arquivo, não a extensão. Um `.png` que na verdade
-     é HTML seria servido como imagem — mas basta um navegador mais velho
-     resolver adivinhar o tipo para virar script rodando no domínio. */
   const cabeca = conteudo.subarray(0, 12);
-  const ehImagem =
-    (cabeca[0] === 0xff && cabeca[1] === 0xd8) ||                                   // jpeg
-    cabeca.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) || // png
-    (cabeca.subarray(0, 4).toString() === "RIFF" && cabeca.subarray(8, 12).toString() === "WEBP") ||
-    cabeca.subarray(4, 8).toString() === "ftyp";                                    // avif/heif
-  if (!ehImagem) throw new Error("isso não é uma imagem");
+  const tipo = ASSINATURAS.find((a) => a.bate(cabeca));
+  /* Um `.png` que na verdade é HTML seria servido como imagem — e basta um
+     navegador mais velho resolver adivinhar o tipo para virar script rodando
+     no domínio. */
+  if (!tipo) throw new Error("isso não é uma imagem — use jpg, png, webp ou avif");
 
+  /* A parte legível do nome, quando existe, só serve para a pessoa reconhecer
+     o arquivo no disco. É RECONSTRUÍDA, não higienizada: limpar o que veio do
+     cliente é jogo de gato e rato com `..`, barra, dois-pontos, nome reservado
+     do Windows e caractere invisível. Aqui só o que é letra e número sobrevive,
+     e a imagem colada — sem nome — cai no padrão "colado". */
+  const semExt = String(nome || "").replace(/\.[a-z0-9]{2,5}$/i, "");
+  const bruto = semExt
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)
+    || (nome ? "desenho" : "colado");
+
+  const arquivo = `${bruto}-${crypto.randomBytes(5).toString("hex")}${tipo.ext}`;
   fs.mkdirSync(PASTA_FOTOS, { recursive: true });
   fs.writeFileSync(path.join(PASTA_FOTOS, arquivo), conteudo);
   return arquivo;
@@ -330,6 +450,10 @@ async function detalheDoLote(lote) {
 
   const pecas = fichas.reduce((a, f) => a + Number(f.quantidade || 0), 0);
   const pontos = fichas.reduce((a, f) => a + Number(f.total_pontos || 0), 0);
+  /* O valor sai das fichas, como tudo neste lote. Cada `total_valor` é coluna
+     gerada pelo banco (quantidade × preço da abertura), então este total não
+     tem como divergir do que a composição mostra linha a linha. */
+  const valor = fichas.reduce((a, f) => a + Number(f.total_valor || 0), 0);
 
   /* Quebra por COR e por MERCADORIA — é para isso que a cor é campo próprio.
      "1500 abas" fecha somando 100 pretas + 500 brancas + …, e sem a quebra não
@@ -344,7 +468,7 @@ async function detalheDoLote(lote) {
   };
 
   return {
-    lote, fichas, pecas, pontos,
+    lote, fichas, pecas, pontos, valor,
     falta: lote.quantidade_prevista === null ? null : Number(lote.quantidade_prevista) - pecas,
     porCor: agrupar("cor_nome"),
     porMercadoria: agrupar("mercadoria_nome"),
@@ -624,11 +748,18 @@ const CADASTROS = {
   },
   desenhos: {
     tabela: "desenhos",
-    campos: ["cliente_id", "nome", "pontuacao", "observacao", "ativo"],
+    campos: ["cliente_id", "nome", "pontuacao", "preco", "observacao", "ativo"],
     obrigatorios: ["nome", "pontuacao"],
     ordem: "nome",
     paginavel: true,
-    busca: ["nome"],
+    /* Com o prefixo da tabela escrito à mão. Procurar desenho pelo nome do
+       CLIENTE é o jeito como se procura de verdade — "o que eu tenho da
+       Marcela?" vem antes de "onde está o RECIFE2". Sem o prefixo explícito,
+       `nome` seria ambíguo entre as duas tabelas do JOIN e o Postgres recusa
+       a consulta inteira. */
+    busca: ["d.nome", "c.nome"],
+    /* Este cadastro é o único que tem coluna que nem todo mundo pode ver. */
+    soAdmin: ["preco"],
   },
   mercadorias: { tabela: "mercadorias", campos: ["nome", "ativo"], obrigatorios: ["nome"], ordem: "nome" },
   cores:       { tabela: "cores",       campos: ["nome", "hex", "ativo"], obrigatorios: ["nome"], ordem: "nome" },
@@ -636,6 +767,46 @@ const CADASTROS = {
 };
 
 const INTEIROS = new Set(["cliente_id", "pontuacao", "cabecas"]);
+const DINHEIRO = new Set(["preco"]);
+
+/* ==========================================================================
+   DINHEIRO DIGITADO POR GENTE
+
+   Aceita o que uma pessoa escreve de verdade: `12,50`, `12.50`, `R$ 1.234,56`,
+   `1234`. Devolve string decimal para o Postgres — nunca `Number`.
+
+   POR QUE NÃO `Number`: o ponto flutuante do JavaScript não representa 0,1
+   exatamente, e somar preços em `float` acumula centavos de erro. A coluna é
+   `NUMERIC` justamente para não ter esse problema; converter para `Number` no
+   meio do caminho traria o problema de volta antes de o valor chegar lá.
+
+   A regra do separador: o ÚLTIMO ponto ou vírgula que tiver 1 ou 2 dígitos
+   depois dele é o decimal; todo o resto é separador de milhar e some. É o que
+   faz `1.234,56` e `1,234.56` chegarem os dois em 1234.56, sem precisar
+   adivinhar a região de quem digitou.
+
+   VAZIO É NULO, não zero — a distinção que separa "ainda não precifiquei"
+   de "é de graça". Um `Number("")` valendo 0 é exatamente como um desenho
+   entraria valendo R$ 0,00 dentro de um lote faturado.
+   ========================================================================== */
+function dinheiro(v, rotulo) {
+  let s = String(v ?? "").trim().replace(/^R\$\s*/i, "").replace(/\s/g, "");
+  if (s === "") return null;
+  if (!/^[0-9.,]+$/.test(s)) throw new Error(`${rotulo} precisa ser um valor como 12,50`);
+
+  const ultimo = Math.max(s.lastIndexOf(","), s.lastIndexOf("."));
+  let inteiro = s, decimais = "";
+  if (ultimo >= 0 && s.length - ultimo - 1 <= 2 && s.length - ultimo - 1 >= 1) {
+    inteiro = s.slice(0, ultimo);
+    decimais = s.slice(ultimo + 1);
+  }
+  inteiro = inteiro.replace(/[.,]/g, "");
+  if (inteiro === "") inteiro = "0";
+  if (!/^\d+$/.test(inteiro) || (decimais && !/^\d{1,2}$/.test(decimais)))
+    throw new Error(`${rotulo} precisa ser um valor como 12,50`);
+  if (inteiro.length > 10) throw new Error(`${rotulo} é grande demais`);
+  return decimais ? `${inteiro}.${decimais.padEnd(2, "0")}` : `${inteiro}.00`;
+}
 
 function prepararCadastro(def, corpo) {
   const dados = {};
@@ -643,6 +814,7 @@ function prepararCadastro(def, corpo) {
     if (!(c in corpo)) continue;
     let v = corpo[c];
     if (c === "ativo") v = !!v && v !== "0" && v !== "false";
+    else if (DINHEIRO.has(c)) v = dinheiro(v, c === "preco" ? "o preço" : c);
     else if (INTEIROS.has(c)) {
       const s = String(v ?? "").trim();
       /* Vazio é NULO, não zero. `Number("")` é 0 em JavaScript, e foi assim
@@ -680,6 +852,43 @@ function prepararCadastro(def, corpo) {
   if ("pontuacao" in dados && dados.pontuacao !== null && dados.pontuacao <= 0)
     throw new Error("a pontuação precisa ser maior que zero");
   return dados;
+}
+
+/* ==========================================================================
+   4a-bis. O QUE O OPERADOR NÃO PODE VER
+
+   O desenho passou a ter PREÇO, e preço é do escritório. O operador escolhe o
+   desenho a cada ficha — a lista de desenhos é a rota mais chamada do sistema
+   pela tela que menos pode ver esse campo.
+
+   AS DUAS FUNÇÕES ABAIXO SÃO O ÚNICO LUGAR DESSA REGRA, e é de propósito. A
+   alternativa seria escrever a coluna certa em cada `SELECT`, e são cinco
+   consultas diferentes que devolvem desenho (lista, item, modal do cliente,
+   ficha aberta, produção). Bastaria uma delas nascer com `d.*` — como todas
+   nasceram — para o preço vazar sem que nada quebrasse: a tela do operador
+   não mostra o campo, ela só o RECEBE, e ninguém vê o que não é desenhado.
+   Quem procura, acha: está no corpo da resposta, à vista, em qualquer
+   navegador.
+
+   Por isso a filtragem é de saída (some do objeto) e não de entrada (escolher
+   colunas): uma consulta nova que alguém acrescentar amanhã passa por aqui de
+   graça, sem precisar lembrar da regra.
+   ========================================================================== */
+function esconderSegredos(def, sessao, linhas) {
+  if (!def || !def.soAdmin || ehAdmin(sessao)) return linhas;
+  const lista = Array.isArray(linhas) ? linhas : [linhas];
+  for (const l of lista) if (l) for (const c of def.soAdmin) delete l[c];
+  return linhas;
+}
+
+/* E o outro lado: o operador tampouco GRAVA o campo. Sem isto ele não veria o
+   preço na tela e ainda assim poderia mandá-lo no corpo da requisição ao
+   cadastrar um desenho — pondo um preço que o escritório não escolheu num
+   sistema em que ele nem deveria saber que existe. */
+function tirarSegredosDoCorpo(def, sessao, corpo) {
+  if (!def || !def.soAdmin || ehAdmin(sessao)) return corpo;
+  for (const c of def.soAdmin) delete corpo[c];
+  return corpo;
 }
 
 /* ==========================================================================
@@ -827,6 +1036,12 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   if (caminho === "/restrito/api/eu") {
     return responder(res, 200, {
       usuario: sessao.usuario, nome: sessao.nome, papel: sessao.papel,
+      /* A TELA NÃO DECIDE PELO NOME DO PAPEL. Com a entrada do `dono`, um
+         `papel === "admin"` no JavaScript esconderia do dono justamente os
+         botões que ele foi criado para usar. O servidor manda a RESPOSTA
+         (`admin: sim`), não a matéria-prima para a tela concluir errado. */
+      admin: ehAdmin(sessao),
+      dono: ehDono(sessao),
       trocarSenha: !!sessao.provisoria,
     });
   }
@@ -841,13 +1056,39 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
      cadastrou, então ela não pode valer como senha de verdade nem por um
      minuto de uso.
      ====================================================================== */
+  /* O DONO NÃO ENTRA NESTA TRAVA — e é uma trava contra mim mesmo.
+
+     A senha do dono só se troca pelo terminal. Se a conta dele chegasse aqui
+     com `senha_provisoria`, o sistema o mandaria trocar a senha e a rota de
+     trocar senha o recusaria: conta trancada para fora, sem saída pelo
+     painel, justamente a conta que existe para destrancar as outras.
+
+     O `criar-usuario.cjs` já nasce essa conta com a senha definitiva, então
+     isto não deveria acontecer nunca. "Não deveria acontecer nunca" é
+     exatamente a frase que precede os travamentos que ninguém consegue
+     explicar depois — e o custo de escrever esta linha é uma comparação. */
   if (sessao.provisoria
+      && !ehDono(sessao)
       && caminho !== "/restrito/api/eu/senha"
       && caminho !== "/restrito/api/sair") {
     return responder(res, 403, {
       error: "Troque a senha provisória antes de usar o sistema.",
       trocarSenha: true,
     });
+  }
+
+  /* ---------------------------------------------------------- eventos --- */
+  /* A conexão que fica aberta. Vem DEPOIS da trava da senha provisória de
+     propósito: quem ainda não trocou a senha não abre canal nenhum. */
+  if (caminho === "/restrito/api/eventos" && req.method === "GET") {
+    /* Esta resposta não termina — e é o único lugar do sistema assim. Sem
+       zerar o tempo limite do socket, a conexão morreria calada depois de
+       alguns minutos; o `EventSource` reconectaria, então nada pareceria
+       quebrado, mas o servidor acumularia um ciclo de queda e reconexão por
+       minuto em cada máquina da fábrica, para sempre. */
+    res.setTimeout(0);
+    if (res.socket) res.socket.setNoDelay(true);
+    return assinarEventos(req, res, sessao);
   }
 
   /* Que máquina é esta do QR. Existe para a tela poder ESCREVER O NOME no alto:
@@ -863,6 +1104,19 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   /* Trocar a própria senha. Exige a atual: sem isso, uma tela deixada aberta no
      chão de fábrica vira troca de senha alheia em dois cliques. */
   if (caminho === "/restrito/api/eu/senha" && req.method === "PUT") {
+    /* A SENHA DO DONO NÃO SE TROCA PELA TELA — nem a própria.
+
+       O motivo é o mesmo que fez a conta ser invisível: ela é a chave reserva.
+       Uma sessão de dono esquecida aberta numa máquina da fábrica, ou um
+       navegador emprestado, bastaria para alguém trocar a senha e ficar com a
+       conta que tem poder sobre tudo — sem deixar rastro, porque trocar a
+       própria senha é operação legítima e silenciosa.
+
+       Pelo terminal exige acesso ao servidor, que é outra chave inteiramente.
+       Duas fechaduras diferentes na mesma porta:
+       `node criar-usuario.cjs --dono <login>`. */
+    if (ehDono(sessao)) return responder(res, 403, { error: SO_TERMINAL });
+
     const corpo = (await lerCorpo(req)) || {};
     const nova = String(corpo.nova || "");
     const u = await Q.get("SELECT senha_hash, senha_provisoria FROM usuarios WHERE id = ?", sessao.usuarioId);
@@ -906,7 +1160,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
      caso é um botão que um dia faz a errada. */
   const mAtivar = /^\/restrito\/api\/(clientes|desenhos|mercadorias|cores|maquinas)\/(\d+)\/ativo$/.exec(caminho);
   if (mAtivar && req.method === "PUT") {
-    if (sessao.papel !== "admin") return responder(res, 403, { error: "só o administrador mexe nos cadastros" });
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador mexe nos cadastros" });
     const tabela = mAtivar[1], id = Number(mAtivar[2]);
     const ligar = !!((await lerCorpo(req)) || {}).ativo;
     await Q.run(`UPDATE ${tabela} SET ativo = ? WHERE id = ?`, ligar, id);
@@ -949,11 +1203,23 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       if (!todos) onde.push(`${def.tabela === "desenhos" ? "d." : ""}ativo`);
       if (busca && def.busca) {
         /* Uma condição por campo, unidas por OU: digitar "857" acha pelo
-           telefone e digitar "marc" acha pelo nome, sem duas caixas de busca. */
-        const p = def.tabela === "desenhos" ? "d." : "";
-        onde.push("(" + def.busca.map((c) => `${p}${c} ILIKE ?`).join(" OR ") + ")");
+           telefone e digitar "marc" acha pelo nome, sem duas caixas de busca.
+           Em desenhos, `busca` já vem com o prefixo da tabela escrito — é o
+           que permite procurar pelo nome do CLIENTE na mesma caixa. */
+        onde.push("(" + def.busca.map((c) => `${c} ILIKE ?`).join(" OR ") + ")");
         for (const _ of def.busca) args.push(`%${busca}%`);
       }
+
+      /* Desenhos de um cliente só. É o que a modal do cliente usa para listar
+         "os bordados da Marcela" sem sair da tela dela. */
+      const doCliente = Number(url.searchParams.get("cliente")) || null;
+      if (doCliente && def.tabela === "desenhos") { onde.push("d.cliente_id = ?"); args.push(doCliente); }
+
+      /* O que falta precificar. Só faz sentido para quem vê preço — e quem não
+         vê recebe a lista inteira, sem pista de que o filtro existe. */
+      if (url.searchParams.get("sem_preco") === "1" && def.tabela === "desenhos" && ehAdmin(sessao))
+        onde.push("d.preco IS NULL");
+
       const clausula = onde.length ? "WHERE " + onde.join(" AND ") : "";
       const limite = paginando ? `LIMIT ${porPagina} OFFSET ${(pagina - 1) * porPagina}` : "";
 
@@ -978,11 +1244,23 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
           `SELECT ${colunas} FROM ${def.tabela} ${clausula} ORDER BY ${def.ordem} ${limite}`, ...args);
       }
 
+      /* O PREÇO SAI DAQUI se quem pediu não pode vê-lo. Ver `esconderSegredos`:
+         a lista é a porta mais larga, porque a tela do operador a chama para
+         montar o `<select>` de desenhos a cada ficha. */
+      esconderSegredos(def, sessao, linhas);
+
       if (paginando) {
         /* O total sai de uma consulta própria, com os MESMOS filtros. Contar as
-           linhas devolvidas daria sempre "20" e a tela mostraria uma página só. */
+           linhas devolvidas daria sempre "20" e a tela mostraria uma página só.
+
+           O JOIN precisa vir junto: desde que a busca de desenho passou a olhar
+           o nome do cliente, `c.nome` aparece na cláusula — e um COUNT sem o
+           JOIN não recusa por engano, recusa a consulta inteira, deixando a
+           tela sem paginação no exato momento em que alguém busca. */
         const t = await Q.get(
-          `SELECT COUNT(*) c FROM ${def.tabela} ${def.tabela === "desenhos" ? "d" : ""} ${clausula}`, ...args);
+          def.tabela === "desenhos"
+            ? `SELECT COUNT(*) c FROM desenhos d LEFT JOIN clientes c ON c.id = d.cliente_id ${clausula}`
+            : `SELECT COUNT(*) c FROM ${def.tabela} ${clausula}`, ...args);
         total = Number(t.c);
         return responder(res, 200, {
           itens: linhas, total, pagina, porPagina,
@@ -992,15 +1270,41 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       return responder(res, 200, { itens: linhas });
     }
 
-    /* Criar e alterar são só do administrador. O operador escolhe da lista;
-       se ele pudesse cadastrar, "Marcela" e "marcella" apareceriam as duas na
-       correria do turno e o relatório do mês sairia partido em dois. */
-    if (req.method !== "GET" && sessao.papel !== "admin")
+    /* ------------------------------------------------------------------
+       QUEM PODE GRAVAR CADASTRO
+
+       A regra geral continua: criar e alterar é do administrador. O operador
+       escolhe da lista — se ele pudesse cadastrar cliente, "Marcela" e
+       "marcella" apareceriam as duas na correria do turno e o relatório do mês
+       sairia partido em dois.
+
+       DESENHO É A EXCEÇÃO, e é uma exceção estreita: CRIAR, sim; alterar e
+       excluir, não.
+
+       O motivo é o chão de fábrica. O desenho novo chega junto com o serviço,
+       às vezes fora do horário do escritório, e a ficha NÃO ABRE sem desenho
+       cadastrado. Sem esta porta o operador tem três saídas, e todas são
+       piores: parar a máquina, ligar para o Eduardo, ou pendurar a produção
+       num desenho parecido — a terceira é a que acontece de verdade, e ela
+       envenena o relatório em silêncio.
+
+       O risco do nome duplicado continua existindo, mas aqui ele é barrado
+       pelo índice único (cliente + nome): o segundo "LOGO" do mesmo cliente é
+       recusado pelo banco. E o desenho que o operador cria nasce SEM PREÇO —
+       nulo, não zero — o que o põe automaticamente na lista de pendências do
+       administrador. Ele produz hoje; o escritório precifica depois, e o
+       sistema sabe dizer o que falta.
+
+       ALTERAR continua fechado de propósito: mudar a pontuação de um desenho
+       muda quanto vale toda ficha aberta com ele. Isso é decisão de escritório.
+       ------------------------------------------------------------------ */
+    const podeCriarDesenho = def.tabela === "desenhos" && req.method === "POST" && !id;
+    if (req.method !== "GET" && !ehAdmin(sessao) && !podeCriarDesenho)
       return responder(res, 403, { error: "só o administrador mexe nos cadastros" });
 
     if (req.method === "POST" && !id) {
       let dados;
-      try { dados = prepararCadastro(def, (await lerCorpo(req)) || {}); }
+      try { dados = prepararCadastro(def, tirarSegredosDoCorpo(def, sessao, (await lerCorpo(req)) || {})); }
       catch (e) { return responder(res, 400, { error: e.message }); }
       for (const o of def.obrigatorios) if (!(o in dados)) return responder(res, 400, { error: `${o} é obrigatório` });
 
@@ -1015,19 +1319,24 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
         const novo = await Q.inserir(
           `INSERT INTO ${def.tabela} (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")}) RETURNING id`,
           ...cols.map((c) => dados[c]));
-        return responder(res, 201, { ok: true, id: novo });
+        /* Avisa as outras telas. É o que faz o desenho recém-cadastrado
+           aparecer na máquina sem ninguém apertar F5 — e o que tira do
+           operador o motivo para achar que "não salvou". */
+        avisar(def.tabela);
+        return responder(res, 201, { ok: true, id: novo, semPreco: !ehAdmin(sessao) });
       } catch (e) { return responder(res, 400, { error: erroDeBanco(e, def) }); }
     }
 
     if (req.method === "PUT" && id) {
       let dados;
-      try { dados = prepararCadastro(def, (await lerCorpo(req)) || {}); }
+      try { dados = prepararCadastro(def, tirarSegredosDoCorpo(def, sessao, (await lerCorpo(req)) || {})); }
       catch (e) { return responder(res, 400, { error: e.message }); }
       const cols = Object.keys(dados);
       if (!cols.length) return responder(res, 400, { error: "nada para gravar" });
       try {
         await Q.run(`UPDATE ${def.tabela} SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id = ?`,
           ...cols.map((c) => dados[c]), id);
+        avisar(def.tabela);
         return responder(res, 200, { ok: true });
       } catch (e) { return responder(res, 400, { error: erroDeBanco(e, def) }); }
     }
@@ -1098,14 +1407,21 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
           "SELECT id, arquivo, legenda, ordem FROM desenho_fotos WHERE desenho_id = ? ORDER BY ordem, id", id);
       if (def.tabela === "clientes") {
         /* Quanto este cliente já rendeu. É a primeira pergunta que se faz ao
-           abrir a ficha de um cliente, e sem isso ela cairia em outra tela. */
+           abrir a ficha de um cliente, e sem isso ela cairia em outra tela.
+
+           Os três números são os que viram BOTÃO na modal: cada um abre a
+           lista por trás dele sem sair da tela do cliente. Contar aqui, e não
+           em três chamadas separadas, é o que deixa a modal abrir de uma vez —
+           os totais aparecem antes de qualquer aba ser aberta. */
         item.resumo = await Q.get(
           `SELECT (SELECT COUNT(*) FROM desenhos WHERE cliente_id = $1) desenhos,
                   (SELECT COUNT(*) FROM lotes    WHERE cliente_id = $1) lotes,
+                  (SELECT COUNT(*) FROM lotes    WHERE cliente_id = $1 AND pago_em IS NULL) lotes_a_receber,
                   (SELECT COALESCE(SUM(quantidade),0) FROM fichas
                     WHERE cliente_id = $1 AND situacao = 'fechada') pecas`.replace(/\$1/g, "?"),
-          id, id, id);
+          id, id, id, id);
       }
+      esconderSegredos(def, sessao, item);
       return responder(res, 200, item);
     }
   }
@@ -1117,7 +1433,14 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
      ====================================================================== */
   const mFoto = /^\/restrito\/api\/desenhos\/(\d+)\/fotos(?:\/(\d+))?$/.exec(caminho);
   if (mFoto) {
-    if (sessao.papel !== "admin") return responder(res, 403, { error: "só o administrador mexe nas fotos" });
+    /* ACRESCENTAR foto acompanha a regra de criar desenho: o operador pode.
+       O desenho novo chega com a arte junto — quase sempre uma imagem colada
+       de uma conversa — e um desenho sem imagem obriga quem for produzir
+       depois a adivinhar qual é. Alterar legenda e APAGAR continuam do
+       administrador: apagar foto é apagar propriedade do cliente. */
+    const acrescentandoFoto = req.method === "POST" && !mFoto[2];
+    if (!ehAdmin(sessao) && !acrescentandoFoto)
+      return responder(res, 403, { error: "só o administrador mexe nas fotos" });
     const desenhoId = Number(mFoto[1]);
     const fotoId = mFoto[2] ? Number(mFoto[2]) : null;
 
@@ -1213,7 +1536,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     const id = Number(mJornada[1]);
     const j = await Q.get("SELECT * FROM jornadas WHERE id = ?", id);
     if (!j) return responder(res, 404, { error: "jornada não encontrada" });
-    if (Number(j.usuario_id) !== Number(sessao.usuarioId) && sessao.papel !== "admin")
+    if (Number(j.usuario_id) !== Number(sessao.usuarioId) && !ehAdmin(sessao))
       return responder(res, 403, { error: "essa jornada não é sua" });
     if (j.fim) return responder(res, 200, { ok: true, jaEstavaFechada: true });
 
@@ -1288,13 +1611,25 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       error: "Você já tem uma ficha aberta. Feche-a antes de abrir outra.", fichaAberta: jaAberta.id,
     });
 
-    const desenho = await Q.get("SELECT id, pontuacao, cliente_id FROM desenhos WHERE id = ? AND ativo", desenhoId);
+    const desenho = await Q.get("SELECT id, pontuacao, preco, cliente_id FROM desenhos WHERE id = ? AND ativo", desenhoId);
     if (!desenho) return responder(res, 400, { error: "desenho não encontrado" });
 
     /* A PONTUAÇÃO É COPIADA DO DESENHO, e nunca vem do corpo da requisição.
        Se viesse, a tela poderia mandar qualquer número — e o valor da nota
        passaria a depender do que estava aberto no navegador. */
     const pontuacao = Number(desenho.pontuacao);
+
+    /* O PREÇO SEGUE A MESMA REGRA, e por um motivo mais forte ainda: reajuste.
+       Cópia na abertura significa que corrigir o preço de um desenho hoje não
+       mexe em nada que já foi produzido. Se o valor viesse por join na hora de
+       mostrar, o relatório do mês passado se reescreveria a cada reajuste —
+       depois de a nota já ter sido emitida com o outro número.
+
+       Nulo aqui é o desenho que ainda não foi precificado (tipicamente o que o
+       próprio operador acabou de cadastrar). A ficha nasce sem valor e o
+       administrador preenche na correção, junto com a precificação do desenho.
+       O operador não vê nem manda este campo em momento nenhum. */
+    const precoUnitario = desenho.preco === null || desenho.preco === undefined ? null : desenho.preco;
 
     /* Máquina pelo TOKEN do QR, ou pelo id. O token é o caminho normal (o
        operador escaneou o adesivo); o id é o atalho de quem escolheu na lista. */
@@ -1317,9 +1652,11 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     }
 
     const id = await Q.inserir(
-      `INSERT INTO fichas (usuario_id, jornada_id, maquina_id, cliente_id, desenho_id, pontuacao)
-       VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
-      sessao.usuarioId, jornada.id, maquinaId, clienteId, desenhoId, pontuacao);
+      `INSERT INTO fichas (usuario_id, jornada_id, maquina_id, cliente_id, desenho_id, pontuacao, preco_unitario)
+       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      sessao.usuarioId, jornada.id, maquinaId, clienteId, desenhoId, pontuacao, precoUnitario);
+    /* A produção do dia mudou — a tela do escritório se atualiza sozinha. */
+    avisar("fichas");
     return responder(res, 201, { ok: true, id, pontuacao });
   }
 
@@ -1330,7 +1667,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     const f = await Q.get("SELECT * FROM fichas WHERE id = ?", id);
     if (!f) return responder(res, 404, { error: "ficha não encontrada" });
     const minha = Number(f.usuario_id) === Number(sessao.usuarioId);
-    if (!minha && sessao.papel !== "admin")
+    if (!minha && !ehAdmin(sessao))
       return responder(res, 403, { error: "essa ficha não é sua" });
 
     if (acao === "fechar" && req.method === "PUT") {
@@ -1350,38 +1687,106 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
         sanitizarHtml(String(corpo.observacao || "")),
         id);
       const r = await Q.get("SELECT quantidade, pontuacao, total_pontos, aberta_em, fechada_em FROM fichas WHERE id = ?", id);
+      avisar("fichas");
       return responder(res, 200, { ok: true, ficha: r });
     }
 
     if (acao === "cancelar" && req.method === "PUT") {
-      if (f.situacao === "fechada" && sessao.papel !== "admin")
+      if (f.situacao === "fechada" && !ehAdmin(sessao))
         return responder(res, 403, { error: "ficha já fechada — só o administrador cancela" });
       await Q.run("UPDATE fichas SET situacao = 'cancelada' WHERE id = ?", id);
+      avisar("fichas");
       return responder(res, 200, { ok: true });
     }
 
     if (!acao && req.method === "PUT") {
-      /* Corrigir uma ficha já fechada é coisa de administrador: é o número que
-         vai virar nota. A quantidade e a pontuação são o que se corrige; o
-         resto (quem, quando) é histórico e não se mexe. */
-      if (sessao.papel !== "admin") return responder(res, 403, { error: "só o administrador corrige ficha" });
+      /* ------------------------------------------------------------------
+         CORRIGIR A FICHA DO OPERADOR — só administrador
+
+         É o número que vai virar nota, e a folha de papel que este sistema
+         substituiu era corrigida a caneta o tempo todo. Fingir que a ficha
+         digital é imutável não a torna correta: torna o conserto invisível,
+         feito por fora, direto no banco.
+
+         O QUE ENTROU AGORA: `aberta_em`, `fechada_em` e `preco_unitario`.
+
+         A HORA é o conserto mais comum e o mais necessário. O operador
+         esquece de fechar a ficha, lembra às 18h do que terminou às 14h, e o
+         sistema grava quatro horas de trabalho que não existiram. Sem poder
+         corrigir, o tempo por peça — que é o indicador do chão de fábrica —
+         mede o esquecimento em vez da produção.
+
+         O VALOR entra porque o desenho pode ter sido precificado DEPOIS da
+         ficha: é exatamente o caso do desenho que o operador cadastrou no
+         turno da noite. A ficha nasceu sem preço; o escritório precifica e
+         corrige aqui.
+
+         O QUE CONTINUA FECHADO: quem bordou, em que máquina, de que cliente.
+         Isso não é correção, é reescrever a história — e é o que faria a
+         produção de uma pessoa virar a de outra.
+
+         A ORDEM DO TEMPO é conferida pelo BANCO (`ck_ficha_ordem_do_tempo`),
+         não só aqui. Fim antes do início não quebra nada visível: a peça
+         continua contando, e o que fica negativo é a média do dia.
+         ------------------------------------------------------------------ */
+      if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador corrige ficha" });
       const corpo = (await lerCorpo(req)) || {};
-      const campos = {}, aceita = ["quantidade", "mercadoria_id", "cor_id", "observacao", "pontuacao"];
-      for (const c of aceita) {
+      const campos = {};
+      const inteiros = ["quantidade", "mercadoria_id", "cor_id", "pontuacao"];
+      const horas = ["aberta_em", "fechada_em"];
+
+      for (const c of inteiros) {
         if (!(c in corpo)) continue;
-        if (c === "observacao") campos[c] = sanitizarHtml(String(corpo[c] || ""));
-        else {
-          const n = Number(String(corpo[c] ?? "").replace(/\D/g, ""));
-          campos[c] = Number.isFinite(n) && String(corpo[c]).trim() !== "" ? n : null;
-        }
+        const n = Number(String(corpo[c] ?? "").replace(/\D/g, ""));
+        campos[c] = Number.isFinite(n) && String(corpo[c]).trim() !== "" ? n : null;
       }
+      if ("observacao" in corpo) campos.observacao = sanitizarHtml(String(corpo.observacao || ""));
+      if ("preco_unitario" in corpo) {
+        try { campos.preco_unitario = dinheiro(corpo.preco_unitario, "o valor"); }
+        catch (e) { return responder(res, 400, { error: e.message }); }
+      }
+      for (const c of horas) {
+        if (!(c in corpo)) continue;
+        const bruto = String(corpo[c] ?? "").trim();
+        if (bruto === "") { campos[c] = null; continue; }
+        /* `new Date` aceita quase tudo e devolve `Invalid Date` sem reclamar —
+           que viraria NULL no banco e apagaria a hora em vez de corrigi-la. */
+        const d = new Date(bruto);
+        if (Number.isNaN(d.getTime()))
+          return responder(res, 400, { error: `${c === "aberta_em" ? "o início" : "o fim"} não é uma data válida` });
+        campos[c] = d.toISOString();
+      }
+
       if (!Object.keys(campos).length) return responder(res, 400, { error: "nada para alterar" });
       if ("pontuacao" in campos && (!campos.pontuacao || campos.pontuacao <= 0))
         return responder(res, 400, { error: "a pontuação precisa ser maior que zero" });
+      if ("quantidade" in campos && campos.quantidade !== null && campos.quantidade <= 0)
+        return responder(res, 400, { error: "a quantidade precisa ser maior que zero" });
+
+      /* Conferido aqui TAMBÉM, e não só no banco, para a pessoa receber uma
+         frase em vez de um erro de driver. A trava do banco é a que vale; esta
+         é a que explica. Compara com o que a ficha TEM quando só um dos dois
+         campos está sendo mexido — corrigir só o fim tem de bater com o
+         início que já estava gravado. */
+      const inicio = "aberta_em" in campos ? campos.aberta_em : f.aberta_em;
+      const fim = "fechada_em" in campos ? campos.fechada_em : f.fechada_em;
+      if (inicio && fim && new Date(fim) < new Date(inicio))
+        return responder(res, 400, { error: "o fim não pode ser antes do início" });
+
+      /* Ficha fechada sem hora de fim quebra a trava `ck_ficha_fechada` do
+         banco. Barrar aqui evita a mensagem de driver e diz o que fazer. */
+      if (f.situacao === "fechada" && "fechada_em" in campos && campos.fechada_em === null)
+        return responder(res, 400, { error: "ficha fechada precisa da hora de fim — cancele-a se ela não deve contar" });
+
       const cols = Object.keys(campos);
-      await Q.run(`UPDATE fichas SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id = ?`,
-        ...cols.map((c) => campos[c]), id);
-      return responder(res, 200, { ok: true });
+      try {
+        await Q.run(`UPDATE fichas SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id = ?`,
+          ...cols.map((c) => campos[c]), id);
+      } catch (e) {
+        return responder(res, 400, { error: "a correção não foi aceita: confira as horas e a quantidade" });
+      }
+      avisar("fichas");
+      return responder(res, 200, { ok: true, ficha: await Q.get("SELECT * FROM fichas WHERE id = ?", id) });
     }
 
     if (req.method === "GET") return responder(res, 200, f);
@@ -1390,7 +1795,87 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   /* ======================================================================
      ADMINISTRATIVO — daqui para baixo, só administrador
      ====================================================================== */
-  if (sessao.papel !== "admin") return responder(res, 403, { error: "área do administrador" });
+  if (!ehAdmin(sessao)) return responder(res, 403, { error: "área do administrador" });
+
+  /* ========================================================================
+     AS GAVETAS DO CLIENTE
+
+     A modal do cliente mostra três números — desenhos, lotes e peças. Cada um
+     é um botão que abre a lista por trás dele SEM FECHAR A MODAL.
+
+     Por que rotas separadas e não tudo dentro do `GET /clientes/:id`: a modal
+     abre para conferir um telefone tanto quanto para investigar um ano de
+     produção. Carregar as três listas sempre faria a abertura mais comum
+     pagar pela mais rara — num cliente antigo, centenas de fichas de uma vez.
+     Os TOTAIS vêm junto (são três contagens); as LISTAS só quando alguém pede.
+
+     Desenhos não está aqui porque já existe: `GET /desenhos?cliente=<id>`,
+     que é a mesma consulta com a mesma paginação e a mesma regra de preço.
+     Uma segunda rota devolvendo desenho seria uma segunda regra de preço para
+     alguém esquecer de repetir.
+     ======================================================================== */
+  const mGaveta = /^\/restrito\/api\/clientes\/(\d+)\/(lotes|fichas)$/.exec(caminho);
+  if (mGaveta && req.method === "GET") {
+    const clienteId = Number(mGaveta[1]);
+    const url = new URL(req.url, "http://localhost");
+
+    if (mGaveta[2] === "lotes") {
+      /* Os totais saem das FICHAS, como em toda consulta de lote deste
+         sistema — o lote não guarda soma. `valor` entra agora ao lado de
+         `pecas` e `pontos`: é a coluna que o financeiro lê. */
+      const lotes = await Q.all(
+        `SELECT l.*,
+                (SELECT COUNT(*) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS fichas,
+                (SELECT COALESCE(SUM(f.quantidade),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS pecas,
+                (SELECT COALESCE(SUM(f.total_pontos),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS pontos,
+                (SELECT COALESCE(SUM(f.total_valor),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS valor
+           FROM lotes l WHERE l.cliente_id = ?
+          ORDER BY l.criado_em DESC LIMIT 300`, clienteId);
+
+      /* O resumo financeiro do cliente, na mesma resposta. "Quanto este
+         cliente já rendeu e quanto ainda deve" é a pergunta que a aba existe
+         para responder, e somar 300 linhas no navegador daria um número
+         diferente do que a próxima tela mostraria. */
+      const conta = lotes.reduce((a, l) => {
+        const v = Number(l.valor || 0);
+        a.total += v;
+        if (l.pago_em) { a.recebido += v; a.pagos++; } else { a.a_receber += v; a.abertos++; }
+        return a;
+      }, { total: 0, recebido: 0, a_receber: 0, pagos: 0, abertos: 0 });
+
+      return responder(res, 200, { lotes, conta });
+    }
+
+    /* As fichas do cliente. Limite alto e ordem decrescente: quem abre isto
+       quer ver o que foi feito por último. */
+    const de = url.searchParams.get("de") || null;
+    const ate = url.searchParams.get("ate") || null;
+    const onde = ["f.cliente_id = ?", "f.situacao = 'fechada'"], args = [clienteId];
+    if (de)  { onde.push("f.fechada_em::date >= ?::date"); args.push(de); }
+    if (ate) { onde.push("f.fechada_em::date <= ?::date"); args.push(ate); }
+
+    const fichas = await Q.all(
+      `SELECT f.id, f.quantidade, f.pontuacao, f.total_pontos, f.preco_unitario, f.total_valor,
+              f.aberta_em, f.fechada_em, f.observacao,
+              d.nome AS desenho_nome, u.nome AS operador_nome,
+              me.nome AS mercadoria_nome, co.nome AS cor_nome, l.codigo AS lote_codigo
+         FROM fichas f
+         JOIN desenhos d ON d.id = f.desenho_id
+         JOIN usuarios u ON u.id = f.usuario_id
+         LEFT JOIN mercadorias me ON me.id = f.mercadoria_id
+         LEFT JOIN cores co ON co.id = f.cor_id
+         LEFT JOIN lotes l ON l.id = f.lote_id
+        WHERE ${onde.join(" AND ")}
+        ORDER BY f.fechada_em DESC LIMIT 300`, ...args);
+
+    const soma = fichas.reduce((a, f) => ({
+      pecas: a.pecas + Number(f.quantidade || 0),
+      pontos: a.pontos + Number(f.total_pontos || 0),
+      valor: a.valor + Number(f.total_valor || 0),
+    }), { pecas: 0, pontos: 0, valor: 0 });
+
+    return responder(res, 200, { fichas, soma });
+  }
 
   /* Consulta das fichas. É a tela que substitui o "juntar as folhas dos
      operadores": filtra por período, operador, cliente, e mostra o que ainda
@@ -1453,6 +1938,14 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     const onde = [], args = [];
     if (situacao) { onde.push("l.situacao = ?"); args.push(situacao); }
 
+    /* `?pago=0` é a lista de cobrança: o que já saiu e ainda não entrou. É a
+       consulta que o índice parcial `ix_lotes_a_receber` existe para servir. */
+    const pago = url.searchParams.get("pago");
+    if (pago === "0") onde.push("l.pago_em IS NULL");
+    if (pago === "1") onde.push("l.pago_em IS NOT NULL");
+    const doCliente = Number(url.searchParams.get("cliente")) || null;
+    if (doCliente) { onde.push("l.cliente_id = ?"); args.push(doCliente); }
+
     /* Os totais saem das FICHAS, por subconsulta — o lote não guarda soma.
        Guardar criaria duas verdades, e a errada seria justamente a que alguém
        leria na hora de fazer a nota. */
@@ -1460,11 +1953,23 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       `SELECT l.*, c.nome AS cliente_nome,
               (SELECT COUNT(*) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS fichas,
               (SELECT COALESCE(SUM(f.quantidade),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS pecas,
-              (SELECT COALESCE(SUM(f.total_pontos),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS pontos
+              (SELECT COALESCE(SUM(f.total_pontos),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS pontos,
+              (SELECT COALESCE(SUM(f.total_valor),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS valor
          FROM lotes l JOIN clientes c ON c.id = l.cliente_id
         ${onde.length ? "WHERE " + onde.join(" AND ") : ""}
         ORDER BY l.criado_em DESC LIMIT 300`, ...args);
-    return responder(res, 200, { lotes });
+
+    /* O caixa da lista, calculado sobre as MESMAS linhas que a tela mostra.
+       Somar no navegador daria um número diferente do da consulta seguinte
+       assim que o limite de 300 entrasse em jogo. */
+    const conta = lotes.reduce((a, l) => {
+      const v = Number(l.valor || 0);
+      a.total += v;
+      if (l.pago_em) { a.recebido += v; a.pagos++; } else { a.a_receber += v; a.abertos++; }
+      return a;
+    }, { total: 0, recebido: 0, a_receber: 0, pagos: 0, abertos: 0 });
+
+    return responder(res, 200, { lotes, conta });
   }
 
   if (caminho === "/restrito/api/lotes" && req.method === "POST") {
@@ -1532,13 +2037,13 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     if (req.method === "PUT") {
       const corpo = (await lerCorpo(req)) || {};
       const campos = {};
-      for (const c of ["descricao", "quantidade_prevista", "entrada_em", "situacao", "nota", "observacao"]) {
+      for (const c of ["descricao", "quantidade_prevista", "entrada_em", "situacao", "nota", "observacao", "pago_em"]) {
         if (!(c in corpo)) continue;
         if (c === "quantidade_prevista") {
           const s = String(corpo[c] ?? "").replace(/\D/g, "");
           campos[c] = s === "" ? null : Number(s);
         } else if (c === "observacao") campos[c] = sanitizarHtml(String(corpo[c] || ""));
-        else if (c === "entrada_em") campos[c] = corpo[c] || null;
+        else if (c === "entrada_em" || c === "pago_em") campos[c] = corpo[c] || null;
         else campos[c] = String(corpo[c] ?? "").trim();
       }
       if (campos.situacao && !["aberto", "fechado", "faturado"].includes(campos.situacao))
@@ -1547,10 +2052,36 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
          nota depois — que é justamente o que se vai procurar meses adiante. */
       if (campos.situacao === "faturado" && !(campos.nota || lote.nota))
         return responder(res, 400, { error: "informe o número da nota antes de marcar como faturado" });
+
+      /* --------------------------------------------------------------
+         PAGO É UM FATO À PARTE DE FATURADO
+
+         `pago_em` NÃO mexe em `situacao`, e é a coisa mais importante deste
+         bloco. A tentação é marcar "pago" e mover o lote para um estado
+         final — mas aí "faturado e ainda não pago", que é o normal do mês
+         inteiro e a razão de existir da cobrança, deixa de ter resposta.
+
+         O que se confere é a ORDEM: não existe dinheiro recebido de um lote
+         que ainda está aberto na produção. Marcar pago um lote aberto é
+         quase sempre clique na linha errada da lista — e o estrago sai
+         calado, porque o lote continua parecendo normal em toda tela.
+         -------------------------------------------------------------- */
+      if (campos.pago_em) {
+        const situacaoFinal = campos.situacao || lote.situacao;
+        if (situacaoFinal === "aberto")
+          return responder(res, 400, {
+            error: "esse lote ainda está aberto na produção — feche-o antes de marcar como pago",
+          });
+        const d = new Date(campos.pago_em);
+        if (Number.isNaN(d.getTime()))
+          return responder(res, 400, { error: "a data do pagamento não é válida" });
+      }
+
       const cols = Object.keys(campos);
       if (!cols.length) return responder(res, 400, { error: "nada para alterar" });
       await Q.run(`UPDATE lotes SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id = ?`,
         ...cols.map((c) => campos[c]), id);
+      avisar("lotes");
       return responder(res, 200, { ok: true });
     }
 
@@ -1577,10 +2108,39 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     }
   }
 
-  /* ------------------------------------------------------- usuários ----- */
+  /* ========================================================================
+     USUÁRIOS — e a conta que não está aqui
+
+     A conta de DONO não aparece nesta lista, não é criada, alterada,
+     desativada, apagada nem tem senha redefinida por tela nenhuma. Ela existe
+     para consertar o sistema quando pedirem, e some do dia a dia.
+
+     ESCONDER NÃO É PROTEGER, e é por isso que as duas coisas estão aqui. Se a
+     conta apenas sumisse da lista, o administrador continuaria podendo mandar
+     `DELETE /restrito/api/usuarios/1` — e o id 1 é o primeiro palpite de
+     qualquer um. Uma conta invisível e apagável é pior que uma conta visível:
+     ninguém veria o estrago até precisar dela.
+
+     PROMOÇÃO PELA ROTA também não passa: o `papel` é conferido contra uma
+     lista de dois valores, e é essa conferência — não a ausência de um botão
+     na tela — que impede um administrador de se promover a dono e sumir da
+     própria lista de usuários.
+
+     A trava do "último administrador ativo" continua contando SÓ `admin`. O
+     dono não entra na conta de propósito: rebaixar o último admin e ficar só
+     com a conta de manutenção deixaria a fábrica sem escritório, e a saída
+     seria justamente chamar o dono — que é o que se quer evitar precisar.
+     ======================================================================== */
+
+  /* Alvo de qualquer rota que mexe em usuário. Devolve o papel para as rotas
+     recusarem o dono num lugar só, em vez de cada uma repetir a consulta. */
+  async function alvoUsuario(id) {
+    return await Q.get("SELECT id, usuario, nome, papel, ativo FROM usuarios WHERE id = ?", id);
+  }
+
   if (caminho === "/restrito/api/usuarios" && req.method === "GET") {
     const itens = await Q.all(
-      "SELECT id, usuario, nome, papel, ativo, criado_em FROM usuarios ORDER BY nome, usuario");
+      "SELECT id, usuario, nome, papel, ativo, criado_em FROM usuarios WHERE papel <> 'dono' ORDER BY nome, usuario");
     return responder(res, 200, { itens });
   }
   if (caminho === "/restrito/api/usuarios" && req.method === "POST") {
@@ -1616,8 +2176,11 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   const mSenhaUsuario = /^\/restrito\/api\/usuarios\/(\d+)\/senha$/.exec(caminho);
   if (mSenhaUsuario && req.method === "POST") {
     const id = Number(mSenhaUsuario[1]);
-    const u = await Q.get("SELECT id, usuario FROM usuarios WHERE id = ?", id);
+    const u = await alvoUsuario(id);
     if (!u) return responder(res, 404, { error: "usuário não encontrado" });
+    /* 404, e não 403: para quem está do lado de fora, a conta de dono não
+       existe. Um 403 aqui confirmaria o id dela a quem estivesse procurando. */
+    if (u.papel === "dono") return responder(res, 404, { error: "usuário não encontrado" });
 
     const senha = senhaProvisoria();
     await Q.run("UPDATE usuarios SET senha_hash = ?, senha_provisoria = TRUE WHERE id = ?",
@@ -1632,9 +2195,16 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   const mUsuario = /^\/restrito\/api\/usuarios\/(\d+)$/.exec(caminho);
   if (mUsuario && req.method === "PUT") {
     const id = Number(mUsuario[1]);
+    const quem = await alvoUsuario(id);
+    if (!quem) return responder(res, 404, { error: "usuário não encontrado" });
+    if (quem.papel === "dono") return responder(res, 404, { error: "usuário não encontrado" });
+
     const corpo = (await lerCorpo(req)) || {};
     const campos = {};
     if ("papel" in corpo) {
+      /* `dono` não está na lista, e é aqui que a promoção pela rota morre:
+         sem esta conferência, um administrador viraria dono mandando o papel
+         no corpo — e passaria a ser invisível na própria lista de usuários. */
       if (!["admin", "operador"].includes(corpo.papel)) return responder(res, 400, { error: "papel inválido" });
       campos.papel = corpo.papel;
     }
@@ -1660,8 +2230,9 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
 
   if (mUsuario && req.method === "DELETE") {
     const id = Number(mUsuario[1]);
-    const alvo = await Q.get("SELECT usuario, papel, ativo FROM usuarios WHERE id = ?", id);
+    const alvo = await alvoUsuario(id);
     if (!alvo) return responder(res, 404, { error: "usuário não encontrado" });
+    if (alvo.papel === "dono") return responder(res, 404, { error: "usuário não encontrado" });
 
     /* Ninguém apaga a si mesmo: a sessão continuaria viva apontando para um id
        que não existe mais, e a próxima tela quebraria sem dizer por quê. */

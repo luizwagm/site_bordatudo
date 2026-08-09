@@ -306,6 +306,29 @@ textarea { min-height: 74px; resize: vertical; }
 .resumo-dia span { font-size: 11.5px; font-weight: 700; letter-spacing: .07em;
   text-transform: uppercase; color: #75758a; }
 
+/* Os três números do cliente viram BOTÃO. Herdam o cartão para a tela não
+   mudar de cara; o que muda é o cursor, a borda no toque e a marca do que
+   está aberto — os sinais de que ali se clica. Sem eles, um cartão idêntico
+   ao de antes não convida ninguém a tentar. */
+.resumo-dia--botoes > button { flex: 1 1 130px; padding: 12px 14px; border-radius: 8px;
+  background: var(--prata-fundo); border: 1px solid #dcdce7; text-align: left;
+  cursor: pointer; font: inherit; transition: border-color .12s, background .12s; }
+.resumo-dia--botoes > button:hover { border-color: var(--laranja); }
+.resumo-dia--botoes > button[aria-current="true"] { border-color: var(--laranja);
+  background: #fff5ef; box-shadow: inset 0 -3px 0 var(--laranja); }
+.resumo-dia--botoes > button b { display: block; font: 800 24px var(--mono); color: var(--tinta); }
+
+.gaveta { margin: 0 0 18px; padding: 12px 14px 4px; border: 1px solid #dcdce7;
+  border-top: 3px solid var(--laranja); border-radius: 0 0 8px 8px; background: #fcfcfe; }
+.gaveta__topo { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.gaveta table { font-size: 13.5px; }
+.gaveta th, .gaveta td { padding: 7px 9px; }
+/* A gaveta pode ficar mais alta que a modal num cliente antigo. Rolar SÓ ela
+   mantém o formulário do cadastro à vista — a modal inteira rolando esconderia
+   o botão de salvar atrás de trezentas fichas. */
+.gaveta .rolagem { max-height: 46vh; overflow-y: auto; }
+
 /* --------------------------------------------------------------- tabelas - */
 .rolagem { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
@@ -550,6 +573,102 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   }
   const hoje = () => new Date().toISOString().slice(0, 10);
 
+  /* Dinheiro. `dinheiro(null)` devolve travessão e não "R$ 0,00": o desenho
+     ainda não precificado é diferente do que custa zero, e essa diferença é a
+     que o escritório procura na lista. */
+  const M = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+  const dinheiro = (v) => (v === null || v === undefined || v === "" ? "—" : M.format(Number(v)));
+  /* Para dentro de um <input>: sem o "R$", que a pessoa não vai querer apagar
+     antes de digitar. */
+  const dinheiroCampo = (v) => (v === null || v === undefined || v === "" ? "" : Number(v).toFixed(2).replace(".", ","));
+
+  /* `2026-08-09T14:30:00Z` → `2026-08-09T11:30` para o <input datetime-local>,
+     que só entende HORA LOCAL e sem fuso. Passar o ISO cru deixa o campo VAZIO
+     em silêncio — sem erro no console — e quem for corrigir a hora acha que a
+     ficha não tem hora nenhuma e digita uma nova por cima. */
+  function paraCampoDataHora(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const p = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+           "T" + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  /* ========================================================================
+     3b. TEMPO REAL
+
+     Uma conexão aberta com o servidor (`EventSource`). Quando alguém grava um
+     cadastro em qualquer aparelho, todos os outros recebem o AVISO — não o
+     dado — e recarregam sozinhos o que estão mostrando.
+
+     O problema que isto resolve: o Eduardo cadastra o desenho no escritório e
+     o operador continua com a lista velha até apertar F5. Ele não aperta F5.
+     Ele conclui que o desenho não foi salvo e liga para o escritório.
+
+     TRÊS CUIDADOS QUE FAZEM ISSO NÃO PESAR:
+
+     1. Só recarrega o que está NA TELA. O aviso de "clientes" não faz nada
+        para quem está olhando lotes. Recarregar tudo a cada aviso transformaria
+        um dia de cadastro em centenas de consultas por aparelho.
+
+     2. ESPERA 400 ms antes de recarregar. Salvar um cadastro dispara um aviso;
+        salvar dez seguidos dispara dez. Sem a espera, dez avisos viram dez
+        recargas da mesma tela — e a lista pisca na frente de quem está lendo.
+
+     3. NÃO recarrega com modal aberta. Redesenhar a tela por baixo de quem
+        está digitando apagaria o que a pessoa escreveu. O aviso fica guardado
+        e é aplicado quando a modal fechar.
+
+     Se a conexão cair, o `EventSource` reconecta sozinho — e a reconexão já
+     recarrega a tela, porque o que mudou enquanto estávamos fora precisa
+     aparecer. É isso que faz a queda de rede da fábrica ser invisível.
+     ====================================================================== */
+  var CANAL = null;
+  var pendentes = new Set();
+  var timerAviso = null;
+
+  /* Que tela se importa com qual assunto. Sem este mapa, a alternativa seria
+     cada tela decidir sozinha — e a que esquecesse ficaria desatualizada de um
+     jeito que ninguém liga a este código. */
+  var INTERESSE = {
+    operar:   ["clientes", "desenhos", "maquinas"],
+    producao: ["fichas", "clientes", "desenhos"],
+    lotes:    ["lotes", "fichas", "clientes"],
+    clientes: ["clientes"],
+    desenhos: ["desenhos", "clientes"],
+    tabelas:  ["mercadorias", "cores", "maquinas"],
+    usuarios: ["usuarios"],
+  };
+
+  function ligarTempoReal() {
+    if (CANAL || typeof EventSource === "undefined") return;
+    CANAL = new EventSource("/restrito/api/eventos");
+    CANAL.addEventListener("mudou", function (ev) {
+      var assunto;
+      try { assunto = JSON.parse(ev.data).o; } catch (e) { return; }
+      esquecer(assunto);
+      pendentes.add(assunto);
+      agendarRecarga();
+    });
+    /* Reconectou: pode ter mudado qualquer coisa enquanto estávamos fora. */
+    CANAL.addEventListener("open", function () {
+      if (pendentes.size) agendarRecarga();
+    });
+  }
+
+  function agendarRecarga() {
+    clearTimeout(timerAviso);
+    timerAviso = setTimeout(function () {
+      /* Modal aberta: guarda para depois. `fecharModal` chama de novo. */
+      if (document.getElementById("modais").children.length) return;
+      const querem = INTERESSE[TELA] || [];
+      const meu = Array.from(pendentes).some((a) => querem.indexOf(a) >= 0);
+      pendentes.clear();
+      if (meu) irPara(TELA);
+    }, 400);
+  }
+
   var recadoTimer = null;
   function recado(texto, ehErro) {
     const antigo = document.querySelector(".recado");
@@ -681,7 +800,12 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   }
 
   /* ---- abrir ficha ------------------------------------------------ */
-  async function modalAbrirFicha() {
+  /* `escolha` = { cliente_id, desenho_id } — usado quando esta tela reabre
+     depois de o operador ter cadastrado um desenho novo. Sem isso ele voltaria
+     para o formulário em branco e teria de escolher o cliente de novo, logo
+     depois de tê-lo escolhido. */
+  async function modalAbrirFicha(escolha) {
+    escolha = escolha || {};
     const clientes = await lista("clientes");
     const desenhos = await lista("desenhos");
     const maquinas = await lista("maquinas");
@@ -690,9 +814,24 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       titulo: "Abrir ficha",
       corpo:
         '<label class="campo"><span>Cliente</span><select id="ff-cliente">' +
-          opcoes(clientes, "", "— escolha —") + "</select></label>" +
+          opcoes(clientes, escolha.cliente_id || "", "— escolha —") + "</select></label>" +
         '<label class="campo"><span>Desenho</span><select id="ff-desenho" disabled>' +
           '<option value="">— escolha o cliente antes —</option></select></label>' +
+        /* ------------------------------------------------------------
+           O DESENHO QUE AINDA NÃO EXISTE
+
+           Chega serviço com arte nova fora do horário do escritório, e a
+           ficha não abre sem desenho cadastrado. As saídas do operador eram
+           parar a máquina, ligar para o Eduardo, ou — a que acontece de
+           verdade — pendurar a produção num desenho parecido, que envenena o
+           relatório sem deixar rastro.
+
+           O botão fica sempre visível, e não só quando o cliente não tem
+           desenho: arte nova para cliente antigo é o caso mais comum dos
+           dois.
+           ------------------------------------------------------------ */
+        '<button type="button" class="btn btn--fantasma btn--mini" id="ff-novo-desenho" ' +
+          'style="margin:-8px 0 16px">+ cadastrar desenho novo</button>' +
         '<div id="ff-pontos"></div>' +
         (MAQUINA_TOKEN ? "" :
           '<label class="campo"><span>Máquina <small style="font-weight:600;text-transform:none;color:#8a8a99">(ou leia o QR colado nela)</small></span>' +
@@ -712,17 +851,42 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
               '<div class="conta__formula">pontos por peça</div></div>'
             : "";
         }
-        selCliente.addEventListener("change", function () {
+        function encherDesenhos(selecionado) {
           /* Só os desenhos DESTE cliente. Bordar o desenho de um cliente na
              peça de outro é o erro que a lista inteira convidaria a cometer. */
           const meus = desenhos.filter((x) => String(x.cliente_id) === selCliente.value);
           selDesenho.disabled = !meus.length;
           selDesenho.innerHTML = meus.length
-            ? opcoes(meus, "", "— escolha —")
+            ? opcoes(meus, selecionado || "", "— escolha —")
             : '<option value="">— este cliente não tem desenho cadastrado —</option>';
-          painel.innerHTML = "";
-        });
+          mostrarPontos();
+        }
+        selCliente.addEventListener("change", function () { encherDesenhos(""); });
         selDesenho.addEventListener("change", mostrarPontos);
+
+        /* Reabertura depois de cadastrar: repõe a escolha que já estava feita. */
+        if (escolha.cliente_id) encherDesenhos(escolha.desenho_id);
+
+        caixa.querySelector("#ff-novo-desenho").addEventListener("click", async function () {
+          const cliente = selCliente.value;
+          if (!cliente) { recado("Escolha o cliente antes.", true); selCliente.focus(); return; }
+
+          /* O ENCADEAMENTO: cadastrar → colar a imagem → voltar para cá com o
+             desenho novo já escolhido.
+
+             O id vem da RESPOSTA do cadastro. A tentação é procurá-lo na lista
+             recarregada pegando "o último" — mas a lista sai ordenada por
+             nome, não por id, e um desenho chamado "A-01" nasceria no começo
+             dela. O operador voltaria com OUTRO desenho selecionado e abriria
+             a ficha nele, sem nada na tela indicando a troca.
+
+             `aoFechar` só dispara na etapa das imagens: é lá que o operador
+             termina. Fechar o cadastro sem gravar não traz ninguém de volta. */
+          var novoId = "";
+          await modalDesenho(null, cliente,
+            function (id) { novoId = id || ""; esquecer("desenhos"); },
+            function () { modalAbrirFicha({ cliente_id: cliente, desenho_id: novoId }); });
+        });
       },
       aoConfirmar: async function (caixa) {
         const cliente = caixa.querySelector("#ff-cliente").value;
@@ -905,24 +1069,81 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             esc(f.quantidade == null ? "" : f.quantidade) + '"></label>' +
           '<label class="campo"><span>Pontuação por peça</span><input type="text" inputmode="numeric" id="ef-pts" value="' +
             esc(f.pontuacao) + '"></label>' +
+          /* O VALOR da ficha, que é retrato do preço do desenho na hora da
+             abertura. Corrigir aqui NÃO mexe no cadastro do desenho, e é o
+             que se quer: o desenho precificado depois deixa fichas antigas
+             sem valor, e cada uma se conserta sem reescrever o histórico das
+             outras. */
+          '<label class="campo"><span>Valor por peça</span>' +
+            '<input type="text" inputmode="decimal" id="ef-preco" placeholder="em branco = sem valor" value="' +
+            esc(dinheiroCampo(f.preco_unitario)) + '"></label>' +
           '<label class="campo"><span>Mercadoria</span><select id="ef-merc">' +
             opcoes(mercadorias, f.mercadoria_id, "— não informar —") + "</select></label>" +
           '<label class="campo"><span>Cor</span><select id="ef-cor">' +
             opcoes(cores, f.cor_id, "— não informar —") + "</select></label>" +
         "</div>" +
+        /* ------------------------------------------------------------
+           AS HORAS
+
+           O conserto mais comum da fábrica: o operador esqueceu de fechar a
+           ficha e fechou às 18h o que terminou às 14h. Sem poder corrigir, o
+           tempo por peça — o indicador do chão de fábrica — passa a medir o
+           esquecimento em vez da produção.
+
+           `datetime-local` e não dois campos separados: a data e a hora de um
+           mesmo instante digitadas em caixas diferentes saem inconsistentes
+           com frequência (a virada de meia-noite, o dia seguinte). E o campo
+           traz o seletor nativo do celular, que é o aparelho da bancada.
+           ------------------------------------------------------------ */
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Início</span>' +
+            '<input type="datetime-local" id="ef-inicio" value="' + esc(paraCampoDataHora(f.aberta_em)) + '"></label>' +
+          '<label class="campo"><span>Fim</span>' +
+            '<input type="datetime-local" id="ef-fim" value="' + esc(paraCampoDataHora(f.fechada_em)) + '"></label>' +
+        "</div>" +
+        '<div id="ef-tempo" style="margin:-8px 0 14px;font-size:13.5px;color:#77778a"></div>' +
         '<label class="campo"><span>Observação</span><textarea id="ef-obs" rows="2">' +
           esc(f.observacao || "") + "</textarea></label>",
       confirmar: "Salvar correção",
       extra: f.situacao !== "cancelada"
         ? '<button class="btn btn--fantasma" data-acao="cancelar-ficha-admin" data-id="' + id + '">Cancelar ficha</button>'
         : "",
+      aoAbrir: function (caixa) {
+        const ini = caixa.querySelector("#ef-inicio");
+        const fim = caixa.querySelector("#ef-fim");
+        const aviso = caixa.querySelector("#ef-tempo");
+        /* A duração aparece ENQUANTO se digita. O erro que isto pega é o de
+           quem corrige o dia e esquece a hora: "14 horas na mesma ficha" salta
+           aos olhos; um par de datas em dois campos, não. */
+        function contar() {
+          if (!ini.value || !fim.value) { aviso.textContent = ""; return; }
+          const min = Math.round((new Date(fim.value) - new Date(ini.value)) / 60000);
+          if (min < 0) {
+            aviso.innerHTML = '<b style="color:var(--laranja)">O fim está antes do início.</b>';
+          } else {
+            aviso.textContent = "Duração: " +
+              (min < 60 ? min + " min" : Math.floor(min / 60) + "h" + String(min % 60).padStart(2, "0"));
+          }
+        }
+        ini.addEventListener("input", contar);
+        fim.addEventListener("input", contar);
+        contar();
+      },
       aoConfirmar: async function (caixa) {
+        const ini = caixa.querySelector("#ef-inicio").value;
+        const fim = caixa.querySelector("#ef-fim").value;
+        if (ini && fim && new Date(fim) < new Date(ini))
+          throw new Error("O fim não pode ser antes do início.");
+
         await enviar("/restrito/api/fichas/" + id, "PUT", {
           quantidade: caixa.querySelector("#ef-qtd").value,
           pontuacao: caixa.querySelector("#ef-pts").value,
+          preco_unitario: caixa.querySelector("#ef-preco").value,
           mercadoria_id: caixa.querySelector("#ef-merc").value || null,
           cor_id: caixa.querySelector("#ef-cor").value || null,
           observacao: caixa.querySelector("#ef-obs").value,
+          aberta_em: ini,
+          fechada_em: fim,
         });
         recado("Ficha corrigida."); pintarProducao();
       },
@@ -948,10 +1169,21 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       '<div class="bloco"><div class="bloco__topo"><h2>Lotes abertos e fechados</h2>' +
         '<span class="espaco"></span>' +
         '<button class="btn btn--laranja" data-acao="novo-lote">Novo lote</button></div>' +
+      /* O CAIXA NO TOPO DA LISTA. "Quanto já entrou e quanto falta entrar" é a
+         pergunta que traz alguém a esta tela — e ela não tinha resposta em
+         lugar nenhum do sistema até agora. */
+      (r.conta ? '<div class="bloco__corpo" style="padding-bottom:0">' +
+        '<div class="resumo-dia" style="margin-bottom:14px">' +
+          "<div><b>" + dinheiro(r.conta.total) + "</b><span>produzido em lotes</span></div>" +
+          "<div><b>" + dinheiro(r.conta.recebido) + "</b><span>recebido · " + num(r.conta.pagos) + " lotes</span></div>" +
+          '<div style="border-color:var(--laranja)"><b style="color:var(--laranja)">' +
+            dinheiro(r.conta.a_receber) + "</b><span>a receber · " + num(r.conta.abertos) + " lotes</span></div>" +
+        "</div></div>" : "") +
       (r.lotes.length ? '<div class="rolagem"><table><thead><tr>' +
         "<th>Código</th><th>Cliente</th><th>Descrição</th>" +
         '<th class="num">Previsto</th><th class="num">Produzido</th><th class="num">Falta</th>' +
-        "<th>Situação</th><th>Nota</th><th></th></tr></thead><tbody>" +
+        '<th class="num">Valor</th>' +
+        "<th>Situação</th><th>Pagamento</th><th>Nota</th><th></th></tr></thead><tbody>" +
       r.lotes.map(function (l) {
         const prev = l.quantidade_prevista == null ? null : Number(l.quantidade_prevista);
         const feito = Number(l.pecas);
@@ -966,7 +1198,14 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             (falta > 0 ? '<span style="color:var(--ambar)">' + num(falta) + "</span>"
              : falta < 0 ? '<span style="color:var(--vermelho)">+' + num(-falta) + "</span>"
              : '<span style="color:var(--verde)">0</span>')) + "</td>" +
+          '<td class="num">' + dinheiro(l.valor) + "</td>" +
           "<td>" + selo(l.situacao) + "</td>" +
+          /* Pagamento em coluna PRÓPRIA, e não fundido em `situacao`: o estado
+             que a cobrança procura é "faturado E não pago", e ele deixaria de
+             existir se as duas informações dividissem a mesma célula. */
+          "<td>" + (l.pago_em
+            ? '<span class="etiqueta etiqueta--verde">pago ' + soData(l.pago_em) + "</span>"
+            : '<span class="etiqueta etiqueta--cinza">em aberto</span>') + "</td>" +
           "<td>" + esc(l.nota || "—") + "</td>" +
           '<td class="linha-botoes"><button class="btn btn--mini" data-acao="abrir-lote" data-id="' + l.id + '">abrir</button>' +
           '<a class="btn btn--fantasma btn--mini" href="/restrito/lotes/' + l.id + '/recibo" ' +
@@ -997,7 +1236,10 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       '<p style="margin:0 0 10px"><button class="btn btn--fantasma btn--mini" data-acao="voltar-lotes">← todos os lotes</button></p>' +
       '<h1 class="titulo-tela">' + esc(l.codigo) + " · " + esc(l.cliente_nome) + "</h1>" +
       '<p class="subtitulo-tela">' + esc(l.descricao || "sem descrição") + " — " + selo(l.situacao) +
-        (l.nota ? " · nota " + esc(l.nota) : "") + "</p>" +
+        (l.nota ? " · nota " + esc(l.nota) : "") +
+        (l.pago_em
+          ? ' · <span class="etiqueta etiqueta--verde">pago em ' + soData(l.pago_em) + "</span>"
+          : "") + "</p>" +
 
       '<div class="bloco"><div class="bloco__corpo"><div class="resumo-dia">' +
         "<div><b>" + (prev == null ? "—" : num(prev)) + "</b><span>previsto</span></div>" +
@@ -1005,6 +1247,11 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         "<div><b>" + (falta == null ? "—" : num(falta)) + "</b><span>" +
           (falta != null && falta < 0 ? "excedente" : "falta") + "</span></div>" +
         "<div><b>" + num(r.pontos) + "</b><span>pontos</span></div>" +
+        /* O valor do lote fecha a conta que a nota vai usar. Em laranja
+           enquanto não estiver pago: é o que ainda tem de entrar. */
+        '<div' + (l.pago_em ? "" : ' style="border-color:var(--laranja)"') + "><b" +
+          (l.pago_em ? "" : ' style="color:var(--laranja)"') + ">" + dinheiro(r.valor) + "</b><span>" +
+          (l.pago_em ? "recebido" : "a receber") + "</span></div>" +
       "</div></div></div>" +
 
       '<div class="bloco"><div class="bloco__topo"><h2>Composição</h2><span class="espaco"></span>' +
@@ -1165,6 +1412,26 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
           '<label class="campo"><span>Entrada da mercadoria</span>' +
             '<input type="date" id="nl-data" value="' + esc(l.entrada_em ? String(l.entrada_em).slice(0, 10) : "") + '"></label>' +
         "</div>" +
+        /* ------------------------------------------------------------
+           O PAGAMENTO
+
+           Campo próprio, e não uma opção dentro de "Situação". Um lote pode
+           estar faturado e não pago — é o estado normal do mês inteiro, e é
+           exatamente o que a cobrança procura. Se "pago" fosse mais um valor
+           de situação, marcar o pagamento APAGARIA o "faturado" e a pergunta
+           "o que já saiu e ainda não entrou?" ficaria sem resposta.
+
+           Só aparece na EDIÇÃO: lote que acabou de nascer não tem o que
+           receber, e o campo em branco no cadastro só faria pensar. Data em
+           branco significa "ainda não entrou".
+           ------------------------------------------------------------ */
+        (l.id
+          ? '<label class="campo"><span>Pagamento recebido em</span>' +
+            '<input type="date" id="nl-pago" value="' +
+            esc(l.pago_em ? String(l.pago_em).slice(0, 10) : "") + '">' +
+            '<small style="font-weight:600;color:#77778a;font-size:12.5px">' +
+            "em branco = ainda a receber</small></label>"
+          : "") +
         '<label class="campo"><span>Observação</span><textarea id="nl-obs" rows="2">' +
           esc(l.observacao || "") + "</textarea></label>",
       confirmar: l.id ? "Salvar" : "Criar lote",
@@ -1176,6 +1443,8 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
           entrada_em: caixa.querySelector("#nl-data").value || null,
           observacao: caixa.querySelector("#nl-obs").value,
         };
+        const pago = caixa.querySelector("#nl-pago");
+        if (pago) corpo.pago_em = pago.value || null;
         if (l.id) {
           await enviar("/restrito/api/lotes/" + l.id, "PUT", corpo);
           recado("Lote salvo."); pintarLote(l.id);
@@ -1291,11 +1560,30 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     abrirModal({
       titulo: id ? esc(c.nome) : "Novo cliente",
       corpo:
-        (res ? '<div class="resumo-dia" style="margin-bottom:18px">' +
-          "<div><b>" + num(res.desenhos) + "</b><span>desenhos</span></div>" +
-          "<div><b>" + num(res.lotes) + "</b><span>lotes</span></div>" +
-          "<div><b>" + num(res.pecas) + "</b><span>peças feitas</span></div>" +
-        "</div>" : "") +
+        /* ------------------------------------------------------------
+           OS TRÊS NÚMEROS VIRARAM PORTAS
+
+           Antes eram só informação: "3 desenhos, 2 lotes, 1.500 peças". A
+           pergunta seguinte — QUAIS — obrigava a sair da tela do cliente,
+           abrir a lista de desenhos, filtrar, e voltar. Quem faz isso três
+           vezes por dia acaba deixando de perguntar.
+
+           Agora cada número abre a lista por baixo dele, aqui dentro, sem
+           fechar o cadastro que está aberto. E a lista de desenhos tem o
+           botão de cadastrar: o bordado novo nasce já amarrado a este
+           cliente, porque o cliente é o contexto em que se está.
+
+           As listas só são buscadas quando alguém clica. A modal é aberta
+           dezenas de vezes por dia para conferir um telefone; carregar um ano
+           de fichas em toda abertura faria o caso comum pagar pelo raro.
+           ------------------------------------------------------------ */
+        (res ? '<div class="resumo-dia resumo-dia--botoes" style="margin-bottom:14px">' +
+          '<button type="button" data-gaveta="desenhos"><b>' + num(res.desenhos) + "</b><span>desenhos</span></button>" +
+          '<button type="button" data-gaveta="lotes"><b>' + num(res.lotes) + "</b><span>lotes" +
+            (Number(res.lotes_a_receber) ? " · " + num(res.lotes_a_receber) + " a receber" : "") + "</span></button>" +
+          '<button type="button" data-gaveta="fichas"><b>' + num(res.pecas) + "</b><span>peças feitas</span></button>" +
+        "</div>" +
+        '<div id="cl-gaveta" class="gaveta" hidden></div>' : "") +
         '<label class="campo"><span>Nome</span><input type="text" id="cl-nome" value="' +
           esc(c.nome || "") + '" autocapitalize="words"></label>' +
         '<div class="grade-form">' +
@@ -1316,6 +1604,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         mascaraDocumento(caixa.querySelector("#cl-doc"));
         mascaraTelefone(caixa.querySelector("#cl-fone"));
         setTimeout(() => caixa.querySelector("#cl-nome").focus(), 60);
+        if (id) montarGavetas(caixa, id);
       },
       aoConfirmar: async function (caixa) {
         const dados = {
@@ -1333,6 +1622,156 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         recado("Salvo."); pintarClientes();
       },
     });
+  }
+
+  /* ========================================================================
+     AS GAVETAS DO CLIENTE
+
+     Cada um dos três números do topo abre a sua lista aqui embaixo. Clicar de
+     novo no mesmo número fecha — é uma gaveta, não uma aba: numa modal, três
+     abas sempre abertas empurrariam o formulário para fora da tela do celular.
+     ====================================================================== */
+  function montarGavetas(caixa, clienteId) {
+    const painel = caixa.querySelector("#cl-gaveta");
+    if (!painel) return;
+    var aberta = null;
+
+    async function abrir(qual) {
+      if (aberta === qual) { painel.hidden = true; aberta = null; marcar(); return; }
+      aberta = qual; marcar();
+      painel.hidden = false;
+      painel.innerHTML = '<div class="carregando">carregando…</div>';
+      try {
+        if (qual === "desenhos") painel.innerHTML = await gavetaDesenhos();
+        else if (qual === "lotes") painel.innerHTML = await gavetaLotes();
+        else painel.innerHTML = await gavetaFichas();
+      } catch (e) {
+        painel.innerHTML = '<div class="aviso aviso--erro">' + esc(e.message) + "</div>";
+      }
+    }
+    function marcar() {
+      caixa.querySelectorAll("[data-gaveta]").forEach((b) => {
+        b.setAttribute("aria-current", String(b.getAttribute("data-gaveta") === aberta));
+      });
+    }
+
+    async function gavetaDesenhos() {
+      const r = await api("/restrito/api/desenhos?todos=1&cliente=" + clienteId);
+      const admin = !!(EU && EU.admin);
+      return '<div class="gaveta__topo"><b>Bordados deste cliente</b>' +
+        '<button type="button" class="btn btn--laranja btn--mini" id="cl-novo-desenho">+ novo bordado</button></div>' +
+        (r.itens.length
+          ? '<div class="rolagem"><table><thead><tr><th style="width:44px"></th><th>Desenho</th>' +
+            '<th class="num">Pontos</th>' + (admin ? '<th class="num">Preço</th>' : "") +
+            "<th></th></tr></thead><tbody>" +
+            r.itens.map((d) => "<tr" + (d.ativo ? "" : ' style="opacity:.5"') + ">" +
+              "<td>" + (d.capa
+                ? '<img class="miniatura" src="/restrito/foto/' + esc(d.capa) + '" alt="">'
+                : '<span class="miniatura miniatura--vazia">✳</span>') + "</td>" +
+              "<td><b>" + esc(d.nome) + "</b></td>" +
+              '<td class="num">' + num(d.pontuacao) + "</td>" +
+              (admin ? '<td class="num">' + (d.preco == null
+                ? '<span style="color:var(--laranja);font-weight:700">a definir</span>'
+                : dinheiro(d.preco)) + "</td>" : "") +
+              '<td class="linha-botoes"><button type="button" class="btn btn--fantasma btn--mini" ' +
+                'data-abrir-desenho="' + d.id + '">abrir</button></td></tr>').join("") +
+            "</tbody></table></div>"
+          : '<div class="vazio">Nenhum bordado cadastrado para este cliente.</div>');
+    }
+
+    async function gavetaLotes() {
+      const r = await api("/restrito/api/clientes/" + clienteId + "/lotes");
+      const c = r.conta;
+      return '<div class="gaveta__topo"><b>Lotes</b><span style="font-size:13.5px;color:#55555f">' +
+          "recebido " + dinheiro(c.recebido) + " · <b style=\"color:var(--laranja)\">a receber " +
+          dinheiro(c.a_receber) + "</b></span></div>" +
+        (r.lotes.length
+          ? '<div class="rolagem"><table><thead><tr><th>Lote</th><th>Descrição</th>' +
+            '<th class="num">Peças</th><th class="num">Valor</th><th>Situação</th><th>Pagamento</th>' +
+            "</tr></thead><tbody>" +
+            r.lotes.map((l) => "<tr>" +
+              "<td><b>" + esc(l.codigo) + "</b></td>" +
+              "<td>" + esc(l.descricao || "—") + "</td>" +
+              '<td class="num">' + num(l.pecas) + "</td>" +
+              '<td class="num">' + dinheiro(l.valor) + "</td>" +
+              "<td>" + etiquetaSituacaoLote(l.situacao) + "</td>" +
+              /* Pago e faturado lado a lado, e não fundidos numa coluna só:
+                 "faturado e ainda não pago" é o estado que a cobrança procura,
+                 e ele desapareceria se as duas informações dividissem a mesma
+                 célula. */
+              "<td>" + (l.pago_em
+                ? '<span class="etiqueta etiqueta--verde">pago ' + soData(l.pago_em) + "</span>"
+                : '<span class="etiqueta etiqueta--cinza">em aberto</span>') + "</td>" +
+              "</tr>").join("") +
+            "</tbody></table></div>"
+          : '<div class="vazio">Nenhum lote para este cliente.</div>');
+    }
+
+    async function gavetaFichas() {
+      const r = await api("/restrito/api/clientes/" + clienteId + "/fichas");
+      return '<div class="gaveta__topo"><b>Peças produzidas</b>' +
+        '<span style="font-size:13.5px;color:#55555f">' + num(r.soma.pecas) + " peças · " +
+        num(r.soma.pontos) + " pontos · " + dinheiro(r.soma.valor) + "</span></div>" +
+        (r.fichas.length
+          ? '<div class="rolagem"><table><thead><tr><th>Quando</th><th>Desenho</th><th>Operador</th>' +
+            '<th class="num">Peças</th><th class="num">Valor</th><th>Lote</th>' +
+            "</tr></thead><tbody>" +
+            r.fichas.map((f) => "<tr>" +
+              "<td>" + dataHora(f.fechada_em) + "</td>" +
+              "<td><b>" + esc(f.desenho_nome) + "</b>" +
+                (f.cor_nome ? ' <span style="color:#77778a">· ' + esc(f.cor_nome) + "</span>" : "") + "</td>" +
+              "<td>" + esc(f.operador_nome || "—") + "</td>" +
+              '<td class="num">' + num(f.quantidade) + "</td>" +
+              '<td class="num">' + dinheiro(f.total_valor) + "</td>" +
+              "<td>" + (f.lote_codigo ? esc(f.lote_codigo)
+                : '<span style="color:#8a8a99">solta</span>') + "</td>" +
+              "</tr>").join("") +
+            "</tbody></table></div>" +
+            (r.fichas.length >= 300
+              /* Aviso e não silêncio: uma lista cortada em 300 sem dizer nada
+                 é lida como "é tudo isso que existe", e a soma no topo passa a
+                 parecer errada sem que ninguém saiba por quê. */
+              ? '<p style="margin:10px 0 0;font-size:13px;color:#77778a">Mostrando as 300 ' +
+                "mais recentes. Use <b>Produção do dia</b> para o período completo.</p>"
+              : "")
+          : '<div class="vazio">Nenhuma peça produzida para este cliente ainda.</div>');
+    }
+
+    painel.addEventListener("click", async function (ev) {
+      const abrirD = ev.target.closest("[data-abrir-desenho]");
+      if (abrirD) {
+        /* Abre o desenho e, ao fechar, volta para a gaveta atualizada — o
+           preço que o escritório acabou de pôr aparece sem recarregar nada. */
+        const did = abrirD.getAttribute("data-abrir-desenho");
+        await modalDesenho(did, clienteId, function () {}, function () {
+          modalCliente(clienteId);
+        });
+        return;
+      }
+      if (ev.target.closest("#cl-novo-desenho")) {
+        await modalDesenho(null, clienteId, function () { esquecer("desenhos"); },
+          function () { modalCliente(clienteId); });
+      }
+    });
+
+    caixa.querySelectorAll("[data-gaveta]").forEach((b) => {
+      b.addEventListener("click", () => abrir(b.getAttribute("data-gaveta")));
+    });
+  }
+
+  function etiquetaSituacaoLote(s) {
+    if (s === "faturado") return '<span class="etiqueta etiqueta--verde">faturado</span>';
+    if (s === "fechado") return '<span class="etiqueta etiqueta--cinza">fechado</span>';
+    return '<span class="etiqueta">aberto</span>';
+  }
+  function soData(d) {
+    if (!d) return "";
+    /* A data vem `AAAA-MM-DD` (coluna DATE). `new Date` sobre esse texto a lê
+       como meia-noite UTC, e no fuso do Brasil isso vira o DIA ANTERIOR — o
+       pagamento de segunda apareceria como domingo. Por isso a conversão é por
+       texto, sem passar por Date. */
+    const p = String(d).slice(0, 10).split("-");
+    return p.length === 3 ? p[2] + "/" + p[1] : String(d);
   }
 
   /* CNPJ e CPF na mesma caixa: a fábrica atende os dois, e obrigar a escolher
@@ -1366,7 +1805,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
      número que multiplica a nota. A foto existe para ninguém bordar o
      "CORECT1" achando que é o "CORECT2".
      ====================================================================== */
-  var filtroDesenhos = { pagina: 1, busca: "", todos: true };
+  var filtroDesenhos = { pagina: 1, busca: "", todos: true, semPreco: false };
 
   async function pintarDesenhos() {
     const alvo = document.getElementById("principal");
@@ -1375,6 +1814,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     const q = new URLSearchParams({ pagina: filtroDesenhos.pagina, por: 20 });
     if (filtroDesenhos.busca) q.set("busca", filtroDesenhos.busca);
     if (filtroDesenhos.todos) q.set("todos", "1");
+    if (filtroDesenhos.semPreco) q.set("sem_preco", "1");
     const r = await api("/restrito/api/desenhos?" + q);
 
     alvo.innerHTML =
@@ -1383,17 +1823,23 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       "Mudar aqui não mexe no que já foi produzido.</p>" +
       '<div class="bloco">' +
         '<div class="bloco__topo"><div class="barra-lista" style="flex:1">' +
-          '<input class="busca" type="search" id="bd-busca" placeholder="procurar pelo nome do desenho…" value="' +
+          '<input class="busca" type="search" id="bd-busca" placeholder="nome do desenho ou do cliente…" value="' +
             esc(filtroDesenhos.busca) + '">' +
           '<label style="display:flex;gap:7px;align-items:center;font-size:14px;white-space:nowrap">' +
             '<input type="checkbox" id="bd-todos" style="width:17px;height:17px;accent-color:var(--tinta)"' +
             (filtroDesenhos.todos ? " checked" : "") + "> mostrar inativos</label>" +
+          /* O filtro que responde "o que falta precificar". É a pergunta que
+             o desenho cadastrado pelo operador cria toda semana. */
+          '<label style="display:flex;gap:7px;align-items:center;font-size:14px;white-space:nowrap">' +
+            '<input type="checkbox" id="bd-sempreco" style="width:17px;height:17px;accent-color:var(--laranja)"' +
+            (filtroDesenhos.semPreco ? " checked" : "") + "> sem preço</label>" +
           '<button class="btn" data-acao="buscar-desenhos">Procurar</button>' +
           '<button class="btn btn--laranja" data-acao="novo-desenho">Novo desenho</button>' +
         "</div></div>" +
         (r.itens.length ? '<div class="rolagem"><table><thead><tr>' +
           '<th style="width:60px"></th><th>Desenho</th><th>Cliente</th>' +
-          '<th class="num">Pontos/peça</th><th class="num">Fotos</th><th>Situação</th><th></th>' +
+          '<th class="num">Pontos/peça</th><th class="num">Preço/peça</th>' +
+          '<th class="num">Fotos</th><th>Situação</th><th></th>' +
         "</tr></thead><tbody>" +
         r.itens.map((d) => "<tr" + (d.ativo ? "" : ' style="opacity:.5"') + ">" +
           "<td>" + (d.capa
@@ -1402,6 +1848,11 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
           "<td><b>" + esc(d.nome) + "</b></td>" +
           "<td>" + esc(d.cliente_nome || "—") + "</td>" +
           '<td class="num">' + num(d.pontuacao) + "</td>" +
+          /* Sem preço aparece em laranja, e não como um travessão discreto:
+             é uma pendência do escritório, não um dado ausente qualquer. */
+          '<td class="num">' + (d.preco == null
+            ? '<span style="color:var(--laranja);font-weight:700">a definir</span>'
+            : dinheiro(d.preco)) + "</td>" +
           '<td class="num">' + (Number(d.fotos) || "—") + "</td>" +
           "<td>" + (d.ativo ? '<span class="etiqueta etiqueta--verde">ativo</span>'
                             : '<span class="etiqueta etiqueta--cinza">inativo</span>') + "</td>" +
@@ -1416,36 +1867,57 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       "</div>";
   }
 
-  async function modalDesenho(id) {
+  /* `clientePreso` vem da modal do cliente: cadastra o bordado já amarrado
+     naquele cliente, sem sair da tela dele. `aoTerminar` deixa quem chamou
+     decidir o que redesenhar — a lista de desenhos ou a gaveta do cliente. */
+  async function modalDesenho(id, clientePreso, aoTerminar, aoFechar) {
     const d = id ? await api("/restrito/api/desenhos/" + id) : {};
     const clientes = await lista("clientes", true);
+    const admin = !!(EU && EU.admin);
+    const depois = aoTerminar || function () { pintarDesenhos(); };
 
     abrirModal({
       titulo: id ? esc(d.nome) : "Novo desenho",
+      /* Só na etapa das imagens. Na etapa de cadastro, "Cancelar" quer dizer
+         cancelar — encadear a próxima tela ali desfaria a desistência. */
+      aoFechar: id ? aoFechar : null,
       corpo:
         '<label class="campo"><span>Nome do desenho</span><input type="text" id="dz-nome" value="' +
           esc(d.nome || "") + '"></label>' +
         '<div class="grade-form">' +
-          '<label class="campo"><span>Cliente</span><select id="dz-cliente">' +
-            opcoes(clientes, d.cliente_id, "— escolha —") + "</select></label>" +
+          '<label class="campo"><span>Cliente</span><select id="dz-cliente"' +
+            (clientePreso ? " disabled" : "") + ">" +
+            opcoes(clientes, clientePreso || d.cliente_id, "— escolha —") + "</select></label>" +
           '<label class="campo"><span>Pontos por peça</span>' +
             '<input type="text" inputmode="numeric" id="dz-pontos" value="' +
             esc(d.pontuacao == null ? "" : d.pontuacao) + '"></label>' +
+          /* O PREÇO SÓ EXISTE PARA O ESCRITÓRIO. Não é campo escondido por
+             CSS: para o operador ele não é escrito na página, e o servidor
+             tampouco manda o valor. Um campo `hidden` continuaria no HTML,
+             e "ver código-fonte" é uma tecla. */
+          (admin
+            ? '<label class="campo"><span>Preço por peça</span>' +
+              '<input type="text" inputmode="decimal" id="dz-preco" placeholder="em branco = a definir" value="' +
+              esc(dinheiroCampo(d.preco)) + '"></label>'
+            : "") +
         "</div>" +
+        (admin ? "" :
+          '<p style="margin:-6px 0 14px;color:#77778a;font-size:13.5px">' +
+          "O escritório define o preço depois — pode cadastrar e continuar.</p>") +
         '<label class="campo"><span>Observação</span><textarea id="dz-obs" rows="2">' +
           esc(d.observacao || "") + "</textarea></label>" +
         '<div style="margin-top:6px"><span style="display:block;font-size:12.5px;font-weight:700;' +
           'color:#55555f;text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px">Fotos</span>' +
         (id
           ? '<div id="dz-fotos" class="fotos" style="margin-bottom:10px"></div>' +
-            '<div class="solta-foto" id="dz-solta">Clique aqui ou arraste as fotos do desenho' +
+            '<div class="solta-foto" id="dz-solta">Clique, arraste, ou cole com Ctrl+V' +
             "<br><small>jpg, png, webp ou avif — até 9 MB cada</small></div>" +
             '<input type="file" id="dz-arquivo" accept="image/jpeg,image/png,image/webp,image/avif" multiple hidden>'
           /* Sem id ainda não há onde pendurar a foto. Cadastrar primeiro e
              reabrir é mais honesto que guardar a imagem em memória e perdê-la
              se o cadastro for recusado. */
           : '<p style="margin:0;color:#77778a;font-size:14px">Cadastre o desenho primeiro — ' +
-            "a tela reabre em seguida para você anexar as fotos.</p>") +
+            "a tela reabre em seguida para você anexar ou colar as imagens.</p>") +
         "</div>",
       confirmar: id ? "Salvar" : "Cadastrar",
       classe: "btn--laranja",
@@ -1456,22 +1928,30 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       aoConfirmar: async function (caixa) {
         const dados = {
           nome: caixa.querySelector("#dz-nome").value,
-          cliente_id: caixa.querySelector("#dz-cliente").value,
+          cliente_id: clientePreso || caixa.querySelector("#dz-cliente").value,
           pontuacao: caixa.querySelector("#dz-pontos").value,
           observacao: caixa.querySelector("#dz-obs").value,
         };
+        /* O campo só existe para o administrador — e o servidor descarta o
+           preço de quem não pode mandá-lo. As duas conferências não são
+           redundância: esta evita mandar `undefined` e apagar o preço. */
+        const campoPreco = caixa.querySelector("#dz-preco");
+        if (campoPreco) dados.preco = campoPreco.value;
+
         if (!dados.nome.trim()) throw new Error("O nome do desenho é obrigatório.");
         if (!dados.cliente_id) throw new Error("Escolha o cliente.");
         if (!String(dados.pontuacao).replace(/\D/g, "")) throw new Error("Informe os pontos por peça.");
 
         if (id) {
           await enviar("/restrito/api/desenhos/" + id, "PUT", dados);
-          esquecer("desenhos"); recado("Salvo."); pintarDesenhos();
+          esquecer("desenhos"); recado("Salvo."); depois(id);
         } else {
           const r = await enviar("/restrito/api/desenhos", "POST", dados);
-          esquecer("desenhos"); pintarDesenhos();
-          recado("Desenho cadastrado — agora as fotos.");
-          setTimeout(() => modalDesenho(r.id), 250);
+          esquecer("desenhos"); depois(r.id);
+          recado(r.semPreco
+            ? "Desenho cadastrado. O escritório define o preço."
+            : "Desenho cadastrado — agora as imagens.");
+          setTimeout(() => modalDesenho(r.id, clientePreso, depois, aoFechar), 250);
         }
       },
     });
@@ -1500,25 +1980,68 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     }
     desenhar(fotos);
 
+    const CONVITE = "Clique, arraste, ou cole com Ctrl+V" +
+      "<br><small>jpg, png, webp ou avif — até 9 MB cada</small>";
+
     async function enviarArquivos(arquivos) {
       for (const a of arquivos) {
-        if (a.size > 9e6) { recado(a.name + " passa de 9 MB.", true); continue; }
-        solta.textContent = "enviando " + a.name + "…";
+        /* Imagem colada não tem `name` — o servidor descobre o formato pela
+           assinatura do arquivo e batiza sozinho. Aqui o nome só serve para a
+           mensagem na tela. */
+        const comoChamar = a.name || "imagem colada";
+        if (a.size > 9e6) { recado(comoChamar + " passa de 9 MB.", true); continue; }
+        solta.textContent = "enviando " + comoChamar + "…";
         try {
           const dados = await new Promise((ok, falha) => {
             const l = new FileReader();
             l.onload = () => ok(l.result);
-            l.onerror = () => falha(new Error("não deu para ler " + a.name));
+            l.onerror = () => falha(new Error("não deu para ler " + comoChamar));
             l.readAsDataURL(a);
           });
-          await enviar("/restrito/api/desenhos/" + desenhoId + "/fotos", "POST", { nome: a.name, dados });
+          await enviar("/restrito/api/desenhos/" + desenhoId + "/fotos", "POST", { nome: a.name || "", dados });
         } catch (e) { recado(e.message, true); }
       }
-      solta.innerHTML = "Clique aqui ou arraste as fotos do desenho" +
-        "<br><small>jpg, png, webp ou avif — até 9 MB cada</small>";
+      solta.innerHTML = CONVITE;
       await recarregar();
       esquecer("desenhos");
     }
+
+    /* ------------------------------------------------------------------
+       COLAR A IMAGEM (Ctrl+V)
+
+       É como a arte do bordado chega de verdade: o cliente manda o ícone no
+       WhatsApp, a pessoa copia da conversa e cola. Sem isto, o caminho é
+       salvar como arquivo, achar a pasta de downloads, escolher — três passos
+       para trazer uma imagem que já estava na área de transferência.
+
+       O ouvinte fica no DOCUMENTO, e não na área de soltar. `paste` só chega a
+       um elemento se ele estiver com o foco, e a área de soltar é uma `div`
+       que não recebe foco — colar nela nunca funcionaria, e a pessoa
+       concluiria que o sistema não aceita colar.
+
+       A trava do `#modais`: com a modal do desenho aberta, colar em qualquer
+       lugar da tela envia a imagem. Sem ela, um Ctrl+V numa OUTRA tela do
+       sistema também enviaria — para o último desenho aberto, calado.
+       ------------------------------------------------------------------ */
+    function aoColar(ev) {
+      /* Se este bloco de fotos já saiu da tela (modal fechada e reaberta), o
+         ouvinte antigo continuaria vivo no documento mandando foto para o
+         desenho errado. */
+      if (!grade.isConnected) { document.removeEventListener("paste", aoColar); return; }
+      const itens = (ev.clipboardData && ev.clipboardData.items) || [];
+      const imagens = [];
+      for (const it of itens) {
+        if (it.kind !== "file" || !/^image\//.test(it.type)) continue;
+        const f = it.getAsFile();
+        if (f) imagens.push(f);
+      }
+      if (!imagens.length) return;
+      /* Só impede o colar padrão quando havia imagem MESMO: colar texto num
+         campo do formulário continua funcionando normalmente. */
+      ev.preventDefault();
+      enviarArquivos(imagens);
+    }
+    document.addEventListener("paste", aoColar);
 
     solta.addEventListener("click", () => arquivo.click());
     arquivo.addEventListener("change", () => {
@@ -1811,11 +2334,22 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     const caixa = raiz.querySelector(".modal__caixa");
     if (cfg.aoAbrir) cfg.aoAbrir(caixa);
 
+    /* `aoFechar` roda quando a modal sai da tela, por qualquer caminho: X,
+       Cancelar ou confirmação bem-sucedida. É o que permite encadear telas —
+       o operador cadastra o desenho, cola a imagem, fecha, e volta para a
+       ficha que estava abrindo, em vez de cair na tela vazia. */
+    var jaFechou = false;
+    function saiu() {
+      if (jaFechou) return;
+      jaFechou = true;
+      if (cfg.aoFechar) cfg.aoFechar();
+    }
+
     /* Delegação, não `onclick` no HTML: este script roda dentro de uma função,
        e um `onclick` escrito na marcação procuraria a função no escopo global,
        onde ela não existe — o botão simplesmente não faria nada. */
     caixa.addEventListener("click", async function (ev) {
-      if (ev.target.closest("[data-fechar]")) { fecharModal(); return; }
+      if (ev.target.closest("[data-fechar]")) { fecharModal(); saiu(); return; }
       const ok = ev.target.closest("[data-confirmar]");
       if (!ok) return;
       const erroEl = caixa.querySelector("[data-erro]");
@@ -1824,6 +2358,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       try {
         await cfg.aoConfirmar(caixa);
         fecharModal();
+        saiu();
       } catch (e) {
         erroEl.textContent = e.message;
         erroEl.hidden = false;
@@ -1831,7 +2366,14 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       }
     });
   }
-  function fecharModal() { document.getElementById("modais").innerHTML = ""; }
+  function fecharModal() {
+    document.getElementById("modais").innerHTML = "";
+    /* Chegou aviso enquanto a modal estava aberta? Aplica agora. Sem isto, o
+       operador que ficou dez minutos com uma ficha aberta voltaria para uma
+       tela parada no tempo — e o tempo real teria falhado justamente em quem
+       mais precisa dele. */
+    if (pendentes.size) agendarRecarga();
+  }
 
   /* ========================================================================
      11. NAVEGAÇÃO E EVENTOS
@@ -2010,6 +2552,10 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       else if (acao === "buscar-desenhos") {
         filtroDesenhos.busca = document.getElementById("bd-busca").value.trim();
         filtroDesenhos.todos = document.getElementById("bd-todos").checked;
+        /* O campo só existe para quem vê preço — sem a guarda, a tela do
+           operador estouraria ao ler `.checked` de um elemento que não há. */
+        const semPreco = document.getElementById("bd-sempreco");
+        filtroDesenhos.semPreco = !!(semPreco && semPreco.checked);
         filtroDesenhos.pagina = 1;
         await pintarDesenhos();
       }
@@ -2186,13 +2732,23 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     const nomeCurto = (EU.nome || EU.usuario).split(" ")[0];
     document.getElementById("topo-nome").textContent = nomeCurto;
     document.getElementById("conta-nome").textContent = EU.nome || EU.usuario;
+    /* O RÓTULO vem do papel; a PERMISSÃO vem do servidor (`EU.admin`).
+       São coisas diferentes desde que existe a conta de dono: ela precisa
+       aparecer como o que é, e precisa poder tudo que o administrador pode.
+       Um `papel === "admin"` aqui esconderia o menu inteiro dela — a tela de
+       manutenção sem os botões de manutenção. */
     document.getElementById("conta-papel").textContent =
-      EU.papel === "admin" ? "administrador" : "operador";
+      EU.dono ? "dono do sistema" : (EU.papel === "admin" ? "administrador" : "operador");
 
     /* O operador não tem menu: a tela dele é a única que existe. Menu com um
        item só é ruído numa tela que se olha de relance, com a máquina rodando. */
-    const admin = EU.papel === "admin";
+    const admin = !!EU.admin;
     document.getElementById("menu").hidden = !admin;
+
+    /* A conexão do tempo real sobe DEPOIS de a sessão estar boa. Antes, ela
+       levaria 401 e o `EventSource` reconectaria sem parar contra uma porta
+       fechada. */
+    ligarTempoReal();
 
     if (MAQUINA_TOKEN) {
       const chip = document.getElementById("chip-maquina");

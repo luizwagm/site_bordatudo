@@ -95,9 +95,14 @@ sudo grep -c . /etc/bordatudo.env               # tem de sair: 2
 node sql/rodar.cjs 02-esquema.sql
 node sql/rodar.cjs 04-cadastros.sql
 node sql/rodar.cjs 05-senha-provisoria.sql
+node sql/rodar.cjs 06-preco-pagamento-dono.sql
 ```
 
-Rodar de novo não faz mal: os três arquivos são `IF NOT EXISTS`.
+Rodar de novo não faz mal: os quatro arquivos são `IF NOT EXISTS`.
+
+O `06` traz o **preço** do desenho, o **valor** da ficha, a data de **pagamento**
+do lote e o papel de **dono**. Sem ele o sistema sobe e quebra na primeira tela
+que fala em dinheiro — a coluna simplesmente não existe.
 
 **Conferir** — tem de listar 10 tabelas:
 
@@ -141,6 +146,28 @@ de quem cadastrou continue valendo como senha de verdade.
 Deste ponto em diante, usuário se cria **pela tela**: Cadastros → Usuários →
 Novo. Este comando existe só para o primeiro administrador e para o caso de
 ficar todo mundo trancado do lado de fora.
+
+### 6b. A conta de dono
+
+```bash
+node criar-usuario.cjs --dono <seu-login> "Seu Nome"
+```
+
+Uma conta acima de administrador, para manutenção do sistema. Ela **não aparece
+na lista de usuários** e **nenhuma tela a altera, desativa, apaga ou redefine** —
+este comando é a única porta.
+
+- **Só pode existir uma.** Quem garante é um índice único no banco, não uma
+  conferência do programa: duas execuções ao mesmo tempo passariam por qualquer
+  `if`, e o banco recusa a segunda.
+- A senha é **longa e sorteada**, não os seis dígitos das outras. Como ela não
+  pode ser trocada pela tela, seis dígitos ficariam valendo para sempre numa
+  conta com poder sobre tudo. Guarde num gerenciador de senhas.
+- Para **trocar a senha**, rode o mesmo comando de novo.
+
+> Crie **antes** de o cliente começar a usar. O comando continua funcionando
+> depois, mas criar a conta de manutenção no meio de um dia de produção é mexer
+> no sistema com gente dentro.
 
 ---
 

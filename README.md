@@ -143,6 +143,8 @@ Depois:
 ```bash
 node sql/rodar.cjs 02-esquema.sql
 node sql/rodar.cjs 04-cadastros.sql
+node sql/rodar.cjs 05-senha-provisoria.sql
+node sql/rodar.cjs 06-preco-pagamento-dono.sql
 node sql/03-dados-de-teste.cjs --gravar
 node criar-usuario.cjs eduardo admin "Eduardo"
 ```
@@ -248,6 +250,46 @@ na hora, e reativar exige imprimir etiqueta nova: um adesivo que passou meses
 fora de uso pode ter ido parar em qualquer lugar.
 
 **Lote só é apagado vazio.** Tire as fichas em "Juntar fichas" antes.
+
+**O preço é do escritório e não sai para o operador.** O desenho tem preço por
+peça, e a API o REMOVE da resposta quando quem pergunta não é administrador —
+não é um campo escondido por CSS. A ficha guarda uma CÓPIA do preço no momento
+da abertura, como já fazia com a pontuação: reajustar um desenho hoje não pode
+mudar o valor de uma ficha que já virou nota no mês passado.
+
+**O operador cadastra desenho, e só isso.** A arte nova chega junto com o
+serviço, fora do horário do escritório, e a ficha não abre sem desenho. Sem
+essa porta, o que acontece na prática é o operador pendurar a produção num
+desenho parecido — e isso envenena o relatório sem deixar rastro. Ele **cria**
+e anexa imagem; **não altera nem exclui**, e o desenho nasce **sem preço**, o
+que o põe na lista "sem preço" do administrador.
+
+**Pago e faturado são fatos diferentes.** `situacao = faturado` é nota emitida;
+`pago_em` é dinheiro recebido. Um lote faturado e não pago é o estado normal do
+mês inteiro — é o que se cobra. Se "pago" fosse mais um valor de `situacao`,
+marcar o pagamento apagaria o "faturado" e a pergunta "o que já saiu e ainda não
+entrou?" deixaria de ter resposta.
+
+**A conta de dono não está na lista de usuários — e nenhuma tela a toca.** Um
+papel acima de administrador, para manutenção. Não é criada, alterada,
+desativada, apagada nem tem senha redefinida pelo painel: `criar-usuario.cjs
+--dono` é a única porta, e a senha dela só troca por lá. Só pode existir uma, e
+quem garante é um índice único no banco.
+
+> Esconder não é proteger. Se a conta apenas sumisse da lista, um `DELETE
+> /restrito/api/usuarios/1` ainda a apagaria — e o id 1 é o primeiro palpite de
+> qualquer um. As rotas de usuário respondem **404** para ela: para quem está de
+> fora, ela não existe.
+
+**As telas se atualizam sozinhas.** Uma conexão aberta (`EventSource`) avisa
+todos os aparelhos quando um cadastro é gravado. O aviso leva **só o assunto**
+("desenhos mudou"), nunca o dado: cada tela vai buscar pela rota normal e recebe
+o que o papel dela permite — é o que impede o preço de chegar ao navegador do
+operador por outro caminho.
+
+> Isso vive na memória do processo. No dia em que o sistema rodar em mais de um
+> processo, cada um avisaria só os seus; a correção é o `LISTEN/NOTIFY` do
+> próprio PostgreSQL, não um servidor a mais.
 
 ---
 

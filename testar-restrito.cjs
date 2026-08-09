@@ -49,7 +49,14 @@ const VERBOSO = process.argv.includes("--verboso");
 
 function criarNavegador(quem) {
   let cookie = "";
-  return async function pedir(caminho, metodo, corpo) {
+  /* O cookie fica acessível de fora por causa do canal de eventos: ele é uma
+     resposta que NÃO TERMINA, e o `fetch` desta função espera o corpo inteiro
+     antes de devolver — esperaria para sempre. O teste do canal precisa falar
+     `http.request` direto, e para isso precisa do cookie desta sessão. */
+  pedir.cookie = () => cookie;
+  return pedir;
+
+  async function pedir(caminho, metodo, corpo) {
     const r = await fetch(BASE + caminho, {
       method: metodo || "GET",
       headers: Object.assign({ "Content-Type": "application/json" }, cookie ? { Cookie: cookie } : {}),
@@ -63,7 +70,41 @@ function criarNavegador(quem) {
     let dados = null;
     try { dados = texto ? JSON.parse(texto) : null; } catch { dados = texto; }
     return { status: r.status, dados, texto, tipo: r.headers.get("content-type") || "" };
-  };
+  }
+}
+
+/* ==========================================================================
+   OUVIR O CANAL DE EVENTOS
+
+   `fetch` não serve aqui: esta resposta nunca termina, e o `fetch` espera o
+   corpo inteiro antes de devolver — ficaria pendurado para sempre. Por isso
+   `http.request` cru, lendo os pedaços conforme chegam.
+
+   Abre o canal, espera ele responder, roda o gatilho e devolve o que chegou
+   até o primeiro aviso (ou vazio, se estourar o tempo).
+   ========================================================================== */
+function ouvirEventos(cookie, gatilho, ms) {
+  return new Promise((resolve) => {
+    let buf = "";
+    let pronto = false;
+    const req = require("node:http").request(
+      { host: "127.0.0.1", port: PORTA, path: "/restrito/api/eventos", headers: { Cookie: cookie } },
+      (resp) => {
+        if (resp.statusCode !== 200) { req.destroy(); return resolve("status:" + resp.statusCode); }
+        resp.on("data", (d) => {
+          buf += String(d);
+          /* O gatilho só dispara DEPOIS de o canal estar de pé (o servidor
+             manda `retry:` de cara). Gravar antes seria uma corrida: o aviso
+             sairia para uma lista de ouvintes ainda vazia. */
+          if (!pronto) { pronto = true; Promise.resolve().then(gatilho); return; }
+          if (buf.includes("event: mudou")) { req.destroy(); resolve(buf); }
+        });
+      });
+    req.on("error", () => resolve(buf));
+    req.end();
+    const relogio = setTimeout(() => { req.destroy(); resolve(buf); }, ms || 4000);
+    relogio.unref && relogio.unref();
+  });
 }
 
 /* ==========================================================================
@@ -75,6 +116,19 @@ async function limpar() {
   for (const tabela of ordem) {
     const ids = CRIADO[tabela].filter(Boolean);
     if (!ids.length) continue;
+
+    /* ABRIR FICHA CRIA JORNADA SOZINHA quando não há uma aberta — é a regra
+       que protege o operador que esqueceu de bater o início. Essas jornadas
+       não passam por `CRIADO.jornadas`, e sem removê-las o RESTRICT da chave
+       estrangeira impede apagar os usuários de teste: a suíte terminava com
+       "violates RESTRICT" e deixava o rastro para trás.
+
+       Continua sendo por ID: só as jornadas DOS USUÁRIOS que esta suíte
+       criou. */
+    if (tabela === "usuarios") {
+      await Q.run("DELETE FROM fichas WHERE usuario_id = ANY(?)", ids);
+      await Q.run("DELETE FROM jornadas WHERE usuario_id = ANY(?)", ids);
+    }
     await Q.run(`DELETE FROM ${tabela} WHERE id = ANY(?)`, ids);
   }
 
@@ -609,19 +663,39 @@ async function limparRestos() {
   eq((await admin(`/restrito/api/desenhos/${desA1}/fotos`, "POST",
     { nome: "falsa.png", dados: "data:image/png;base64," + Buffer.from("<html><script>alert(1)</script>").toString("base64") })).status,
     400, "HTML renomeado para .png é recusado");
-  eq((await admin(`/restrito/api/desenhos/${desA1}/fotos`, "POST", { nome: "x.exe", dados: "data:;base64," + PNG })).status,
-    400, "extensão fora da lista é recusada");
+  /* A EXTENSÃO NÃO MANDA MAIS — QUEM MANDA É A ASSINATURA.
+
+     Antes, o nome decidia a extensão gravada, e um PNG chamado `.jpg` era
+     servido como jpeg pela rota da foto (que escolhe o tipo pela extensão).
+     Agora o formato verdadeiro é lido dos primeiros bytes e o arquivo é
+     batizado com ele. Duas consequências, e as duas são testadas aqui:
+     conteúdo que não é imagem continua recusado, e nome errado deixa de ser
+     motivo de recusa — passa a ser corrigido. */
+  r = await admin(`/restrito/api/desenhos/${desA1}/fotos`, "POST",
+    { nome: "x.exe", dados: "data:;base64," + PNG });
+  eq(r.status, 201, "nome com extensão errada é ACEITO…");
+  ok(String(r.dados.arquivo).endsWith(".png"),
+     "…e gravado com a extensão do formato de verdade", r.dados.arquivo);
+  CRIADO.arquivos.push(r.dados.arquivo);
+
+  /* Imagem COLADA não tem nome nenhum — é o caso do Ctrl+V. Exigir extensão
+     obrigaria a tela a inventar um nome só para passar na validação. */
+  r = await admin(`/restrito/api/desenhos/${desA1}/fotos`, "POST", { nome: "", dados: "data:;base64," + PNG });
+  eq(r.status, 201, "imagem SEM nome (colada) é aceita");
+  ok(String(r.dados.arquivo).startsWith("colado-"), "e recebe nome próprio", r.dados.arquivo);
+  CRIADO.arquivos.push(r.dados.arquivo);
+
   eq((await admin(`/restrito/api/desenhos/${desA1}/fotos`, "POST", { nome: "vazia.png", dados: "" })).status,
     400, "arquivo vazio é recusado");
 
   r = await admin(`/restrito/api/desenhos/${desA1}/fotos`);
-  eq(r.dados.itens.length, 2, "o desenho tem duas fotos");
+  eq(r.dados.itens.length, 4, "o desenho tem quatro fotos");
   eq(r.dados.itens[0].arquivo, arq1, "a primeira enviada é a primeira da lista (é a capa)");
   const foto1 = r.dados.itens[0].id, foto2 = r.dados.itens[1].id;
 
   r = await admin("/restrito/api/desenhos?pagina=1&por=50&todos=1&busca=ZZ QA DES A1");
   eq(r.dados.itens[0].capa, arq1, "a listagem já traz a capa, sem consulta extra");
-  eq(Number(r.dados.itens[0].fotos), 2, "e a contagem de fotos");
+  eq(Number(r.dados.itens[0].fotos), 4, "e a contagem de fotos");
 
   eq((await admin(`/restrito/api/desenhos/${desA1}/fotos/${foto1}`, "PUT", { legenda: "frente da camisa" })).status, 200,
      "grava a legenda");
@@ -637,8 +711,20 @@ async function limparRestos() {
   r = await ninguem("/restrito/foto/" + arq1);
   eq(r.status, 302, "SEM sessão, a foto NÃO sai — manda para a entrada");
   eq((await oper("/restrito/foto/" + arq1)).status, 200, "o operador vê a foto (ele precisa dela na máquina)");
-  eq((await oper(`/restrito/api/desenhos/${desA1}/fotos`, "POST", png("a.png"))).status, 403,
-     "mas não envia nem apaga foto");
+  /* O OPERADOR ACRESCENTA FOTO, mas não mexe nas que existem.
+
+     Acompanha a regra de cadastrar desenho: a arte chega junto com o serviço,
+     fora do horário do escritório. Apagar e reetiquetar continuam do
+     administrador — apagar foto é apagar propriedade do cliente. */
+  r = await oper(`/restrito/api/desenhos/${desA1}/fotos`, "POST", png("a.png"));
+  eq(r.status, 201, "o operador ACRESCENTA foto");
+  CRIADO.arquivos.push(r.dados.arquivo);
+  const fotoDoOper = r.dados.id;
+  eq((await oper(`/restrito/api/desenhos/${desA1}/fotos/${fotoDoOper}`, "DELETE")).status, 403,
+     "mas NÃO apaga foto");
+  eq((await oper(`/restrito/api/desenhos/${desA1}/fotos/${fotoDoOper}`, "PUT", { legenda: "x" })).status, 403,
+     "nem troca a legenda");
+  await admin(`/restrito/api/desenhos/${desA1}/fotos/${fotoDoOper}`, "DELETE");
 
   eq((await admin("/restrito/foto/..%2F..%2F.env")).status, 404, "travessia de caminho na rota da foto: 404");
   eq((await admin("/restrito/foto/nao-existe.png")).status, 404, "foto inexistente: 404");
@@ -981,6 +1067,291 @@ async function limparRestos() {
   eq((await admin("/restrito/api/lotes/" + loteSemCor, "DELETE")).status, 200,
      "esvaziado em “Juntar fichas”, aí sim sai");
   CRIADO.lotes = CRIADO.lotes.filter((x) => x !== loteSemCor);
+
+  /* ============================== 12i. PREÇO — o que o operador não vê === */
+  /* A lista de desenhos é a rota mais chamada do sistema, e quem mais a chama
+     é justamente a tela que menos pode ver este campo: o operador a consulta a
+     cada ficha que abre. */
+  console.log("  12i. preço do desenho");
+
+  eq((await admin("/restrito/api/desenhos/" + desA1, "PUT", { preco: "12,50" })).status, 200,
+     "admin põe preço no desenho");
+  eq((await admin("/restrito/api/desenhos/" + desA1)).dados.preco, 12.5,
+     "o preço é gravado com os centavos certos");
+
+  /* Dinheiro digitado por gente: o separador decimal é o último ponto ou
+     vírgula com 1 ou 2 dígitos depois; o resto é milhar e some. */
+  await admin("/restrito/api/desenhos/" + desA2, "PUT", { preco: "R$ 1.234,56" });
+  eq((await admin("/restrito/api/desenhos/" + desA2)).dados.preco, 1234.56,
+     "aceita R$ com ponto de milhar e vírgula decimal");
+  await admin("/restrito/api/desenhos/" + desA2, "PUT", { preco: "8" });
+  eq((await admin("/restrito/api/desenhos/" + desA2)).dados.preco, 8, "aceita número inteiro");
+  eq((await admin("/restrito/api/desenhos/" + desA2, "PUT", { preco: "doze reais" })).status, 400,
+     "texto que não é número é recusado");
+
+  /* VAZIO É NULO, NÃO ZERO — "ainda não precifiquei" contra "é de graça". Sem
+     a distinção, o desenho entra valendo R$ 0,00 num lote faturado. */
+  await admin("/restrito/api/desenhos/" + desA2, "PUT", { preco: "" });
+  eq((await admin("/restrito/api/desenhos/" + desA2)).dados.preco, null,
+     "preço em branco vira NULO, não zero");
+
+  /* O VAZAMENTO QUE ISTO IMPEDE: as consultas nasceram com `SELECT d.*`. O
+     operador não veria o campo na tela — só o receberia no corpo da resposta,
+     à vista de quem abrisse o navegador. */
+  r = await oper("/restrito/api/desenhos?todos=1");
+  const doOper = r.dados.itens.filter((d) => String(d.id) === String(desA1))[0];
+  ok(doOper && !("preco" in doOper), "operador NÃO recebe o preço na LISTA de desenhos",
+     JSON.stringify(doOper && doOper.preco));
+  ok(!("preco" in (await oper("/restrito/api/desenhos/" + desA1)).dados), "nem no desenho aberto");
+  ok("preco" in (await admin("/restrito/api/desenhos/" + desA1)).dados, "e o admin recebe");
+
+  /* O outro lado: sem o campo na tela, mas com a rota na mão, o operador ainda
+     poderia MANDAR um preço que o escritório não escolheu. */
+  r = await oper("/restrito/api/desenhos", "POST",
+    { nome: "ZZ QA DES OPER", cliente_id: cliA, pontuacao: "500", preco: "999,99" });
+  eq(r.status, 201, "operador CADASTRA desenho (a arte chega fora do horário do escritório)");
+  const desOper = r.dados.id; CRIADO.desenhos.push(desOper);
+  eq(r.dados.semPreco, true, "e a resposta avisa que ele nasceu sem preço");
+  eq((await admin("/restrito/api/desenhos/" + desOper)).dados.preco, null,
+     "o preço que o operador mandou foi DESCARTADO");
+
+  eq((await oper("/restrito/api/desenhos/" + desOper, "PUT", { nome: "ZZ QA OUTRO" })).status, 403,
+     "mas o operador NÃO altera desenho — mudar a pontuação muda fichas abertas");
+  eq((await oper("/restrito/api/desenhos/" + desOper, "DELETE")).status, 403, "nem exclui");
+  eq((await oper("/restrito/api/clientes", "POST", { nome: "ZZ QA Cli Oper" })).status, 403,
+     "e a exceção é SÓ para desenho — cliente continua fechado");
+
+  r = await admin("/restrito/api/desenhos?todos=1&sem_preco=1");
+  ok(r.dados.itens.some((d) => String(d.id) === String(desOper)),
+     "o filtro “sem preço” acha o desenho que o operador cadastrou");
+  ok(!r.dados.itens.some((d) => String(d.id) === String(desA1)), "e não traz os que já têm preço");
+
+  /* ===================== 12j. buscar desenho pelo nome do CLIENTE ======== */
+  console.log("  12j. busca de desenho por cliente");
+  r = await admin("/restrito/api/desenhos?pagina=1&por=50&todos=1&busca=ZZ QA Cliente A");
+  ok(r.dados.itens.length >= 2, "buscar pelo nome do CLIENTE traz os desenhos dele",
+     "vieram " + r.dados.itens.length);
+  ok(r.dados.itens.every((d) => String(d.cliente_id) === String(cliA)), "e só os dele");
+  /* O total sai de uma consulta própria. Sem o JOIN nela, esta busca não
+     devolveria zero: derrubaria a consulta inteira, e a tela ficaria sem
+     paginação exatamente quando alguém busca. */
+  ok(Number(r.dados.total) >= 2, "e a contagem da paginação sobrevive ao JOIN", String(r.dados.total));
+  eq((await admin("/restrito/api/desenhos?pagina=1&por=50&todos=1&busca=ZZ QA DES B1")).dados.itens.length, 1,
+     "buscar pelo nome do DESENHO continua funcionando");
+
+  r = await admin("/restrito/api/desenhos?todos=1&cliente=" + cliB);
+  ok(r.dados.itens.length >= 1 && r.dados.itens.every((d) => String(d.cliente_id) === String(cliB)),
+     "e o filtro por cliente serve a gaveta da modal");
+
+  /* ============================ 12k. valor da ficha e correção ========== */
+  console.log("  12k. valor da ficha e correção do admin");
+
+  await admin("/restrito/api/desenhos/" + desB1, "PUT", { preco: "10,00" });
+  r = await oper("/restrito/api/fichas", "POST", { cliente_id: cliB, desenho_id: desB1 });
+  eq(r.status, 201, "operador abre ficha de desenho precificado");
+  const fVal = r.dados.id; CRIADO.fichas.push(fVal);
+  await oper("/restrito/api/fichas/" + fVal + "/fechar", "PUT", { quantidade: "7" });
+
+  r = await admin("/restrito/api/fichas/" + fVal);
+  eq(r.dados.preco_unitario, 10, "a ficha guardou o preço do desenho");
+  eq(r.dados.total_valor, 70, "e o total é calculado PELO BANCO (7 × 10)");
+
+  /* O motivo de o preço ser cópia e não join: reajuste não reescreve nota. */
+  await admin("/restrito/api/desenhos/" + desB1, "PUT", { preco: "99,00" });
+  eq((await admin("/restrito/api/fichas/" + fVal)).dados.total_valor, 70,
+     "reajustar o desenho NÃO mexe na ficha já fechada");
+
+  r = await admin("/restrito/api/fichas/" + fVal, "PUT",
+    { aberta_em: "2026-08-01T08:00:00", fechada_em: "2026-08-01T11:30:00" });
+  eq(r.status, 200, "admin corrige as horas da ficha");
+  eq(new Date(r.dados.ficha.fechada_em) - new Date(r.dados.ficha.aberta_em), 3.5 * 3600e3,
+     "e a duração passa a ser a corrigida");
+
+  /* Fim antes do início não quebra nada visível: a peça continua contando e o
+     que fica negativo é o tempo por peça, que entra na média do dia. */
+  /* DUAS CAMADAS recusam isto, e o teste precisa dizer QUAL. O banco tem o
+     `ck_ficha_ordem_do_tempo`, e ele é a garantia de verdade; a conferência na
+     aplicação existe para a pessoa ler uma frase em vez de um erro de driver.
+     Conferindo só o status 400, desligar a checagem da aplicação não derruba
+     teste nenhum — o banco recusa igual e o 400 continua vindo. Só a MENSAGEM
+     separa as duas. */
+  r = await admin("/restrito/api/fichas/" + fVal, "PUT", { fechada_em: "2026-07-31T06:00:00" });
+  eq(r.status, 400, "fim ANTES do início é recusado — mesmo mexendo só num dos dois campos");
+  eq(r.dados.error, "o fim não pode ser antes do início",
+     "e quem recusou foi a APLICAÇÃO, com uma frase — não o banco, com um erro de driver");
+  eq(String((await admin("/restrito/api/fichas/" + fVal)).dados.fechada_em).slice(0, 10), "2026-08-01",
+     "e a hora antiga continua lá: a recusa não gravou pela metade");
+
+  eq((await admin("/restrito/api/fichas/" + fVal, "PUT", { aberta_em: "não é data" })).status, 400,
+     "data sem sentido é recusada, e não vira NULO em silêncio");
+
+  r = await admin("/restrito/api/fichas/" + fVal, "PUT", { preco_unitario: "12,00" });
+  eq(r.status, 200, "admin corrige o valor da ficha");
+  eq(r.dados.ficha.total_valor, 84, "e o total recalcula sozinho (7 × 12)");
+  eq((await admin("/restrito/api/desenhos/" + desB1)).dados.preco, 99,
+     "sem mexer no preço do CADASTRO do desenho");
+
+  eq((await oper("/restrito/api/fichas/" + fVal, "PUT", { quantidade: "1" })).status, 403,
+     "operador não corrige ficha");
+
+  /* =========================== 12l. gavetas do cliente e lote pago ====== */
+  console.log("  12l. gavetas do cliente e pagamento do lote");
+
+  r = await admin("/restrito/api/clientes/" + cliB);
+  ok(r.dados.resumo && Number(r.dados.resumo.desenhos) >= 1, "o cliente traz os totais dos três botões");
+  ok("lotes_a_receber" in r.dados.resumo, "inclusive quantos lotes estão a receber");
+
+  r = await admin("/restrito/api/clientes/" + cliB + "/fichas");
+  eq(r.status, 200, "a gaveta de peças do cliente responde");
+  ok(r.dados.fichas.some((f) => String(f.id) === String(fVal)), "e traz a ficha dele");
+  eq(r.dados.soma.valor, 84, "somando o valor produzido");
+
+  r = await admin("/restrito/api/lotes", "POST", { cliente_id: cliB, descricao: "ZZ QA Lote Pago" });
+  const lotePg = r.dados.id; CRIADO.lotes.push(lotePg);
+  await admin("/restrito/api/lotes/" + lotePg + "/fichas", "PUT", { fichas: [fVal] });
+
+  /* PAGO É UM FATO À PARTE DE FATURADO. Como quarto estado de `situacao`,
+     marcar o pagamento apagaria o "faturado" — e "o que já saiu e ainda não
+     entrou", que é a razão de existir da cobrança, deixaria de ter resposta. */
+  eq((await admin("/restrito/api/lotes/" + lotePg, "PUT", { pago_em: "2026-08-05" })).status, 400,
+     "lote AINDA ABERTO não pode ser marcado como pago");
+  await admin("/restrito/api/lotes/" + lotePg, "PUT", { situacao: "fechado" });
+  eq((await admin("/restrito/api/lotes/" + lotePg, "PUT", { pago_em: "2026-08-05" })).status, 200,
+     "lote fechado, aí sim");
+
+  r = await admin("/restrito/api/lotes/" + lotePg);
+  eq(r.dados.lote.situacao, "fechado", "e o pagamento NÃO apagou a situação");
+  ok(r.dados.lote.pago_em, "o pagamento ficou gravado");
+  eq(r.dados.valor, 84, "o lote soma o valor das fichas dele");
+
+  ok((await admin("/restrito/api/lotes?pago=1")).dados.lotes.some((l) => String(l.id) === String(lotePg)),
+     "o filtro “pago” acha o lote");
+  r = await admin("/restrito/api/lotes?pago=0");
+  ok(!r.dados.lotes.some((l) => String(l.id) === String(lotePg)),
+     "e o filtro “a receber” não o traz mais — é a lista de cobrança");
+  ok(r.dados.conta && "a_receber" in r.dados.conta, "a lista de lotes traz o caixa junto");
+
+  r = await admin("/restrito/api/clientes/" + cliB + "/lotes");
+  eq(r.status, 200, "a gaveta de lotes do cliente responde");
+  eq(r.dados.conta.recebido, 84, "com o recebido separado do a receber");
+
+  eq((await oper("/restrito/api/clientes/" + cliB + "/lotes")).status, 403,
+     "e o operador não entra na gaveta financeira");
+
+  /* ==================================== 12m. tempo real (SSE) =========== */
+  console.log("  12m. tempo real");
+  eq((await ninguem("/restrito/api/eventos")).status, 401, "o canal de eventos exige sessão");
+
+  const fluxo = await ouvirEventos(admin.cookie(), async () => {
+    const x = await admin("/restrito/api/mercadorias", "POST", { nome: "ZZ QA Aviso" });
+    if (x.dados && x.dados.id) CRIADO.mercadorias.push(x.dados.id);
+  });
+  ok(fluxo.includes("event: mudou"), "gravar um cadastro avisa quem está ouvindo", fluxo.slice(0, 90));
+  ok(fluxo.includes('"o":"mercadorias"'), "e o aviso diz QUAL assunto mudou");
+  /* O aviso leva só o assunto. Se levasse a linha do desenho, o PREÇO chegaria
+     a todos os navegadores da fábrica — inclusive aos que a API se dá ao
+     trabalho de filtrar. */
+  ok(!/preco|pontuacao|senha/.test(fluxo), "e NÃO carrega dado nenhum junto", fluxo.slice(0, 90));
+
+  /* ======================================= 12n. a conta de DONO ========= */
+  console.log("  12n. conta de dono");
+
+  /* Esta seção só roda se NÃO houver dono no banco. Num servidor de verdade,
+     o dono é a conta de manutenção do cliente: apontar para ela um teste de
+     "redefinir senha" — ainda que a rota deva recusar — é o tipo de risco que
+     só se descobre quando a proteção estiver quebrada, que é exatamente
+     quando o teste roda. Um teste de segurança não pode ser a coisa que causa
+     o estrago que ele procura. */
+  const donoExistente = await Q.get("SELECT id, usuario FROM usuarios WHERE papel = 'dono'");
+  if (donoExistente) {
+    console.log(`     ⚠ pulada: já existe a conta de dono "${donoExistente.usuario}".`);
+    console.log("       Esta suíte não mexe nela. Para rodar a seção, use um banco de teste.");
+  } else {
+    const SENHA_DONO = "zz-qa-dono-2026";
+    const idDono = await Q.inserir(
+      `INSERT INTO usuarios (usuario, nome, senha_hash, papel, senha_provisoria)
+       VALUES (?,?,?,'dono',FALSE) RETURNING id`,
+      "zz_qa_dono", "ZZ QA Dono", gerarHash(SENHA_DONO));
+    CRIADO.usuarios.push(idDono);
+
+    /* SÓ UMA. A garantia é do banco, não da aplicação: duas execuções do CLI
+       ao mesmo tempo passariam por qualquer conferência em JavaScript. */
+    let segundo = null;
+    try {
+      segundo = await Q.inserir(
+        "INSERT INTO usuarios (usuario, nome, senha_hash, papel) VALUES (?,?,?,'dono') RETURNING id",
+        "zz_qa_dono2", "ZZ QA Dono 2", gerarHash("x"));
+      CRIADO.usuarios.push(segundo);
+    } catch (e) { /* esperado */ }
+    ok(segundo === null, "o BANCO recusa uma segunda conta de dono");
+
+    const dono = criarNavegador("dono");
+    eq((await dono("/restrito/api/entrar", "POST", { usuario: "zz_qa_dono", senha: SENHA_DONO })).status, 200,
+       "o dono entra");
+
+    /* O ponto que quebraria tudo em silêncio: antes destes ajustes o código
+       comparava `papel === "admin"` em oito lugares. Cada uma que sobrevivesse
+       trancaria o dono para fora da tela que ele existe para consertar. */
+    r = await dono("/restrito/api/eu");
+    eq(r.dados.admin, true, "a sessão do dono diz que ele PODE o que o admin pode");
+    eq(r.dados.dono, true, "e que ele é o dono");
+    eq((await dono("/restrito/api/producao")).status, 200, "o dono entra na área do administrador");
+    eq((await dono("/restrito/api/lotes")).status, 200, "vê os lotes");
+    r = await dono("/restrito/api/clientes", "POST", { nome: "ZZ QA Cliente Dono" });
+    eq(r.status, 201, "e mexe nos cadastros");
+    CRIADO.clientes.push(r.dados.id);
+    ok("preco" in (await dono("/restrito/api/desenhos/" + desA1)).dados, "o dono vê o preço");
+
+    /* INVISÍVEL na lista — e é a parte fácil. */
+    r = await admin("/restrito/api/usuarios");
+    ok(!r.dados.itens.some((u) => String(u.id) === String(idDono)),
+       "a conta de dono NÃO aparece na lista de usuários");
+    ok(!r.dados.itens.some((u) => u.papel === "dono"), "nem por papel");
+
+    /* INTOCÁVEL — e é a parte que importa. Esconder sem proteger é pior que
+       não esconder: `DELETE /usuarios/1` é o primeiro palpite de qualquer um,
+       e ninguém veria o estrago até precisar da conta. */
+    eq((await admin("/restrito/api/usuarios/" + idDono, "DELETE")).status, 404,
+       "o admin não APAGA a conta de dono");
+    eq((await admin("/restrito/api/usuarios/" + idDono, "PUT", { ativo: false })).status, 404,
+       "não a DESATIVA");
+    eq((await admin("/restrito/api/usuarios/" + idDono, "PUT", { papel: "operador" })).status, 404,
+       "não a REBAIXA");
+    eq((await admin("/restrito/api/usuarios/" + idDono + "/senha", "POST")).status, 404,
+       "e não redefine a senha dela");
+    ok(!!(await Q.get("SELECT id FROM usuarios WHERE id = ? AND papel = 'dono' AND ativo", idDono)),
+       "depois das quatro tentativas, a conta continua lá, dona e ativa");
+
+    /* 404 e não 403: para quem está de fora, a conta não existe. Um 403
+       confirmaria o id dela a quem estivesse procurando. */
+    eq((await admin("/restrito/api/usuarios/" + idDono, "DELETE")).dados.error, "usuário não encontrado",
+       "e a recusa não confirma que ela existe");
+
+    /* Promoção pela rota: sem esta trava, um admin viraria dono mandando o
+       papel no corpo — e sumiria da própria lista de usuários. */
+    const idComum = CRIADO.usuarios[1];
+    eq((await admin("/restrito/api/usuarios/" + idComum, "PUT", { papel: "dono" })).status, 400,
+       "ninguém se promove a dono pela rota");
+    eq((await admin("/restrito/api/usuarios", "POST",
+      { usuario: "zz_qa_novodono", nome: "x", papel: "dono" })).status, 400,
+       "nem cria um dono pelo painel");
+
+    /* A SENHA SÓ TROCA PELO TERMINAL. Sessão esquecida aberta numa máquina da
+       fábrica bastaria para alguém ficar com a conta que pode tudo — e trocar
+       a própria senha é operação legítima, que não deixa rastro. */
+    r = await dono("/restrito/api/eu/senha", "PUT", { atual: SENHA_DONO, nova: "outra-senha-boa-9" });
+    eq(r.status, 403, "o dono NÃO troca a própria senha pela tela");
+    ok(/terminal/i.test(r.dados.error || ""), "e a mensagem diz onde se troca", r.dados.error);
+    eq((await dono("/restrito/api/entrar", "POST", { usuario: "zz_qa_dono", senha: SENHA_DONO })).status, 200,
+       "a senha antiga continua valendo — a recusa não trocou nada");
+
+    /* O admin comum continua trocando a dele: a trava é do dono, não geral. */
+    eq((await admin("/restrito/api/eu/senha", "PUT",
+      { atual: SENHA_ADMIN, nova: SENHA_ADMIN })).status, 400,
+       "e o admin comum segue com a rota de senha funcionando (repetir a mesma é recusado)");
+
+    await dono("/restrito/api/sair", "POST");
+  }
 
   /* ==================================================== 13. SAIR ========= */
   console.log("  13. sair");

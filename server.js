@@ -30,7 +30,7 @@ const restrito = require("./restrito");
    servidor). Tem de ser ANTES de qualquer consulta ao Postgres. */
 carregarAmbiente(__dirname);
 
-const APP_VERSION = "1.8.1";
+const APP_VERSION = "1.9.0";
 const PORTA = Number(process.env.PORT) || 5193;
 const HOST = process.env.HOST || "127.0.0.1";
 const RAIZ = __dirname;
