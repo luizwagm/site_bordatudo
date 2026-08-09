@@ -213,6 +213,30 @@ async function limparRestos() {
      atrás de `require.main === module`. E testar o processo de verdade é o
      único jeito de o teste cobrir a subida. */
   const { spawn } = require("node:child_process");
+
+  /* ------------------------------------------------------------------
+     A PORTA ESTÁ LIVRE?
+
+     A espera pela subida dá por concluído assim que ALGUÉM responde na porta
+     — e "alguém" pode não ser o nosso servidor. Um processo esquecido ali de
+     outra tarefa faz a suíte inteira rodar contra ele: o nosso nem sobe (a
+     porta está ocupada), e o erro que aparece é o da primeira coisa que der
+     errado depois, longe da causa. Custou uma diagnose na suíte do site.
+     ------------------------------------------------------------------ */
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 800);
+    await fetch(`${BASE}/favicon.ico`, { signal: c.signal });
+    clearTimeout(t);
+    throw new Error(
+      `a porta ${PORTA} já está ocupada por outro processo.\n` +
+      "  A suíte rodaria contra ELE, não contra o servidor de teste.\n" +
+      "  Feche o que está usando a porta, ou rode com PORTA_TESTE=<outra>.");
+  } catch (e) {
+    if (/já está ocupada/.test(e.message)) throw e;   /* o aviso acima */
+    /* qualquer outro erro é a porta LIVRE, que é o que se quer */
+  }
+
   servidor = spawn(process.execPath, [path.join(__dirname, "server.js")], {
     env: Object.assign({}, process.env, {
       PORT: String(PORTA), HOST: "127.0.0.1",
@@ -220,6 +244,10 @@ async function limparRestos() {
          com o arquivo de produção, quem fosse entrar depois pegaria o bloqueio
          que o teste provocou. */
       LIMITES_ARQUIVO: ARQ_LIMITES,
+      /* Teto da LISTA de produção baixado a 3. É o que permite provar o corte
+         e o aviso com quatro fichas em vez de quinhentas e uma — um teto que
+         só se alcança com meio milhar de registros nunca seria testado. */
+      TETO_PRODUCAO: "3",
     }),
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1202,6 +1230,62 @@ async function limparRestos() {
 
   eq((await oper("/restrito/api/fichas/" + fVal, "PUT", { quantidade: "1" })).status, 403,
      "operador não corrige ficha");
+
+  /* ================== 12k-ter. produção: tudo por padrão, e sem mentir ==== */
+  console.log("  12k-ter. produção sem filtro");
+
+  /* SEM FILTRO A ROTA DEVOLVE TUDO. A tela abria no dia; quem chegava a ela
+     para conferir a semana encontrava lista vazia sempre que ainda não houvesse
+     produção naquele dia — e vazio não se distingue de quebrado. */
+  r = await admin("/restrito/api/producao");
+  eq(r.status, 200, "produção sem filtro responde");
+  ok(Number(r.dados.total) >= 4, "e traz TODA a produção registrada", "total " + r.dados.total);
+
+  /* MAIS RECENTE PRIMEIRO. É a ordem em que se procura o que acabou de sair da
+     máquina, e a razão de a tela abrir aqui. */
+  const datas = r.dados.fichas.map((f) => f.fechada_em);
+  ok(datas.every((d, i) => i === 0 || String(datas[i - 1]) >= String(d)),
+     "com as mais recentes no começo", JSON.stringify(datas.slice(0, 3)));
+
+  /* ------------------------------------------------------------------
+     O CORTE NÃO PODE MENTIR
+
+     A lista tem teto (aqui, 3 pelo ambiente da suíte); os totais NÃO têm.
+     Antes os totais eram somados sobre as linhas devolvidas — o que só nunca
+     deu problema porque a tela abria no dia e o teto nunca era alcançado.
+     Aberta em "tudo", a primeira oficina com produção acumulada veria os
+     números pararem de crescer, calados, no valor das últimas 500 fichas.
+     ------------------------------------------------------------------ */
+  eq(r.dados.teto, 3, "o teto da lista é o do ambiente");
+  ok(r.dados.fichas.length <= 3, "a LISTA respeita o teto", String(r.dados.fichas.length));
+  eq(r.dados.truncado, true, "e a resposta AVISA que foi cortada");
+  ok(Number(r.dados.total) > r.dados.fichas.length,
+     "o total conta o filtro inteiro, não a página devolvida");
+
+  /* A prova que separa "somou o banco" de "somou as 3 linhas": o total de
+     peças tem de bater com a soma de TODAS as fichas fechadas, contada aqui
+     por fora, por SQL. */
+  const conferencia = await Q.get(
+    "SELECT COUNT(*) c, COALESCE(SUM(quantidade),0) p, COALESCE(SUM(total_pontos),0) pt FROM fichas WHERE situacao = 'fechada'");
+  eq(Number(r.dados.total), Number(conferencia.c), "o número de fichas bate com o banco");
+  eq(Number(r.dados.soma.pecas), Number(conferencia.p), "as peças também");
+  eq(Number(r.dados.soma.pontos), Number(conferencia.pt), "e os pontos");
+
+  /* O mesmo vale para a quebra por operador: agrupada pelo BANCO, não pelas
+     linhas que couberam. */
+  const somaOp = Object.values(r.dados.porOperador).reduce((a, o) => a + Number(o.pecas), 0);
+  eq(somaOp, Number(conferencia.p), "a quebra por operador soma o mesmo que o total");
+
+  /* Com filtro que cabe no teto, nada de aviso — senão ele viraria ruído
+     permanente e ninguém leria quando importasse. */
+  r = await admin("/restrito/api/producao?soltas=1&cliente=" + cliB);
+  ok(r.dados.fichas.length === Number(r.dados.total), "filtro pequeno cabe inteiro na lista");
+  eq(r.dados.truncado, false, "e aí NÃO há aviso de corte");
+
+  /* Filtro de data continua valendo, e é o que estreita quando o corte incomoda. */
+  r = await admin("/restrito/api/producao?de=2099-01-01");
+  eq(Number(r.dados.total), 0, "filtro de data que não pega nada devolve zero");
+  eq(Number(r.dados.soma.pecas), 0, "com os totais zerados, e não os da consulta anterior");
 
   /* ============ 12k-bis. a lista velha do navegador ===================== */
   /* ISTO ACONTECEU EM PRODUÇÃO, seis vezes nos dias 07 e 08/08/2026:

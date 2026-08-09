@@ -347,6 +347,29 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
 .etiqueta--cinza { background: var(--prata-fundo); color: #5c5c70; }
 .etiqueta--vermelha { background: var(--vermelho-fundo); color: var(--vermelho); }
 
+/* ------------------------------------------------- abas de período -------
+   As abas resolvem a maioria das perguntas com um clique; os campos de data
+   ficam para o recorte que elas não cobrem. Vêm ANTES dos campos na tela pela
+   mesma razão. */
+.abas-periodo { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  margin: 0 0 14px; padding-bottom: 12px; border-bottom: 1px solid #edeef3; }
+.abas-periodo .aba { font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  border: 1.5px solid #dcdce7; background: #fff; color: var(--tinta);
+  border-radius: 999px; padding: .34rem .9rem; white-space: nowrap; }
+.abas-periodo .aba:hover { border-color: var(--laranja); }
+.abas-periodo .aba.on { background: var(--tinta); color: #fff; border-color: var(--tinta); }
+/* Só marca, não é botão: diz que o período veio dos campos de data, e nenhuma
+   aba corresponde a ele. Sem isso, filtrar à mão apagaria todas as abas e a
+   tela ficaria sem dizer em que recorte está. */
+.abas-periodo .aba--marca { cursor: default; border-style: dashed;
+  color: #77778a; font-weight: 700; }
+
+/* De que recorte são os números logo abaixo. */
+.recorte { margin: 0 0 12px; font-size: 13.5px; font-weight: 600; color: #55555f; }
+
+/* O aviso de que a LISTA foi cortada — os totais acima não foram. */
+.aviso-corte { font-size: 12.5px; font-weight: 600; color: var(--laranja); }
+
 .filtros { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
 .filtros label.campo { margin: 0; min-width: 138px; }
 .filtros label.campo > span { font-size: 11px; }
@@ -464,7 +487,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       <div class="menu__grupo">Chão de fábrica</div>
       <button data-tela="operar">Minha produção</button>
       <div class="menu__grupo">Administrativo</div>
-      <button data-tela="producao">Produção do dia</button>
+      <button data-tela="producao">Produção</button>
       <button data-tela="lotes">Lotes e amálgama</button>
 
       <!-- Cadastros é UM item que abre quatro. São telas que se visitam de vez
@@ -975,7 +998,97 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   /* ========================================================================
      6. ADMINISTRATIVO — produção
      ====================================================================== */
-  var filtroProducao = { de: hoje(), ate: hoje(), usuario: "", cliente: "", soltas: false };
+  /* ========================================================================
+     O PADRÃO É MOSTRAR TUDO
+
+     A tela abria no DIA. Quem chegava a ela para conferir a semana, o mês, ou
+     simplesmente "o que foi feito", encontrava uma lista vazia sempre que
+     ainda não havia produção naquele dia — e vazio não se distingue de
+     quebrado. Agora ela abre com tudo, do mais recente para o mais antigo, e
+     o recorte é escolhido.
+
+     UM SÓ LUGAR DECIDE O PERÍODO. As abas e os campos de data escrevem no
+     MESMO par `de`/`ate`; `atalho` guarda só qual aba está acesa. Se as abas
+     tivessem um período próprio, paralelo às datas, a tela mostraria uma aba
+     acesa contradizendo os campos logo abaixo — e o número na frente da
+     pessoa seria de um recorte, com a tela dizendo outro.
+
+     `atalho` vazio é o filtro digitado à mão (nenhuma aba acesa); "tudo" é
+     `de` e `ate` em branco.
+     ====================================================================== */
+  var filtroProducao = { de: "", ate: "", usuario: "", cliente: "", soltas: false, atalho: "tudo" };
+
+  /* Os atalhos. `dias` conta a partir de HOJE inclusive: "últimos 7 dias" é
+     hoje e os seis anteriores, que é o que alguém quer dizer ao falar isso —
+     e não sete dias sem contar o de hoje, que deixaria a produção da manhã de
+     fora justamente de quem foi conferi-la. */
+  var ATALHOS = [
+    { chave: "tudo", rotulo: "Tudo", dias: 0 },
+    { chave: "7",    rotulo: "Últimos 7 dias",  dias: 7 },
+    { chave: "15",   rotulo: "Últimos 15 dias", dias: 15 },
+    { chave: "30",   rotulo: "Últimos 30 dias", dias: 30 },
+  ];
+
+  /* `AAAA-MM-DD` de N dias atrás, na data LOCAL. `toISOString()` converteria
+     para UTC e, no fuso do Brasil, devolveria o dia ANTERIOR para qualquer
+     hora antes das 21h — o recorte nasceria um dia maior do que o pedido. */
+  function diasAtras(n) {
+    const d = new Date();
+    d.setDate(d.getDate() - (n - 1));
+    const p = (x) => String(x).padStart(2, "0");
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+  }
+
+  function aplicarAtalho(chave) {
+    const a = ATALHOS.filter((x) => x.chave === chave)[0];
+    filtroProducao.atalho = chave;
+    if (!a || !a.dias) { filtroProducao.de = ""; filtroProducao.ate = ""; }
+    else { filtroProducao.de = diasAtras(a.dias); filtroProducao.ate = hoje(); }
+  }
+
+  /* Qual aba acender a partir das datas. Serve para o caso de alguém digitar
+     à mão exatamente o intervalo de um atalho: a aba acende, em vez de a tela
+     insistir que aquilo é "personalizado". */
+  const temFiltro = () => !!(filtroProducao.de || filtroProducao.ate ||
+    filtroProducao.usuario || filtroProducao.cliente || filtroProducao.soltas);
+
+  /* A FRASE QUE DIZ DE QUE RECORTE SÃO OS NÚMEROS.
+
+     Sem ela, três indicadores grandes ficam na tela sem dizer de quando são —
+     e quem chega depois lê "12.400 peças" como se fosse o mês, quando é o ano
+     inteiro. É a mesma razão de o papel impresso levar subtítulo. */
+  function rotuloRecorte() {
+    const p = [];
+    if (!filtroProducao.de && !filtroProducao.ate) p.push("Toda a produção registrada");
+    else if (filtroProducao.atalho) p.push("Últimos " + filtroProducao.atalho + " dias");
+    else if (filtroProducao.de && filtroProducao.ate) p.push("De " + dataCurta(filtroProducao.de) + " a " + dataCurta(filtroProducao.ate));
+    else if (filtroProducao.de) p.push("A partir de " + dataCurta(filtroProducao.de));
+    else p.push("Até " + dataCurta(filtroProducao.ate));
+
+    if (filtroProducao.usuario) {
+      const u = (LISTAS.__operadores || []).filter((x) => String(x.id) === String(filtroProducao.usuario))[0];
+      p.push("operador: " + (u ? u.nome : "—"));
+    }
+    if (filtroProducao.cliente) {
+      const c = (LISTAS["clientes:todos"] || []).filter((x) => String(x.id) === String(filtroProducao.cliente))[0];
+      p.push("cliente: " + (c ? c.nome : "—"));
+    }
+    if (filtroProducao.soltas) p.push("só fora de lote");
+    return p.join(" · ");
+  }
+
+  const dataCurta = (iso) => {
+    if (!iso) return "";
+    const [a, m, d] = String(iso).slice(0, 10).split("-");
+    return d + "/" + m + "/" + a;
+  };
+
+  function atalhoDasDatas(de, ate) {
+    if (!de && !ate) return "tudo";
+    if (ate !== hoje()) return "";
+    for (const a of ATALHOS) if (a.dias && diasAtras(a.dias) === de) return a.chave;
+    return "";
+  }
 
   async function pintarProducao() {
     const alvo = document.getElementById("principal");
@@ -984,6 +1097,9 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     const clientes = await lista("clientes", true);
     const usuarios = (await api("/restrito/api/usuarios")).itens.map((u) =>
       ({ id: u.id, nome: u.nome || u.usuario }));
+    /* Guardado para o rótulo do recorte poder dizer o NOME do operador
+       filtrado, e não o id — que não significa nada para quem lê. */
+    LISTAS.__operadores = usuarios;
 
     const q = new URLSearchParams();
     if (filtroProducao.de) q.set("de", filtroProducao.de);
@@ -1000,7 +1116,17 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       '<h1 class="titulo-tela">Produção</h1>' +
       '<p class="subtitulo-tela">O que saiu das máquinas, ficha por ficha.</p>' +
 
-      '<div class="bloco"><div class="bloco__corpo"><div class="filtros">' +
+      '<div class="bloco"><div class="bloco__corpo">' +
+        /* As abas primeiro: é por elas que se resolve a maioria das perguntas,
+           e os campos de data ficam para o recorte que elas não cobrem. */
+        '<div class="abas-periodo">' +
+          ATALHOS.map((a) =>
+            '<button class="aba' + (filtroProducao.atalho === a.chave ? " on" : "") + '" ' +
+            'data-acao="periodo-producao" data-periodo="' + a.chave + '">' + a.rotulo + "</button>").join("") +
+          (filtroProducao.atalho === ""
+            ? '<span class="aba aba--marca">Período escolhido</span>' : "") +
+        "</div>" +
+        '<div class="filtros">' +
         '<label class="campo"><span>De</span><input type="date" id="fp-de" value="' + filtroProducao.de + '"></label>' +
         '<label class="campo"><span>Até</span><input type="date" id="fp-ate" value="' + filtroProducao.ate + '"></label>' +
         '<label class="campo"><span>Operador</span><select id="fp-usuario">' +
@@ -1012,12 +1138,23 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
           '<input type="checkbox" id="fp-soltas" style="width:17px;height:17px;accent-color:var(--tinta)"' +
           (filtroProducao.soltas ? " checked" : "") + "> só fora de lote</label></label>" +
         '<button class="btn" data-acao="filtrar-producao">Filtrar</button>' +
+        /* Limpar volta ao estado de abertura — TODOS os campos, não só as
+           datas. Meio-limpo é o que faz alguém jurar que o sistema perdeu
+           fichas quando o que sobrou foi um operador ainda selecionado. */
+        (temFiltro()
+          ? '<button class="btn btn--fantasma" data-acao="limpar-producao">Limpar filtro</button>' : "") +
       "</div></div></div>" +
 
-      '<div class="bloco"><div class="bloco__corpo"><div class="resumo-dia">' +
-        "<div><b>" + r.fichas.length + "</b><span>fichas</span></div>" +
+      '<div class="bloco"><div class="bloco__corpo">' +
+        '<p class="recorte">' + esc(rotuloRecorte()) + "</p>" +
+        '<div class="resumo-dia">' +
+        /* `r.total` e não `r.fichas.length`: a lista tem teto, os totais não.
+           Mostrar o tamanho da lista aqui faria o indicador parar de crescer
+           em 500 sem nada dizer. */
+        "<div><b>" + num(r.total) + "</b><span>fichas</span></div>" +
         "<div><b>" + num(r.soma.pecas) + "</b><span>peças</span></div>" +
         "<div><b>" + num(r.soma.pontos) + "</b><span>pontos</span></div>" +
+        (r.soma.valor ? "<div><b>" + dinheiro(r.soma.valor) + "</b><span>valor</span></div>" : "") +
       "</div>" +
       (porOp.length > 1
         ? '<div class="quebra" style="margin-top:16px">' + barras(porOp.map((o) =>
@@ -1026,7 +1163,17 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       "</div></div>" +
 
       '<div class="bloco">' +
-        '<div class="bloco__topo"><h2>Fichas</h2></div>' +
+        '<div class="bloco__topo"><h2>Fichas</h2>' +
+        '<span class="espaco"></span>' +
+        /* NUNCA CORTAR EM SILÊNCIO. Uma lista truncada sem aviso é lida como
+           "é tudo o que existe" — e aí os indicadores acima, que contam o
+           filtro inteiro, passam a parecer errados sem que ninguém saiba por
+           quê. */
+        (r.truncado
+          ? '<span class="aviso-corte">mostrando as ' + num(r.fichas.length) +
+            " mais recentes de " + num(r.total) + " — estreite o período para ver o resto</span>"
+          : "") +
+        "</div>" +
         (r.fichas.length ? '<div class="rolagem"><table><thead><tr>' +
           "<th>Fechada</th><th>Operador</th><th>Cliente</th><th>Desenho</th>" +
           "<th>Mercadoria</th><th>Cor</th><th>Máquina</th>" +
@@ -1742,7 +1889,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
                  é lida como "é tudo isso que existe", e a soma no topo passa a
                  parecer errada sem que ninguém saiba por quê. */
               ? '<p style="margin:10px 0 0;font-size:13px;color:#77778a">Mostrando as 300 ' +
-                "mais recentes. Use <b>Produção do dia</b> para o período completo.</p>"
+                "mais recentes. Use <b>Produção</b> para o período completo.</p>"
               : "")
           : '<div class="vazio">Nenhuma peça produzida para este cliente ainda.</div>');
     }
@@ -2499,13 +2646,29 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       }
 
       /* ---- produção ---- */
+      else if (acao === "periodo-producao") {
+        aplicarAtalho(b.getAttribute("data-periodo"));
+        await pintarProducao();
+      }
+      else if (acao === "limpar-producao") {
+        /* Volta ao estado de abertura INTEIRO. Limpar só as datas deixaria um
+           operador ainda selecionado, e a lista continuaria curta sem motivo
+           visível — que é como alguém conclui que o sistema perdeu fichas. */
+        filtroProducao = { de: "", ate: "", usuario: "", cliente: "", soltas: false, atalho: "tudo" };
+        await pintarProducao();
+      }
       else if (acao === "filtrar-producao") {
+        const de = document.getElementById("fp-de").value;
+        const ate = document.getElementById("fp-ate").value;
         filtroProducao = {
-          de: document.getElementById("fp-de").value,
-          ate: document.getElementById("fp-ate").value,
+          de, ate,
           usuario: document.getElementById("fp-usuario").value,
           cliente: document.getElementById("fp-cliente").value,
           soltas: document.getElementById("fp-soltas").checked,
+          /* A aba acende sozinha quando as datas digitadas coincidem com um
+             atalho — e apaga quando não coincidem. Sem isto, filtrar à mão
+             deixaria "Tudo" aceso sobre uma lista que não é tudo. */
+          atalho: atalhoDasDatas(de, ate),
         };
         await pintarProducao();
       }

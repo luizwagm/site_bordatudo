@@ -251,6 +251,20 @@ fora de uso pode ter ido parar em qualquer lugar.
 
 **Lote só é apagado vazio.** Tire as fichas em "Juntar fichas" antes.
 
+**A tela de Produção abre mostrando TUDO**, do mais recente para o mais antigo.
+Abas de 7, 15 e 30 dias para os recortes de sempre; os campos de data para o
+resto; "Limpar filtro" volta a tudo. As abas e as datas escrevem no MESMO
+período — digitar à mão o intervalo de uma aba acende essa aba, e um intervalo
+que não corresponde a nenhuma mostra "Período escolhido". Duas fontes para o
+mesmo recorte fariam a tela dizer uma coisa e os números serem de outra.
+
+> **A lista tem teto (500 linhas); os totais NÃO.** Fichas, peças, pontos e a
+> quebra por operador são contados pelo banco sobre o filtro inteiro. Enquanto
+> a tela abria no dia, somar as linhas devolvidas dava certo porque o teto
+> nunca era alcançado — aberta em "tudo", a primeira oficina com produção
+> acumulada veria os números pararem de crescer, calados, no valor das últimas
+> 500 fichas. Quando a lista é cortada, ela **diz** que foi.
+
 **O preço é do escritório e não sai para o operador.** O desenho tem preço por
 peça, e a API o REMOVE da resposta quando quem pergunta não é administrador —
 não é um campo escondido por CSS. A ficha guarda uma CÓPIA do preço no momento

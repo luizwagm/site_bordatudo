@@ -133,6 +133,17 @@ const SO_TERMINAL = "a senha desta conta só é trocada pelo terminal do servido
    ========================================================================== */
 const ouvintes = new Set();       // { res, papel }
 
+/* Teto da LISTA de produção. Ninguém lê dez mil linhas numa tela, e mandá-las
+   pelo fio custa caro do lado do celular preso na máquina. Os TOTAIS não têm
+   teto — são contados pelo banco sobre o filtro inteiro — e a resposta avisa
+   quando a lista foi cortada, para a tela dizer isso em vez de deixar parecer
+   que aquilo é tudo o que existe. */
+/* Vem do ambiente para a suíte poder baixá-lo e provar o corte de verdade,
+   com quatro fichas em vez de quinhentas e uma. Um teto que só se alcança com
+   meio milhar de registros é um teto que nunca seria testado — e o aviso de
+   lista cortada só serve se alguém já o tiver visto aparecer. */
+const TETO_PRODUCAO = Number(process.env.TETO_PRODUCAO) || 500;
+
 function assinarEventos(req, res, sessao) {
   res.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
@@ -1947,7 +1958,9 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
 
   /* Consulta das fichas. É a tela que substitui o "juntar as folhas dos
      operadores": filtra por período, operador, cliente, e mostra o que ainda
-     não foi amalgamado em lote nenhum. */
+     não foi amalgamado em lote nenhum.
+
+     A LISTA tem teto; os TOTAIS não. Ver o bloco dos totais mais abaixo. */
   if (caminho === "/restrito/api/producao" && req.method === "GET") {
     const url = new URL(req.url, "http://localhost");
     const de = url.searchParams.get("de") || null;
@@ -1979,24 +1992,58 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
          LEFT JOIN maquinas ma ON ma.id = f.maquina_id
          LEFT JOIN lotes l ON l.id = f.lote_id
         WHERE ${onde.join(" AND ")}
-        ORDER BY f.fechada_em DESC LIMIT 500`, ...args);
+        ORDER BY f.fechada_em DESC LIMIT ${TETO_PRODUCAO}`, ...args);
 
-    const soma = fichas.reduce((a, f) => ({
-      pecas: a.pecas + Number(f.quantidade || 0),
-      pontos: a.pontos + Number(f.total_pontos || 0),
-    }), { pecas: 0, pontos: 0 });
+    /* ------------------------------------------------------------------
+       OS TOTAIS SAEM DO BANCO, NÃO DAS LINHAS DEVOLVIDAS
 
-    /* Por operador, para responder "quem produziu o quê hoje" sem a pessoa ter
-       de somar a lista na cabeça — que é exatamente o trabalho que o papel dá. */
+       Antes eram somados sobre as fichas da resposta — e a resposta tem teto.
+       Enquanto a tela abria no DIA, o teto nunca era alcançado e a conta
+       fechava. Agora a tela abre em TUDO: a primeira oficina com mais de 500
+       fichas veria os totais pararem de crescer, calados, sempre no valor das
+       500 últimas. Um número errado que não se apresenta como errado é pior
+       que não ter número.
+
+       Contando no banco, a soma é sobre o filtro INTEIRO. A lista continua
+       com teto (ninguém lê dez mil linhas numa tela), mas aí é só a LISTA que
+       está cortada — e a resposta diz isso em `truncado`, para a tela avisar
+       em vez de deixar parecer que é tudo o que existe.
+       ------------------------------------------------------------------ */
+    const t = await Q.get(
+      `SELECT COUNT(*) fichas,
+              COALESCE(SUM(f.quantidade),0)   pecas,
+              COALESCE(SUM(f.total_pontos),0) pontos,
+              COALESCE(SUM(f.total_valor),0)  valor
+         FROM fichas f WHERE ${onde.join(" AND ")}`, ...args);
+
+    const soma = {
+      pecas: Number(t.pecas), pontos: Number(t.pontos), valor: Number(t.valor),
+    };
+    const total = Number(t.fichas);
+
+    /* Por operador, para responder "quem produziu o quê" sem a pessoa ter de
+       somar a lista na cabeça — que é exatamente o trabalho que o papel dá.
+       Também agrupado pelo BANCO, pelo mesmo motivo dos totais. */
+    const linhasOp = await Q.all(
+      `SELECT u.nome AS operador_nome, COUNT(*) fichas,
+              COALESCE(SUM(f.quantidade),0) pecas, COALESCE(SUM(f.total_pontos),0) pontos
+         FROM fichas f JOIN usuarios u ON u.id = f.usuario_id
+        WHERE ${onde.join(" AND ")}
+        GROUP BY u.nome ORDER BY 4 DESC`, ...args);
+
     const porOperador = {};
-    for (const f of fichas) {
-      const k = f.operador_nome || "?";
-      porOperador[k] = porOperador[k] || { pecas: 0, pontos: 0, fichas: 0 };
-      porOperador[k].pecas += Number(f.quantidade || 0);
-      porOperador[k].pontos += Number(f.total_pontos || 0);
-      porOperador[k].fichas++;
+    for (const o of linhasOp) {
+      porOperador[o.operador_nome || "?"] = {
+        pecas: Number(o.pecas), pontos: Number(o.pontos), fichas: Number(o.fichas),
+      };
     }
-    return responder(res, 200, { fichas, soma, porOperador });
+
+    return responder(res, 200, {
+      fichas, soma, porOperador, total,
+      /* A tela mostra `total` fichas nos indicadores e `fichas.length` linhas.
+         Quando os dois diferem, ela precisa dizer por quê. */
+      truncado: total > fichas.length, teto: TETO_PRODUCAO,
+    });
   }
 
   /* ---------------------------------------------------------- lotes ----- */

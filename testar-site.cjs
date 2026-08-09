@@ -57,7 +57,36 @@ async function pedir(caminho, metodo, corpo) {
   };
 }
 
+/* ==========================================================================
+   A PORTA ESTÁ LIVRE?
+
+   A espera abaixo dá a subida por concluída assim que ALGUÉM responde na
+   porta — e "alguém" pode não ser o nosso servidor. Um processo esquecido ali
+   de outra tarefa faz a suíte inteira rodar contra ele: o nosso nem chega a
+   subir (a porta está ocupada), e o erro que aparece é o da primeira coisa
+   que der errado depois — no caso que aconteceu aqui, um `no such table:
+   settings` de um banco descartável que nunca foi criado.
+
+   Custou uma diagnose. Conferir antes custa uma requisição, e a mensagem diz
+   o que fazer em vez de mandar procurar.
+   ========================================================================== */
+async function portaOcupada(porta) {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 800);
+    await fetch(`http://127.0.0.1:${porta}/favicon.ico`, { signal: c.signal });
+    clearTimeout(t);
+    return true;
+  } catch { return false; }
+}
+
 async function subir(preparar) {
+  if (!servidor && await portaOcupada(PORTA)) {
+    throw new Error(
+      `a porta ${PORTA} já está ocupada por outro processo.\n` +
+      "  A suíte rodaria contra ELE, não contra o servidor de teste.\n" +
+      `  Feche o que está usando a porta, ou rode com PORTA_TESTE_SITE=<outra>.`);
+  }
   if (servidor) { servidor.kill(); await new Promise((r) => setTimeout(r, 250)); }
   if (preparar) preparar();
   servidor = spawn(process.execPath, [path.join(__dirname, "server.js")], {
