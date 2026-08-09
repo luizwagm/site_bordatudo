@@ -1,6 +1,6 @@
 {
   "name": "borda-tudo",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "private": true,
   "description": "Borda Tudo — Bordados Computadorizados · Caruaru-PE",
   "main": "server.js",

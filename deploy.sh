@@ -343,12 +343,30 @@ elif [ "$ANTES" != "$DEPOIS" ]; then
   fi
 fi
 
+# --------------------------------------------------------------------------
+#  ESTÁ NO AR? — e a pergunta certa não é sobre a raiz.
+#
+#  A conferência antiga exigia 200 em `/`. Enquanto o SITE estiver travado em
+#  construção, `/` responde 503 DE PROPÓSITO — é o que diz ao Google "isto não
+#  é o site, volte depois". Resultado: todo deploy terminava em vermelho,
+#  "O site não respondeu (HTTP 503)", com o serviço perfeitamente de pé.
+#
+#  Alarme que dispara quando está tudo certo é pior que alarme nenhum: ensina
+#  quem opera a ignorar a cor vermelha, e no dia em que houver um problema de
+#  verdade a mensagem vai passar batida.
+#
+#  A pergunta que separa "de pé" de "quebrado" é o /restrito: ele serve nos
+#  DOIS estados, e responder 200 ali prova que o processo subiu e está
+#  roteando. O que `/` devolve é informação sobre o SITE, não sobre o serviço,
+#  e é relatado à parte.
+# --------------------------------------------------------------------------
 OK=0
 for _ in $(seq 1 10); do
-  CODIGO=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORTA/" || echo 000)
-  [ "$CODIGO" = "200" ] && { OK=1; break; }
+  VIVO=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORTA/restrito" || echo 000)
+  [ "$VIVO" = "200" ] && { OK=1; break; }
   sleep 2
 done
+CODIGO=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORTA/" || echo 000)
 
 rm -rf "$COFRE"
 
@@ -376,7 +394,17 @@ if [ "$OK" = "1" ]; then
   done
 
   echo
-  verde "Deploy concluído — site no ar, gerenciador $VERSAO"
+  case "$CODIGO" in
+    200) verde "Deploy concluído — site no ar, gerenciador $VERSAO" ;;
+    503) verde "Deploy concluído — gerenciador $VERSAO no ar."
+         amarelo "  O SITE responde 503 de propósito: está travado em construção."
+         amarelo "  Só o /restrito e o /admin abrem. Para lançar o site:"
+         amarelo "    1. TRAVA_CONSTRUCAO = false no server.js"
+         amarelo "    2. painel → Situação do site → Site no ar"
+         amarelo "    3. ./deploy.sh de novo" ;;
+    *)   verde "Deploy concluído — gerenciador $VERSAO no ar."
+         amarelo "  A raiz do site respondeu $CODIGO — confira a situação no painel." ;;
+  esac
   echo "  Backup desta atualização: ${BACKUP:-nenhum (primeira instalação)}"
   echo "  Se mudou texto ou foto, entre no painel e clique em Publicar."
   echo
@@ -384,7 +412,8 @@ if [ "$OK" = "1" ]; then
   node server.js --backup-status 2>/dev/null | sed 's/^/    /'
 else
   echo
-  vermelho "O site não respondeu (HTTP $CODIGO). Últimas linhas do log:"
+  vermelho "O /restrito não respondeu (HTTP $VIVO) — o serviço não está de pé."
+  vermelho "Últimas linhas do log:"
   journalctl -u "$SERVICO" -n 25 --no-pager | sed 's/^/  /'
   echo
   amarelo "O banco está intacto em data/site.db e no backup:"

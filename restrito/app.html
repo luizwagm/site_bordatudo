@@ -510,6 +510,16 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     let dados = {};
     try { dados = texto ? JSON.parse(texto) : {}; } catch (e) { dados = {}; }
     if (!r.ok) {
+      /* `recarregar: true` significa que o servidor recusou porque a LISTA
+         desta tela está velha — o cadastro escolhido não existe mais. Jogar
+         fora o que está em memória aqui, e não em cada tela que trata o erro,
+         é o que garante que o `<select>` já venha certo quando a pessoa
+         tentar de novo. Sem isso ela leria "escolha de novo" e encontraria
+         exatamente a mesma opção morta na lista. */
+      if (dados && dados.recarregar) {
+        LISTAS = {};
+        if (typeof TELA === "string") setTimeout(() => irPara(TELA), 0);
+      }
       const erro = new Error(dados.error || ("erro " + r.status));
       erro.status = r.status; erro.dados = dados;
       throw erro;

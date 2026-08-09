@@ -855,6 +855,55 @@ function prepararCadastro(def, corpo) {
 }
 
 /* ==========================================================================
+   4a-ter. A LISTA QUE O NAVEGADOR TEM PODE ESTAR VELHA
+
+   A tela guarda as listas de cadastro em memória (`LISTAS`) e as reusa o turno
+   inteiro — é o que a deixa rápida na máquina. O preço disso: entre carregar a
+   lista e gravar a ficha, alguém no escritório pode ter apagado aquela cor.
+
+   Sem esta conferência o resultado era um 500. Aconteceu em produção nos dias
+   07 e 08/08/2026, seis vezes:
+
+       insert or update on table "fichas" violates foreign key constraint
+       "fichas_cor_id_fkey"
+
+   O que a pessoa via era "erro interno" — e ela estava FECHANDO UMA FICHA, com
+   a peça já bordada e a quantidade contada. O trabalho não entrava no sistema e
+   nada dizia por quê. Uma trava de banco fazendo o papel de mensagem é sempre
+   isso: correta e inútil para quem está na frente da tela.
+
+   Duas coisas mudam aqui. Esta função devolve UMA FRASE em vez do erro de
+   driver, com `recarregar: true` para a tela buscar as listas de novo. E o
+   `avisar()` passou a disparar também quando um cadastro é APAGADO ou
+   DESATIVADO — o que fecha a janela em que a lista velha existe, em vez de só
+   tratar o sintoma.
+
+   ZERO É NULO AQUI. `Number("0")` é 0, e 0 não é id de nada: sem esta
+   conversão, um `cor_id: "0"` vindo de um `<select>` mal preenchido seria
+   gravado como zero e o banco recusaria a ficha inteira.
+   ========================================================================== */
+const REFERENCIAS = {
+  mercadoria_id: { tabela: "mercadorias", oQue: "mercadoria" },
+  cor_id:        { tabela: "cores",       oQue: "cor" },
+  maquina_id:    { tabela: "maquinas",    oQue: "máquina" },
+};
+
+async function conferirReferencias(campos) {
+  for (const [campo, def] of Object.entries(REFERENCIAS)) {
+    if (!(campo in campos)) continue;
+    const v = campos[campo];
+    if (v === null || v === undefined || v === "" || Number(v) === 0) { campos[campo] = null; continue; }
+    const existe = await Q.get(`SELECT id FROM ${def.tabela} WHERE id = ?`, Number(v));
+    if (!existe) {
+      return `Essa ${def.oQue} não existe mais — ela foi apagada enquanto esta tela estava aberta. ` +
+             "A lista foi atualizada: escolha de novo.";
+    }
+    campos[campo] = Number(v);
+  }
+  return null;
+}
+
+/* ==========================================================================
    4a-bis. O QUE O OPERADOR NÃO PODE VER
 
    O desenho passou a ter PREÇO, e preço é do escritório. O operador escolhe o
@@ -1164,6 +1213,9 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     const tabela = mAtivar[1], id = Number(mAtivar[2]);
     const ligar = !!((await lerCorpo(req)) || {}).ativo;
     await Q.run(`UPDATE ${tabela} SET ativo = ? WHERE id = ?`, ligar, id);
+    /* Desativar tira o cadastro da lista de escolha. Sem o aviso, a tela do
+       operador continuaria oferecendo a cor desativada até alguém recarregar. */
+    avisar(tabela);
 
     /* MÁQUINA DESATIVADA TEM O QR INVALIDADO. Sem isto, o adesivo colado nela
        voltaria a valer no dia em que alguém reativasse a máquina — e um adesivo
@@ -1374,6 +1426,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
         for (const f of fotos) {
           try { fs.unlinkSync(path.join(PASTA_FOTOS, f.arquivo)); } catch {}
         }
+        avisar("desenhos");
         return responder(res, 200, { ok: true, excluido: true, fotos: fotos.length });
       }
 
@@ -1389,6 +1442,10 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
           podeDesativar: true,
         });
       }
+      /* APAGAR É O QUE MAIS PRECISA AVISAR. É este o caminho que deixava a
+         lista do operador apontando para um id que não existe mais — e a ficha
+         dele quebrava com erro de chave estrangeira na hora de fechar. */
+      avisar(def.tabela);
       return responder(res, 200, { ok: true, excluido: true });
     }
 
@@ -1677,13 +1734,19 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       if (!Number.isFinite(qtd) || qtd <= 0)
         return responder(res, 400, { error: "informe quantas peças foram feitas" });
 
+      /* A ficha do operador é o pior lugar possível para um erro de driver:
+         a peça já foi bordada e a quantidade já foi contada. */
+      const refs = { mercadoria_id: corpo.mercadoria_id, cor_id: corpo.cor_id };
+      const problemaRef = await conferirReferencias(refs);
+      if (problemaRef) return responder(res, 409, { error: problemaRef, recarregar: true });
+
       await Q.run(
         `UPDATE fichas SET quantidade = ?, mercadoria_id = ?, cor_id = ?, observacao = ?,
                 situacao = 'fechada', fechada_em = now()
           WHERE id = ?`,
         qtd,
-        Number(corpo.mercadoria_id) || null,
-        Number(corpo.cor_id) || null,
+        refs.mercadoria_id,
+        refs.cor_id,
         sanitizarHtml(String(corpo.observacao || "")),
         id);
       const r = await Q.get("SELECT quantidade, pontuacao, total_pontos, aberta_em, fechada_em FROM fichas WHERE id = ?", id);
@@ -1762,6 +1825,11 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
         return responder(res, 400, { error: "a pontuação precisa ser maior que zero" });
       if ("quantidade" in campos && campos.quantidade !== null && campos.quantidade <= 0)
         return responder(res, 400, { error: "a quantidade precisa ser maior que zero" });
+
+      /* Mesma conferência do fechar: a tela do escritório fica aberta o dia
+         todo e é ainda mais provável que a lista dela esteja velha. */
+      const problemaRef = await conferirReferencias(campos);
+      if (problemaRef) return responder(res, 409, { error: problemaRef, recarregar: true });
 
       /* Conferido aqui TAMBÉM, e não só no banco, para a pessoa receber uma
          frase em vez de um erro de driver. A trava do banco é a que vale; esta

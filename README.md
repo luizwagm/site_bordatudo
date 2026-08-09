@@ -291,6 +291,19 @@ operador por outro caminho.
 > processo, cada um avisaria só os seus; a correção é o `LISTEN/NOTIFY` do
 > próprio PostgreSQL, não um servidor a mais.
 
+**Cadastro apagado com a tela aberta não derruba mais a ficha.** A tela guarda
+as listas em memória o turno inteiro. Se alguém apagar uma cor no escritório
+nesse meio-tempo, o operador tinha a ficha recusada pelo banco com
+`violates foreign key constraint` — e lia **"erro interno"** justamente ao
+fechar uma ficha, com a peça bordada e a quantidade contada. Aconteceu seis
+vezes em produção, 07 e 08/08/2026. Agora vem uma frase ("essa cor não existe
+mais — escolha de novo"), a tela recarrega as listas sozinha, e a ficha
+**continua aberta**: a recusa não a deixa pela metade.
+
+> A mensagem é o remendo; o conserto é o aviso. Apagar e desativar cadastro
+> passaram a avisar as telas abertas, o que fecha a janela em que a lista velha
+> existe em vez de só tratar o sintoma.
+
 ---
 
 Desenvolvido por [Luiz Augusto](https://luizaugust.me).

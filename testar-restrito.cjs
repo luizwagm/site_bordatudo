@@ -96,7 +96,16 @@ function ouvirEventos(cookie, gatilho, ms) {
           /* O gatilho só dispara DEPOIS de o canal estar de pé (o servidor
              manda `retry:` de cara). Gravar antes seria uma corrida: o aviso
              sairia para uma lista de ouvintes ainda vazia. */
-          if (!pronto) { pronto = true; Promise.resolve().then(gatilho); return; }
+          if (!pronto) {
+            pronto = true;
+            /* ZERA O QUE JÁ ESTAVA NA LINHA. Um aviso disparado por uma
+               operação ANTERIOR chega neste canal milissegundos depois de ele
+               abrir, e seria lido como resposta ao gatilho — um teste que
+               aprova a si mesmo com o eco do teste anterior. */
+            buf = "";
+            Promise.resolve().then(gatilho);
+            return;
+          }
           if (buf.includes("event: mudou")) { req.destroy(); resolve(buf); }
         });
       });
@@ -1194,6 +1203,71 @@ async function limparRestos() {
   eq((await oper("/restrito/api/fichas/" + fVal, "PUT", { quantidade: "1" })).status, 403,
      "operador não corrige ficha");
 
+  /* ============ 12k-bis. a lista velha do navegador ===================== */
+  /* ISTO ACONTECEU EM PRODUÇÃO, seis vezes nos dias 07 e 08/08/2026:
+
+         insert or update on table "fichas" violates foreign key constraint
+         "fichas_cor_id_fkey"
+
+     A tela guarda as listas de cadastro em memória e as reusa o turno inteiro.
+     Entre carregar a lista e gravar a ficha, alguém no escritório apagou a cor.
+     O banco recusou — corretamente — e a pessoa recebeu "erro interno" enquanto
+     FECHAVA UMA FICHA, com a peça bordada e a quantidade contada.
+
+     Uma trava de banco fazendo o papel de mensagem é sempre isso: correta, e
+     inútil para quem está na frente da tela. */
+  console.log("  12k-bis. cadastro apagado com a tela aberta");
+
+  r = await admin("/restrito/api/cores", "POST", { nome: "ZZ QA Cor Efêmera" });
+  const corSome = r.dados.id;
+  eq((await admin("/restrito/api/cores/" + corSome, "DELETE")).status, 200, "a cor é apagada no escritório");
+
+  /* O operador tem a ficha aberta e a lista velha na tela. */
+  r = await oper("/restrito/api/fichas", "POST", { cliente_id: cliB, desenho_id: desB1 });
+  const fVelha = r.dados.id; CRIADO.fichas.push(fVelha);
+
+  r = await oper("/restrito/api/fichas/" + fVelha + "/fechar", "PUT",
+    { quantidade: "3", cor_id: corSome });
+  eq(r.status, 409, "fechar com a cor apagada NÃO estoura em 500");
+  ok(/não existe mais/i.test(r.dados.error || ""), "e a resposta é uma frase, não erro de driver", r.dados.error);
+  eq(r.dados.recarregar, true, "com o aviso para a tela buscar as listas de novo");
+
+  /* E a ficha continua ABERTA: a recusa não pode deixá-la meio fechada, sem
+     quantidade, fora do painel de pendências. */
+  eq((await admin("/restrito/api/fichas/" + fVelha)).dados.situacao, "aberta",
+     "e a ficha continua aberta — a recusa não gravou pela metade");
+
+  /* Fechando com a cor certa, funciona. */
+  eq((await oper("/restrito/api/fichas/" + fVelha + "/fechar", "PUT",
+    { quantidade: "3", cor_id: corPreta })).status, 200, "com uma cor que existe, fecha normal");
+
+  /* ZERO NÃO É ID DE NADA. `Number("0")` é 0, e um `<select>` mal preenchido
+     mandaria zero — que o banco recusaria, derrubando a ficha inteira. */
+  r = await admin("/restrito/api/fichas/" + fVelha, "PUT", { cor_id: "0" });
+  eq(r.status, 200, "cor_id = 0 é aceito…");
+  eq((await admin("/restrito/api/fichas/" + fVelha)).dados.cor_id, null, "…e vira NULO, não zero");
+
+  r = await admin("/restrito/api/fichas/" + fVelha, "PUT", { mercadoria_id: 999999999 });
+  eq(r.status, 409, "corrigir com mercadoria inexistente também é recusado com frase");
+
+  /* O CONSERTO DE VERDADE não é a mensagem: é fechar a janela em que a lista
+     velha existe. Apagar e desativar passaram a avisar as telas abertas. */
+  /* A cor é criada FORA do gatilho, de propósito. Criando dentro, o evento do
+     CRIAR já satisfaria a conferência e o teste passaria mesmo com o aviso do
+     apagar desligado — foi o que aconteceu na primeira versão desta seção. O
+     gatilho tem de conter só a operação que está sendo testada. */
+  const corParaApagar = (await admin("/restrito/api/cores", "POST", { nome: "ZZ QA Cor Aviso" })).dados.id;
+  const avisoApagar = await ouvirEventos(admin.cookie(), async () => {
+    await admin("/restrito/api/cores/" + corParaApagar, "DELETE");
+  });
+  ok(avisoApagar.includes('"o":"cores"'), "APAGAR um cadastro avisa as telas abertas", avisoApagar.slice(0, 80));
+
+  const avisoDesativar = await ouvirEventos(admin.cookie(), async () => {
+    await admin("/restrito/api/cores/" + corBranca + "/ativo", "PUT", { ativo: false });
+  });
+  ok(avisoDesativar.includes('"o":"cores"'), "DESATIVAR também avisa", avisoDesativar.slice(0, 80));
+  await admin("/restrito/api/cores/" + corBranca + "/ativo", "PUT", { ativo: true });
+
   /* =========================== 12l. gavetas do cliente e lote pago ====== */
   console.log("  12l. gavetas do cliente e pagamento do lote");
 
@@ -1204,7 +1278,13 @@ async function limparRestos() {
   r = await admin("/restrito/api/clientes/" + cliB + "/fichas");
   eq(r.status, 200, "a gaveta de peças do cliente responde");
   ok(r.dados.fichas.some((f) => String(f.id) === String(fVal)), "e traz a ficha dele");
-  eq(r.dados.soma.valor, 84, "somando o valor produzido");
+  /* A soma tem de bater com as LINHAS devolvidas, e não com um número fixo:
+     este cliente ganha fichas ao longo da suíte, e um valor cravado aqui
+     quebraria a cada teste novo — escondendo a única coisa que importa, que é
+     o total conferir com o que a tela mostra. */
+  eq(r.dados.soma.valor, r.dados.fichas.reduce((a, f) => a + Number(f.total_valor || 0), 0),
+     "e a soma bate com as fichas listadas");
+  ok(r.dados.soma.valor >= 84, "incluindo a ficha corrigida", String(r.dados.soma.valor));
 
   r = await admin("/restrito/api/lotes", "POST", { cliente_id: cliB, descricao: "ZZ QA Lote Pago" });
   const lotePg = r.dados.id; CRIADO.lotes.push(lotePg);
