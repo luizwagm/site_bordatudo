@@ -47,6 +47,60 @@ const eq = (a, b, titulo) => ok(a === b, titulo, `esperava ${JSON.stringify(b)},
    ========================================================================== */
 const VERBOSO = process.argv.includes("--verboso");
 
+/* ==========================================================================
+   A RESPOSTA QUE DENUNCIA A SI MESMA
+
+   Esta suíte já morreu TRÊS VEZES do mesmo jeito: uma rota devolve erro, o
+   teste lê `r.dados.itens.some(...)`, e o que aparece é
+
+       TypeError: Cannot read properties of undefined (reading 'some')
+
+   com o número de uma linha que não tem defeito nenhum. Da última vez a causa
+   real era uma coluna que faltava no banco da CI, a sessenta linhas dali — e
+   as quinze checagens seguintes nem chegaram a rodar, porque a suíte inteira
+   caiu junto.
+
+   O erro em si é honesto: `itens` realmente não existe numa resposta de erro.
+   O que falta é DIZER O QUE VEIO NO LUGAR. Então a resposta de status ruim
+   vira um Proxy que, ao ser perguntada por uma chave que não tem, conta a rota,
+   o status e o corpo.
+
+   SÓ PARA 5xx, e a primeira versão desta guarda me ensinou por quê. Eu havia
+   posto >= 400, e ela derrubou uma checagem CERTA:
+
+       ok(!(await admin("/restrito/api/desenhos/" + id)).dados.id,
+          "e some do banco de verdade")
+
+   Ler `.id` de um 404 ali não é engano — é a asserção: "não tem id porque não
+   existe mais". A premissa "chave ausente em resposta de erro é sempre bug"
+   estava errada para o 4xx, que esta suíte provoca de propósito o tempo todo.
+
+   O 5xx é outra coisa: nenhum teste daqui espera um. Ele significa sempre que o
+   servidor quebrou, e aí nada do que se leia da resposta faz sentido.
+   ========================================================================== */
+/* Chaves que a LINGUAGEM pergunta, não o teste. `JSON.stringify` procura
+   `toJSON`, `await` procura `then`, o console procura `inspect`. Sem esta
+   lista, a guarda explodia dentro do próprio `JSON.stringify(r.dados)` que a
+   suíte usa para MOSTRAR o erro — a rede de proteção derrubando quem ela devia
+   segurar. Achei isto testando a guarda, não em produção. */
+const PERGUNTAS_DA_LINGUAGEM = new Set([
+  "toJSON", "then", "catch", "finally", "inspect", "constructor",
+  "toString", "valueOf", "length", "name", "nodeType", "$$typeof",
+]);
+
+function comDenuncia(dados, status, rota, texto) {
+  if (status < 500 || !dados || typeof dados !== "object") return dados;
+  return new Proxy(dados, {
+    get(alvo, chave) {
+      if (chave in alvo || typeof chave === "symbol") return alvo[chave];
+      if (PERGUNTAS_DA_LINGUAGEM.has(chave)) return undefined;
+      throw new Error(
+        `${rota} respondeu ${status} e não tem "${String(chave)}".\n` +
+        `      O que o servidor devolveu: ${String(texto).slice(0, 300)}`);
+    },
+  });
+}
+
 function criarNavegador(quem) {
   let cookie = "";
   /* O cookie fica acessível de fora por causa do canal de eventos: ele é uma
@@ -69,7 +123,11 @@ function criarNavegador(quem) {
     if (VERBOSO) console.log(`      ${quem || "?"} ${metodo || "GET"} ${caminho} -> ${r.status}  [${cookie.slice(0, 14)}]`);
     let dados = null;
     try { dados = texto ? JSON.parse(texto) : null; } catch { dados = texto; }
-    return { status: r.status, dados, texto, tipo: r.headers.get("content-type") || "" };
+    return {
+      status: r.status,
+      dados: comDenuncia(dados, r.status, (metodo || "GET") + " " + caminho, texto),
+      texto, tipo: r.headers.get("content-type") || "",
+    };
   }
 }
 

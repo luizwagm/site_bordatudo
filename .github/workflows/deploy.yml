@@ -100,12 +100,33 @@ jobs:
       # `ON_ERROR_STOP=1` para o passo falhar no primeiro erro, em vez de seguir
       # com um esquema pela metade e reprovar depois num teste que parece outro
       # problema.
+      #
+      # OS ARQUIVOS SÃO DESCOBERTOS, NÃO LISTADOS À MÃO. Estavam escritos um a
+      # um — "02, 04, 05, 06" — e o 07, que acrescentou a coluna `expediente`,
+      # simplesmente não entrou. O banco da prova ficou sem a coluna, a rota de
+      # usuários caiu com "coluna expediente não existe", e a suíte morreu num
+      # `TypeError` lendo `.some` de `undefined`: erro de esquema disfarçado de
+      # defeito de JavaScript, a 60 linhas de distância da causa.
+      #
+      # A lista à mão só está certa no dia em que é escrita. O `deploy.sh` já
+      # usava glob e teria pego o 07 no servidor — a CI é que reprovava um
+      # código que funciona. O mesmo padrão daqui (`0[2-9]`, depois `[1-9][0-9]`)
+      # mantém a ordem numérica além do nono arquivo, que a ordem alfabética
+      # perderia: sem ele, "10" viria antes de "2".
       - name: Montar o esquema do /restrito
         run: |
-          for f in sql/02-esquema.sql sql/04-cadastros.sql sql/05-senha-provisoria.sql sql/06-preco-pagamento-dono.sql; do
+          set -euo pipefail
+          achados=0
+          for f in sql/0[2-9]-*.sql sql/[1-9][0-9]-*.sql; do
+            [ -f "$f" ] || continue
+            achados=$((achados + 1))
             echo "  aplicando $f"
             psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U bordatudo -d bordatudo_producao -f "$f" -q
           done
+          # Zero arquivo é esquema vazio, e um esquema vazio reprova tudo depois
+          # com erros que não dizem "o glob não achou nada".
+          [ "$achados" -gt 0 ] || { echo "nenhum arquivo em sql/ — o esquema não foi montado"; exit 1; }
+          echo "  $achados arquivos aplicados"
 
       # A chave da cifra é gerada aqui e morre com a execução: em produção ela
       # protege dado de cliente, e a de prova não pode ter relação com aquela.
