@@ -498,6 +498,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       <button data-tela="operar">Minha produção</button>
       <div class="menu__grupo">Administrativo</div>
       <button data-tela="producao">Produção</button>
+      <button data-tela="horarios">Horários</button>
       <button data-tela="lotes">Lotes e amálgama</button>
 
       <!-- Cadastros é UM item que abre quatro. São telas que se visitam de vez
@@ -1104,6 +1105,124 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     return "";
   }
 
+  /* ======================================================================
+     HORÁRIOS — o relógio, separado do que foi bordado
+
+     A tela de Produção responde "o que saiu das máquinas". Esta responde
+     "quem esteve aqui, e por quanto tempo" — e as duas perguntas não moram na
+     mesma tabela: jornada é relógio, ficha é peça. Juntá-las numa tela só
+     obrigaria a escolher qual das duas mentir quando alguém trabalha sem
+     abrir ficha (manutenção, limpeza de máquina, treinamento).
+
+     A LINHA EM ABERTO É O MOTIVO DESTA TELA EXISTIR. Uma jornada que ninguém
+     fechou continua contando hora para sempre, e some no meio da lista se não
+     for gritada. Por isso ela aparece com destaque e o total dela é o tempo
+     CORRENDO, não um traço.
+     ====================================================================== */
+  var filtroHorarios = { de: "", ate: "", usuario: "" };
+
+  function duracao(segundos) {
+    const s = Math.max(0, Number(segundos) || 0);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    /* "7h05" e não "7.08 horas": o escritório anota hora e minuto, e décimo de
+       hora obriga a converter de cabeça na hora de comparar com o combinado. */
+    return h + "h" + String(m).padStart(2, "0");
+  }
+
+  /* O expediente combinado, em uma linha legível. Vira o "de quanto era para
+     ser" ao lado do "quanto foi" — sem ele a tela mostra horas soltas e cada
+     um faz a conta de cabeça, com o resultado que quiser. */
+  const DIAS_CURTOS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+  function resumoExpediente(exp) {
+    if (!exp || !exp.dias) return "";
+    const dias = Object.keys(exp.dias).map(Number).sort();
+    if (!dias.length) return "";
+    if (exp.tipo === "fixo") {
+      return dias.map((d) => DIAS_CURTOS[d] + " " + exp.dias[d].entrada + "–" + exp.dias[d].saida).join(" · ");
+    }
+    const total = dias.reduce((a, d) => a + Number(exp.dias[d].horas || 0), 0);
+    return dias.map((d) => DIAS_CURTOS[d] + " " + exp.dias[d].horas + "h").join(" · ") +
+      "  (" + total + "h por semana)";
+  }
+
+  async function pintarHorarios() {
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+
+    const usuarios = (await api("/restrito/api/usuarios")).itens.map((u) =>
+      ({ id: u.id, nome: u.nome || u.usuario }));
+
+    const q = new URLSearchParams();
+    if (filtroHorarios.de) q.set("de", filtroHorarios.de);
+    if (filtroHorarios.ate) q.set("ate", filtroHorarios.ate);
+    if (filtroHorarios.usuario) q.set("usuario_id", filtroHorarios.usuario);
+    q.set("pagina", pag("horarios").pagina);
+    q.set("por", pag("horarios").por);
+    const r = await api("/restrito/api/horarios?" + q.toString());
+    if (r.pagina !== pag("horarios").pagina) pag("horarios").pagina = r.pagina;
+
+    const abertas = (r.itens || []).filter((j) => j.aberta);
+
+    alvo.innerHTML =
+      '<h1 class="titulo-tela">Horários</h1>' +
+      '<p class="subtitulo-tela">Quem começou, quem terminou e quanto tempo ficou.</p>' +
+
+      /* O AVISO DAS ABERTAS VEM ANTES DE TUDO, e some quando não há nenhuma.
+         É a única informação desta tela que pede ação hoje; enterrada no meio
+         da lista, ela seria vista amanhã. */
+      (abertas.length
+        ? '<div class="aviso aviso--erro" style="margin-bottom:16px"><b>' +
+          abertas.length + (abertas.length === 1 ? " jornada aberta" : " jornadas abertas") + ".</b> " +
+          "Enquanto não forem encerradas, o tempo continua contando: " +
+          abertas.map((j) => esc(j.operador) + " (" + duracao(j.segundos) + ")").join(", ") + "."
+        : "") +
+
+      '<div class="bloco"><div class="bloco__corpo"><div class="filtros">' +
+        '<label class="campo"><span>De</span><input type="date" id="fh-de" value="' + filtroHorarios.de + '"></label>' +
+        '<label class="campo"><span>Até</span><input type="date" id="fh-ate" value="' + filtroHorarios.ate + '"></label>' +
+        '<label class="campo"><span>Operador</span><select id="fh-usuario">' +
+          opcoes(usuarios, filtroHorarios.usuario, "todos") + "</select></label>" +
+        '<button class="btn" data-acao="filtrar-horarios">Filtrar</button>' +
+        ((filtroHorarios.de || filtroHorarios.ate || filtroHorarios.usuario)
+          ? '<button class="btn btn--fantasma" data-acao="limpar-horarios">Limpar filtro</button>' : "") +
+      "</div></div></div>" +
+
+      '<div class="bloco"><div class="bloco__corpo">' +
+        '<div class="resumo-dia">' +
+          "<div><b>" + num(r.resumo.c) + "</b><span>jornadas</span></div>" +
+          "<div><b>" + duracao(r.resumo.segundos) + "</b><span>tempo total</span></div>" +
+          "<div><b>" + num(r.resumo.abertas) + "</b><span>em aberto</span></div>" +
+        "</div>" +
+      "</div></div>" +
+
+      '<div class="bloco">' +
+        '<div class="bloco__topo"><h2>Jornadas</h2></div>' +
+        (r.itens.length
+          ? '<div class="rolagem"><table><thead><tr>' +
+            "<th>Operador</th><th>Início</th><th>Fim</th><th class=\"num\">Total</th>" +
+            "<th>Combinado</th><th class=\"num\">Fichas</th><th class=\"num\">Peças</th><th></th>" +
+            "</tr></thead><tbody>" +
+            r.itens.map((j) =>
+              '<tr' + (j.aberta ? ' class="linha--alerta"' : "") + ">" +
+              "<td>" + esc(j.operador || j.login) + "</td>" +
+              "<td>" + dataHora(j.inicio) + "</td>" +
+              "<td>" + (j.aberta
+                ? '<b style="color:var(--laranja)">em aberto</b>'
+                : dataHora(j.fim)) + "</td>" +
+              '<td class="num">' + duracao(j.segundos) +
+                (j.aberta ? ' <small style="color:#8a8a99">correndo</small>' : "") + "</td>" +
+              '<td><small>' + esc(resumoExpediente(j.expediente) || "—") + "</small></td>" +
+              '<td class="num">' + num(j.fichas) + "</td>" +
+              '<td class="num">' + num(j.pecas) + "</td>" +
+              '<td><button class="btn btn--fantasma btn--mini" data-acao="editar-jornada" data-id="' +
+                j.id + '">corrigir</button></td>' +
+              "</tr>").join("") +
+            "</tbody></table></div>" + paginacao(r, "horarios")
+          : '<div class="bloco__corpo"><p class="vazio">Nenhuma jornada no período.</p></div>') +
+      "</div>";
+  }
+
   async function pintarProducao() {
     const alvo = document.getElementById("principal");
     alvo.innerHTML = '<div class="carregando">carregando…</div>';
@@ -1236,15 +1355,94 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       "</div>").join("");
   }
 
+  /* Corrigir a jornada. Mesmo espírito da correção de ficha, e pelo mesmo
+     motivo: o operador esquece de bater o fim, e uma jornada aberta desde
+     ontem envenena o total de horas de todo relatório que a inclua — para
+     sempre, porque ela não fecha sozinha. */
+  async function modalEditarJornada(id) {
+    const r = await api("/restrito/api/horarios?por=200");
+    const j = (r.itens || []).filter((x) => String(x.id) === String(id))[0];
+    if (!j) throw new Error("Jornada não encontrada — a lista foi atualizada.");
+
+    abrirModal({
+      titulo: "Corrigir horário de " + (j.operador || j.login),
+      corpo:
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Início</span>' +
+            '<input type="datetime-local" id="ej-inicio" value="' + esc(paraCampoDataHora(j.inicio)) + '"></label>' +
+          '<label class="campo"><span>Fim</span>' +
+            '<input type="datetime-local" id="ej-fim" value="' + esc(paraCampoDataHora(j.fim)) + '"></label>' +
+        "</div>" +
+        '<div id="ej-tempo" style="margin:-8px 0 14px;font-size:13.5px;color:#77778a"></div>' +
+        /* Esvaziar o fim REABRE a jornada, e isso precisa estar escrito: o
+           campo vazio parece "não mexi", não "voltei a contar tempo". */
+        '<p class="ajuda" style="margin:-6px 0 14px">Deixar o fim em branco reabre a jornada — ' +
+          "o tempo volta a correr a partir do início.</p>" +
+        '<label class="campo"><span>Observação</span><textarea id="ej-obs" rows="2">' +
+          esc(j.observacao || "") + "</textarea></label>",
+      confirmar: "Salvar correção",
+      aoAbrir: function (caixa) {
+        const ini = caixa.querySelector("#ej-inicio");
+        const fim = caixa.querySelector("#ej-fim");
+        const aviso = caixa.querySelector("#ej-tempo");
+        function contar() {
+          if (!ini.value) { aviso.textContent = ""; return; }
+          if (!fim.value) { aviso.innerHTML = "<b>A jornada ficará ABERTA</b> — o tempo continua contando."; return; }
+          const min = Math.round((new Date(fim.value) - new Date(ini.value)) / 60000);
+          aviso.innerHTML = min < 0
+            ? '<b style="color:var(--laranja)">O fim está antes do início.</b>'
+            : "Total: " + duracao(min * 60);
+        }
+        ini.addEventListener("input", contar);
+        fim.addEventListener("input", contar);
+        contar();
+      },
+      aoConfirmar: async function (caixa) {
+        const ini = caixa.querySelector("#ej-inicio").value;
+        const fim = caixa.querySelector("#ej-fim").value;
+        if (!ini) throw new Error("A jornada precisa da hora de início.");
+        if (fim && new Date(fim) < new Date(ini)) throw new Error("O fim não pode ser antes do início.");
+        await enviar("/restrito/api/horarios/" + id, "PUT", {
+          inicio: ini, fim: fim, observacao: caixa.querySelector("#ej-obs").value,
+        });
+        recado("Horário corrigido."); pintarHorarios();
+      },
+    });
+  }
+
   async function modalEditarFicha(id) {
     const f = await api("/restrito/api/fichas/" + id);
     const mercadorias = await lista("mercadorias");
     const cores = await lista("cores");
+    const desenhos = await lista("desenhos");
+    /* SÓ OS DESENHOS DESTE CLIENTE, a mesma regra da abertura da ficha: bordar
+       o desenho de um cliente na peça de outro é o erro que a lista inteira
+       convidaria a cometer. O desenho ATUAL entra mesmo se hoje estiver
+       arquivado — senão a lista abriria com o campo em branco e a correção de
+       uma peça viraria a troca acidental do desenho. */
+    const meusDesenhos = desenhos.filter(function (d) {
+      return String(d.cliente_id) === String(f.cliente_id) || String(d.id) === String(f.desenho_id);
+    });
     abrirModal({
       titulo: "Corrigir ficha #" + id,
       corpo:
         '<div class="aviso aviso--erro" style="margin:0 0 16px">Este número vira nota. ' +
         "Corrija só depois de conferir com quem produziu.</div>" +
+        /* ------------------------------------------------------------
+           O DESENHO, em cima de tudo — é a correção que o escritório mais
+           pede. O operador escolhe da lista no meio do turno e erra o
+           vizinho: dois desenhos do mesmo cliente, nomes parecidos. Antes
+           disto a ficha inteira ia para o lixo e era refeita, perdendo a
+           hora real de início e fim.
+
+           Trocar aqui repõe a pontuação e o valor do desenho novo nos
+           campos abaixo, À VISTA. Os dois são cópias do desenho na abertura;
+           deixá-los como estavam faria a ficha contar os pontos e o dinheiro
+           do desenho antigo — uma ficha que parece certa e não é.
+           ------------------------------------------------------------ */
+        '<label class="campo"><span>Desenho</span><select id="ef-desenho">' +
+          opcoes(meusDesenhos, f.desenho_id, "") + "</select></label>" +
+        '<div id="ef-troca" style="margin:-8px 0 14px;font-size:13.5px;color:#77778a"></div>' +
         '<div class="grade-form">' +
           '<label class="campo"><span>Peças</span><input type="text" inputmode="numeric" id="ef-qtd" value="' +
             esc(f.quantidade == null ? "" : f.quantidade) + '"></label>' +
@@ -1309,6 +1507,24 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         ini.addEventListener("input", contar);
         fim.addEventListener("input", contar);
         contar();
+
+        /* Trocar o desenho REPÕE pontuação e valor, e diz o que fez. Sem o
+           aviso, os dois campos mudariam sozinhos debaixo do dedo de quem
+           está corrigindo — e a primeira reação seria desfazer, achando que
+           a tela se perdeu. */
+        const selD = caixa.querySelector("#ef-desenho");
+        const avisoD = caixa.querySelector("#ef-troca");
+        selD.addEventListener("change", function () {
+          const d = meusDesenhos.filter(function (x) { return String(x.id) === selD.value; })[0];
+          if (!d) return;
+          if (String(d.id) === String(f.desenho_id)) { avisoD.textContent = ""; return; }
+          caixa.querySelector("#ef-pts").value = d.pontuacao;
+          caixa.querySelector("#ef-preco").value = dinheiroCampo(d.preco);
+          avisoD.innerHTML = "Pontuação e valor foram trocados pelos deste desenho: <b>" +
+            num(d.pontuacao) + " pontos</b>" +
+            (d.preco === null || d.preco === undefined ? " e <b>sem valor cadastrado</b>" : "") +
+            ". Você ainda pode ajustar os dois à mão.";
+        });
       },
       aoConfirmar: async function (caixa) {
         const ini = caixa.querySelector("#ef-inicio").value;
@@ -1317,6 +1533,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
           throw new Error("O fim não pode ser antes do início.");
 
         await enviar("/restrito/api/fichas/" + id, "PUT", {
+          desenho_id: caixa.querySelector("#ef-desenho").value,
           quantidade: caixa.querySelector("#ef-qtd").value,
           pontuacao: caixa.querySelector("#ef-pts").value,
           preco_unitario: caixa.querySelector("#ef-preco").value,
@@ -1807,6 +2024,9 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     clientes: () => pintarClientes(),
     desenhos: () => pintarDesenhos(),
     producao: () => pintarProducao(),
+    /* Jornada aberta ou fechada em outro aparelho aparece aqui sozinha — é a
+       tela onde a informação vale por minuto, não por hora. */
+    horarios: () => pintarHorarios(),
     lotes: () => pintarLotes(),
     lote: () => pintarLote(LOTE_ABERTO),
     tabelas: () => pintarTabelas(),
@@ -2542,7 +2762,34 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             (u.ativo ? " checked" : "") + "> conta ativa (pode entrar)</label>"
           : '<p style="margin:0;font-size:13.5px;color:#77778a">Uma senha de <b>seis números</b> é ' +
             "gerada agora e mostrada <b>uma vez</b>. Ela serve só para o primeiro acesso: " +
-            "a pessoa é obrigada a trocá-la antes de usar o sistema.</p>"),
+            "a pessoa é obrigada a trocá-la antes de usar o sistema.</p>") +
+
+        /* ------------------------------------------------------------
+           EXPEDIENTE — a combinação de horas, por dia da semana.
+
+           Dois jeitos, porque a fábrica combina dos dois:
+
+             · HORÁRIO FIXO   "entra 7h30, sai 17h" — quem bate ponto.
+             · HORAS POR DIA  "8 horas na segunda"  — quem tem carga
+                              combinada mas entra quando dá.
+
+           Um SÓ dos dois por pessoa: misturar os formatos na mesma semana
+           daria um total que ninguém sabe somar. Trocar o tipo troca a
+           tabela inteira, e é por isso que a troca não apaga o que estava
+           preenchido — ela só mostra o outro formato, e o que valer é o
+           que estiver à vista na hora de salvar.
+
+           DIA DESMARCADO = NÃO TRABALHA. É a informação que faz a tela de
+           Horários saber que a ausência de sábado não é falta.
+           ------------------------------------------------------------ */
+        '<div class="campo" style="margin-top:6px"><span>Expediente combinado</span>' +
+          '<div class="abas-periodo" style="margin:6px 0 10px">' +
+            '<button type="button" class="aba" id="ex-tipo-fixo">Horário fixo</button>' +
+            '<button type="button" class="aba" id="ex-tipo-horas">Horas por dia</button>' +
+            '<button type="button" class="aba" id="ex-tipo-nenhum">Sem definir</button>' +
+          "</div>" +
+          '<div id="ex-tabela"></div>' +
+        "</div>",
       confirmar: id ? "Salvar" : "Criar usuário",
       classe: "btn--laranja",
       aoAbrir: function (caixa) {
@@ -2556,6 +2803,92 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
           login.value = login.value.toLowerCase().normalize("NFD")
             .replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9._-]/g, "");
         });
+
+        /* ---------------- expediente ---------------- */
+        const DIAS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+        const exp = (u && u.expediente) || null;
+        let tipo = exp ? exp.tipo : "nenhum";
+        /* O que já está gravado é o ponto de partida dos DOIS formatos: quem
+           troca de "fixo" para "horas" e volta atrás não perde o que tinha. */
+        const guardado = { fixo: {}, horas: {} };
+        if (exp && exp.dias) {
+          for (const d of Object.keys(exp.dias)) guardado[exp.tipo][d] = exp.dias[d];
+        }
+        const tabela = caixa.querySelector("#ex-tabela");
+
+        function pintarExpediente() {
+          ["fixo", "horas", "nenhum"].forEach(function (t) {
+            caixa.querySelector("#ex-tipo-" + t).classList.toggle("on", tipo === t);
+          });
+          if (tipo === "nenhum") {
+            tabela.innerHTML = '<p class="ajuda" style="margin:0">Sem expediente combinado. ' +
+              "A tela de Horários mostra o que foi batido, sem comparar com nada.</p>";
+            return;
+          }
+          tabela.innerHTML = DIAS.map(function (nome, d) {
+            const atual = guardado[tipo][d] || null;
+            const marcado = atual ? " checked" : "";
+            const campos = tipo === "fixo"
+              ? '<input type="time" data-dia="' + d + '" data-campo="entrada" value="' +
+                  esc(atual ? atual.entrada : "07:30") + '" style="width:110px">' +
+                '<span style="color:#8a8a99">até</span>' +
+                '<input type="time" data-dia="' + d + '" data-campo="saida" value="' +
+                  esc(atual ? atual.saida : "17:00") + '" style="width:110px">'
+              : '<input type="text" inputmode="decimal" data-dia="' + d + '" data-campo="horas" value="' +
+                  esc(atual ? atual.horas : "8") + '" style="width:80px"> <span style="color:#8a8a99">horas</span>';
+            return '<div style="display:flex;gap:9px;align-items:center;margin-bottom:7px;flex-wrap:wrap">' +
+              '<label style="display:flex;gap:7px;align-items:center;min-width:118px">' +
+              '<input type="checkbox" data-marca="' + d + '"' + marcado +
+              ' style="width:17px;height:17px;accent-color:var(--tinta)"><b>' + nome + "</b></label>" +
+              '<span data-linha="' + d + '" style="display:flex;gap:7px;align-items:center' +
+              (atual ? "" : ";opacity:.4") + '">' + campos + "</span></div>";
+          }).join("");
+
+          /* Desmarcar apaga o dia na hora, e apagar é o que dá sentido ao
+             "não trabalha". Sem isto, o dia desmarcado continuaria guardado e
+             voltaria sozinho na próxima abertura. */
+          tabela.querySelectorAll("[data-marca]").forEach(function (cx) {
+            cx.addEventListener("change", function () {
+              const d = cx.getAttribute("data-marca");
+              const linha = tabela.querySelector('[data-linha="' + d + '"]');
+              linha.style.opacity = cx.checked ? "" : ".4";
+              if (!cx.checked) delete guardado[tipo][d];
+              else guardado[tipo][d] = lerDia(d);
+            });
+          });
+          tabela.querySelectorAll("[data-dia]").forEach(function (campo) {
+            campo.addEventListener("input", function () {
+              const d = campo.getAttribute("data-dia");
+              const cx = tabela.querySelector('[data-marca="' + d + '"]');
+              if (cx.checked) guardado[tipo][d] = lerDia(d);
+            });
+          });
+        }
+
+        function lerDia(d) {
+          const pega = (c) => (tabela.querySelector('[data-dia="' + d + '"][data-campo="' + c + '"]') || {}).value;
+          return tipo === "fixo"
+            ? { entrada: pega("entrada"), saida: pega("saida") }
+            : { horas: pega("horas") };
+        }
+
+        ["fixo", "horas", "nenhum"].forEach(function (t) {
+          caixa.querySelector("#ex-tipo-" + t).addEventListener("click", function () {
+            tipo = t; pintarExpediente();
+          });
+        });
+        pintarExpediente();
+
+        /* Lido na hora de salvar, e não guardado num estado paralelo: o que
+           vale é o que está na tela. */
+        caixa.__expediente = function () {
+          if (tipo === "nenhum") return null;
+          const dias = {};
+          tabela.querySelectorAll("[data-marca]").forEach(function (cx) {
+            if (cx.checked) dias[cx.getAttribute("data-marca")] = lerDia(cx.getAttribute("data-marca"));
+          });
+          return Object.keys(dias).length ? { tipo, dias } : null;
+        };
       },
       aoConfirmar: async function (caixa) {
         if (id) {
@@ -2563,6 +2896,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             nome: caixa.querySelector("#us-nome").value,
             papel: caixa.querySelector("#us-papel").value,
             ativo: caixa.querySelector("#us-ativo").checked,
+            expediente: caixa.__expediente(),
           });
           recado("Salvo."); pintarUsuarios();
         } else {
@@ -2572,6 +2906,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             usuario: login,
             nome: caixa.querySelector("#us-nome").value,
             papel: caixa.querySelector("#us-papel").value,
+            expediente: caixa.__expediente(),
           });
           pintarUsuarios();
           setTimeout(() => mostrarSenha(r.usuario, r.senha, "Usuário criado"), 220);
@@ -2690,6 +3025,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     try {
       if (tela === "operar") { await carregarDia(); pintarOperar(); }
       else if (tela === "producao") await pintarProducao();
+      else if (tela === "horarios") await pintarHorarios();
       else if (tela === "lotes") await pintarLotes();
       else if (tela === "clientes") await pintarClientes();
       else if (tela === "desenhos") await pintarDesenhos();
@@ -2809,6 +3145,21 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         filtroProducao = { de: "", ate: "", usuario: "", cliente: "", soltas: false, atalho: "tudo" };
         await pintarProducao();
       }
+      else if (acao === "filtrar-horarios") {
+        filtroHorarios = {
+          de: document.getElementById("fh-de").value,
+          ate: document.getElementById("fh-ate").value,
+          usuario: document.getElementById("fh-usuario").value,
+        };
+        pag("horarios").pagina = 1;      /* filtrar sempre volta para a página 1 */
+        await pintarHorarios();
+      }
+      else if (acao === "limpar-horarios") {
+        filtroHorarios = { de: "", ate: "", usuario: "" };
+        pag("horarios").pagina = 1;
+        await pintarHorarios();
+      }
+      else if (acao === "editar-jornada") await modalEditarJornada(id);
       else if (acao === "filtrar-producao") {
         const de = document.getElementById("fp-de").value;
         const ate = document.getElementById("fp-ate").value;

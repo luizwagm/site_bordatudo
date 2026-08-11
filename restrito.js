@@ -921,6 +921,65 @@ function prepararCadastro(def, corpo) {
    conversão, um `cor_id: "0"` vindo de um `<select>` mal preenchido seria
    gravado como zero e o banco recusaria a ficha inteira.
    ========================================================================== */
+/* ==========================================================================
+   EXPEDIENTE DO OPERADOR — a combinação de horas, por dia da semana
+
+   Dois formatos, porque a fábrica combina de dois jeitos e os dois convivem:
+
+     · "fixo"  → entra e sai em hora marcada:  {"1":{"entrada":"07:30","saida":"17:00"}}
+     · "horas" → só a quantidade combinada:    {"1":{"horas":8},"6":{"horas":4}}
+
+   Dia da semana 0=domingo … 6=sábado, o mesmo do `getDay()` e do `EXTRACT(DOW)`.
+   DIA AUSENTE = NÃO TRABALHA — e essa é a informação que faz a tela de horários
+   saber que a ausência de sábado não é falta.
+
+   A validação é aqui E no banco (`ck_usuarios_expediente`). A do banco é a que
+   vale; esta é a que explica em português o que está errado, em vez de devolver
+   uma violação de restrição para a tela.
+   ========================================================================== */
+const HORA = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+function lerExpediente(valor) {
+  if (valor === null || valor === undefined || valor === "") return null;   // "sem expediente definido"
+  if (typeof valor !== "object" || Array.isArray(valor)) throw new Error("expediente em formato inesperado");
+
+  const tipo = String(valor.tipo || "");
+  if (!["fixo", "horas"].includes(tipo)) throw new Error("escolha entre horário fixo ou horas por dia");
+
+  const dias = {};
+  const entrada = valor.dias && typeof valor.dias === "object" ? valor.dias : {};
+  for (const [chave, def] of Object.entries(entrada)) {
+    const dia = Number(chave);
+    if (!Number.isInteger(dia) || dia < 0 || dia > 6) throw new Error("dia da semana inválido");
+    if (!def || typeof def !== "object") continue;
+
+    if (tipo === "fixo") {
+      const ent = String(def.entrada || "").trim();
+      const sai = String(def.saida || "").trim();
+      /* Dia sem NENHUM dos dois é dia que não se trabalha: sai do objeto em vez
+         de virar `{}`, que depois seria lido como "trabalha, mas sem horário". */
+      if (!ent && !sai) continue;
+      if (!HORA.test(ent) || !HORA.test(sai)) throw new Error("a hora precisa estar no formato 07:30");
+      /* Saída antes da entrada: o turno da madrugada existe (22h → 06h), e por
+         isso isto NÃO é barrado — a tela de horários mede o que foi batido, não
+         o combinado. O que é barrado é a igualdade, que significa zero hora. */
+      if (ent === sai) throw new Error("a entrada e a saída não podem ser a mesma hora");
+      dias[dia] = { entrada: ent, saida: sai };
+    } else {
+      const h = Number(String(def.horas ?? "").replace(",", "."));
+      if (!Number.isFinite(h) || h <= 0) continue;                 // dia sem horas = não trabalha
+      if (h > 24) throw new Error("um dia não tem mais de 24 horas");
+      dias[dia] = { horas: Math.round(h * 100) / 100 };
+    }
+  }
+
+  /* Expediente sem nenhum dia é o mesmo que não ter expediente. Guardar
+     `{"tipo":"fixo","dias":{}}` criaria um terceiro estado — "definido, mas
+     vazio" — que a tela teria de distinguir de nulo sem nenhum ganho. */
+  if (!Object.keys(dias).length) return null;
+  return { tipo, dias };
+}
+
 const REFERENCIAS = {
   mercadoria_id: { tabela: "mercadorias", oQue: "mercadoria" },
   cor_id:        { tabela: "cores",       oQue: "cor" },
@@ -1620,6 +1679,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
        segunda com um erro de driver que não diz nada a quem está na máquina. */
     if (aberta) return responder(res, 200, { ok: true, id: aberta.id, jaEstavaAberta: true });
     const id = await Q.inserir("INSERT INTO jornadas (usuario_id) VALUES (?) RETURNING id", sessao.usuarioId);
+    avisar("horarios");           /* alguém começou: a tela do escritório mostra na hora */
     return responder(res, 201, { ok: true, id });
   }
 
@@ -1642,6 +1702,10 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     });
 
     await Q.run("UPDATE jornadas SET fim = now() WHERE id = ?", id);
+    /* A tela de Horários do escritório fica aberta o dia inteiro. Sem este
+       aviso, ela mostraria "em aberto" para quem já foi embora — e é
+       justamente esse número que faz alguém ir atrás da pessoa. */
+    avisar("horarios");
     return responder(res, 200, { ok: true });
   }
 
@@ -1819,6 +1883,22 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
          turno da noite. A ficha nasceu sem preço; o escritório precifica e
          corrige aqui.
 
+         O DESENHO entra agora, e é a correção que o escritório mais pedia. O
+         operador escolhe da lista no meio do turno e erra o vizinho — dois
+         desenhos do mesmo cliente, nomes parecidos. Hoje a ficha inteira ia
+         para o lixo e era refeita, perdendo a hora real de início e fim.
+
+         TROCAR O DESENHO ARRASTA PONTUAÇÃO E PREÇO JUNTO, e isso não é
+         conveniência: é o que torna a correção verdadeira. Os dois campos são
+         CÓPIAS do desenho no momento da abertura (ver a rota de abrir). Trocar
+         só o desenho deixaria a ficha dizendo "bordei o desenho A" enquanto
+         conta os pontos e o dinheiro do desenho B — uma ficha internamente
+         mentirosa, que é pior que a errada, porque parece certa.
+
+         O administrador ainda pode mandar `pontuacao` ou `preco_unitario`
+         explicitamente na mesma correção; nesse caso o que ele mandou vence.
+         É o caso do desenho novo, ainda sem preço, que ele precifica na hora.
+
          O QUE CONTINUA FECHADO: quem bordou, em que máquina, de que cliente.
          Isso não é correção, é reescrever a história — e é o que faria a
          produção de uma pessoa virar a de outra.
@@ -1842,6 +1922,34 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       if ("preco_unitario" in corpo) {
         try { campos.preco_unitario = dinheiro(corpo.preco_unitario, "o valor"); }
         catch (e) { return responder(res, 400, { error: e.message }); }
+      }
+
+      /* ------------------------------------------------------------------
+         TROCA DE DESENHO — arrasta pontuação e preço do desenho NOVO.
+
+         Os dois campos são cópias da abertura. Trocar só o desenho deixaria a
+         ficha contando os pontos e o dinheiro do desenho antigo, o que é uma
+         ficha internamente mentirosa — pior que a errada, porque parece certa.
+
+         O que o administrador mandou explicitamente vence: por isso a cópia é
+         feita ANTES de reaplicar `corpo`, e só nos campos que ele não enviou.
+
+         O desenho tem de estar ATIVO. Um desenho arquivado é um que a fábrica
+         tirou de circulação, e apontar uma ficha para ele agora é criar
+         produção de algo que não se borda mais.
+         ------------------------------------------------------------------ */
+      if ("desenho_id" in corpo) {
+        const novoId = Number(corpo.desenho_id) || 0;
+        if (!novoId) return responder(res, 400, { error: "escolha o desenho" });
+        if (novoId !== f.desenho_id) {
+          const d = await Q.get("SELECT id, pontuacao, preco FROM desenhos WHERE id = ? AND ativo", novoId);
+          if (!d) return responder(res, 400, { error: "desenho não encontrado ou fora de uso" });
+          campos.desenho_id = d.id;
+          if (!("pontuacao" in corpo)) campos.pontuacao = Number(d.pontuacao);
+          if (!("preco_unitario" in corpo)) {
+            campos.preco_unitario = d.preco === null || d.preco === undefined ? null : d.preco;
+          }
+        }
       }
       for (const c of horas) {
         if (!(c in corpo)) continue;
@@ -2298,9 +2406,127 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     return await Q.get("SELECT id, usuario, nome, papel, ativo FROM usuarios WHERE id = ?", id);
   }
 
+  /* ======================================================================
+     HORÁRIOS — quem começou, quem terminou, quanto tempo ficou aberto
+
+     A jornada é o relógio da pessoa; a ficha é o que ela bordou. Esta tela
+     olha só o relógio, e existe porque as duas perguntas do escritório não
+     tinham resposta em lugar nenhum: "quantas horas o fulano fez esta
+     semana?" e, sobretudo, "tem alguém com jornada aberta desde ontem?".
+
+     O TEMPO ABERTO É CALCULADO NO SERVIDOR, e não no navegador. O relógio do
+     celular da bancada erra em minutos e às vezes em fuso — e uma jornada
+     "aberta há 9 horas" que na verdade tem 3 manda o escritório atrás de uma
+     pessoa que está trabalhando normalmente.
+
+     `EXTRACT(EPOCH …)` devolve segundos; a tela formata. Mandar já formatado
+     daqui obrigaria a somar textos do outro lado.
+     ====================================================================== */
+  if (caminho === "/restrito/api/horarios" && req.method === "GET") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador vê os horários" });
+
+    const url = new URL(req.url, "http://localhost");
+    const de = String(url.searchParams.get("de") || "").trim();
+    const ate = String(url.searchParams.get("ate") || "").trim();
+    const usuarioId = Number(url.searchParams.get("usuario_id")) || null;
+
+    const cond = ["u.papel <> 'dono'"];
+    const args = [];
+    /* O filtro é pelo DIA do início, e não pelo instante: quem digita
+       "de 01/08 até 05/08" quer o dia 5 inteiro, não até a meia-noite dele. */
+    if (de) { cond.push("j.inicio >= ?"); args.push(de + " 00:00:00"); }
+    if (ate) { cond.push("j.inicio <= ?"); args.push(ate + " 23:59:59"); }
+    if (usuarioId) { cond.push("j.usuario_id = ?"); args.push(usuarioId); }
+    const clausula = "WHERE " + cond.join(" AND ");
+
+    const rec = recorteDaPagina(url, 30);
+    const itens = await Q.all(
+      `SELECT j.id, j.usuario_id, j.inicio, j.fim, j.observacao,
+              u.nome AS operador, u.usuario AS login, u.expediente,
+              EXTRACT(EPOCH FROM (COALESCE(j.fim, NOW()) - j.inicio))::bigint AS segundos,
+              (j.fim IS NULL) AS aberta,
+              (SELECT COUNT(*) FROM fichas f WHERE f.jornada_id = j.id AND f.situacao <> 'cancelada') AS fichas,
+              (SELECT COALESCE(SUM(f.quantidade), 0) FROM fichas f
+                 WHERE f.jornada_id = j.id AND f.situacao <> 'cancelada') AS pecas
+         FROM jornadas j JOIN usuarios u ON u.id = j.usuario_id
+        ${clausula}
+        ORDER BY j.inicio DESC
+        LIMIT ? OFFSET ?`, ...args, rec.por, rec.offset);
+
+    const total = await Q.get(
+      `SELECT COUNT(*) c FROM jornadas j JOIN usuarios u ON u.id = j.usuario_id ${clausula}`, ...args);
+
+    /* O RESUMO vem do banco, não da soma da página. Somar só o que está na
+       tela daria um total que muda ao virar de página — e é o total do
+       período que o escritório anota. */
+    const resumo = await Q.get(
+      `SELECT COUNT(*) c,
+              COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(j.fim, NOW()) - j.inicio))), 0)::bigint segundos,
+              COUNT(*) FILTER (WHERE j.fim IS NULL) abertas
+         FROM jornadas j JOIN usuarios u ON u.id = j.usuario_id ${clausula}`, ...args);
+
+    return responder(res, 200, Object.assign(
+      { itens, resumo }, envelope(Number(total.c), rec)));
+  }
+
+  /* Corrigir a jornada. Mesmo espírito da correção de ficha: o operador
+     esquece de bater o fim, e uma jornada aberta desde ontem envenena o total
+     de horas de todo relatório que a inclua — para sempre, porque ela nunca
+     fecha sozinha. */
+  const mCorrigirJornada = /^\/restrito\/api\/horarios\/(\d+)$/.exec(caminho);
+  if (mCorrigirJornada && req.method === "PUT") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador corrige horário" });
+    const id = Number(mCorrigirJornada[1]);
+    const j = await Q.get("SELECT * FROM jornadas WHERE id = ?", id);
+    if (!j) return responder(res, 404, { error: "jornada não encontrada" });
+
+    const corpo = (await lerCorpo(req)) || {};
+    const campos = {};
+    for (const c of ["inicio", "fim"]) {
+      if (!(c in corpo)) continue;
+      const bruto = String(corpo[c] ?? "").trim();
+      if (bruto === "") {
+        /* Só o FIM pode ficar em branco — é a jornada reaberta. Início vazio
+           deixaria a jornada sem começo, e o cálculo do tempo sem base. */
+        if (c === "inicio") return responder(res, 400, { error: "a jornada precisa da hora de início" });
+        campos.fim = null; continue;
+      }
+      const d = new Date(bruto);
+      if (Number.isNaN(d.getTime()))
+        return responder(res, 400, { error: `${c === "inicio" ? "o início" : "o fim"} não é uma data válida` });
+      campos[c] = d.toISOString();
+    }
+    if ("observacao" in corpo) campos.observacao = sanitizarHtml(String(corpo.observacao || ""));
+    if (!Object.keys(campos).length) return responder(res, 400, { error: "nada para alterar" });
+
+    const inicio = "inicio" in campos ? campos.inicio : j.inicio;
+    const fim = "fim" in campos ? campos.fim : j.fim;
+    if (inicio && fim && new Date(fim) < new Date(inicio))
+      return responder(res, 400, { error: "o fim não pode ser antes do início" });
+
+    /* Reabrir esbarra na trava de uma jornada aberta por pessoa. Explicar aqui
+       poupa a violação de índice, que chega na tela como erro de driver. */
+    if ("fim" in campos && campos.fim === null) {
+      const outra = await Q.get(
+        "SELECT id FROM jornadas WHERE usuario_id = ? AND fim IS NULL AND id <> ?", j.usuario_id, id);
+      if (outra) return responder(res, 409, {
+        error: "esta pessoa já tem outra jornada aberta — feche aquela antes de reabrir esta." });
+    }
+
+    const cols = Object.keys(campos);
+    try {
+      await Q.run(`UPDATE jornadas SET ${cols.map((c) => `${c}=?`).join(",")} WHERE id = ?`,
+        ...cols.map((c) => campos[c]), id);
+    } catch (e) {
+      return responder(res, 400, { error: "a correção não foi aceita: confira as horas" });
+    }
+    avisar("horarios");
+    return responder(res, 200, { ok: true });
+  }
+
   if (caminho === "/restrito/api/usuarios" && req.method === "GET") {
     const itens = await Q.all(
-      "SELECT id, usuario, nome, papel, ativo, criado_em FROM usuarios WHERE papel <> 'dono' ORDER BY nome, usuario");
+      "SELECT id, usuario, nome, papel, ativo, criado_em, expediente FROM usuarios WHERE papel <> 'dono' ORDER BY nome, usuario");
     return responder(res, 200, { itens });
   }
   if (caminho === "/restrito/api/usuarios" && req.method === "POST") {
@@ -2321,11 +2547,15 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     /* A SENHA É GERADA, NUNCA DIGITADA por quem cadastra. Um administrador com
        sete operadores para criar põe "123456" em todos, e o sistema que separa
        a produção de cada um passa a não separar nada. */
+    let expediente = null;
+    try { const e = lerExpediente(corpo.expediente); expediente = e === null ? null : JSON.stringify(e); }
+    catch (e) { return responder(res, 400, { error: e.message, campo: "expediente" }); }
+
     const senha = senhaProvisoria();
     const id = await Q.inserir(
-      `INSERT INTO usuarios (usuario, nome, senha_hash, papel, senha_provisoria)
-       VALUES (?,?,?,?,TRUE) RETURNING id`,
-      usuario, String(corpo.nome || usuario).trim(), gerarHash(senha), papel);
+      `INSERT INTO usuarios (usuario, nome, senha_hash, papel, senha_provisoria, expediente)
+       VALUES (?,?,?,?,TRUE,?) RETURNING id`,
+      usuario, String(corpo.nome || usuario).trim(), gerarHash(senha), papel, expediente);
 
     /* A senha volta UMA vez, para a tela mostrar e a pessoa anotar. Não fica
        guardada em lugar nenhum além do hash — nem eu nem o administrador
@@ -2370,6 +2600,13 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     }
     if ("ativo" in corpo) campos.ativo = !!corpo.ativo;
     if ("nome" in corpo) campos.nome = String(corpo.nome || "").trim();
+    if ("expediente" in corpo) {
+      /* JSONB entra como TEXTO no driver. Mandar o objeto direto grava a string
+         "[object Object]" — que passa pelo CHECK do banco (é JSON válido? não,
+         nem isso) e some sem erro na tela. */
+      try { const e = lerExpediente(corpo.expediente); campos.expediente = e === null ? null : JSON.stringify(e); }
+      catch (e) { return responder(res, 400, { error: e.message, campo: "expediente" }); }
+    }
     if (!Object.keys(campos).length) return responder(res, 400, { error: "nada para alterar" });
 
     /* Não deixa o último administrador se rebaixar nem se desativar: o sistema
