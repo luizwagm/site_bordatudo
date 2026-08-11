@@ -1,0 +1,32 @@
+# ==========================================================================
+#  Regra de sudo da entrega automática — Borda Tudo
+#
+#  Instalar (uma vez, como root):
+#      sudo cp ci/sudoers-bordatudo /etc/sudoers.d/bordatudo
+#      sudo chmod 440 /etc/sudoers.d/bordatudo
+#      sudo visudo -c            # confere a sintaxe ANTES de confiar
+#
+#  POR QUE ELA É TÃO ESTREITA
+#
+#  O `deploy.sh` vem do repositório do GitHub. Autorizar `deploy` a rodá-lo com
+#  sudo seria autorizar QUALQUER COISA como root — bastaria um commit trocando o
+#  conteúdo do arquivo. E aqui o que está do outro lado é pesado: este servidor
+#  guarda o Postgres com PRONTUÁRIO e ANAMNESE de pacientes, dado pessoal
+#  sensível pela LGPD. Um vazamento de repositório não pode virar acesso a isso.
+#
+#  Aqui só três verbos, num serviço só, por caminho absoluto. O pior que um
+#  commit malicioso consegue é reiniciar o próprio site — o mesmo poder que a
+#  aplicação já tem.
+#
+#  Sem curinga no fim: `systemctl start bordatudo.service` e nada além.
+#  `systemctl start *` deixaria parar o postgresql, o nginx e o sshd.
+# ==========================================================================
+
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start bordatudo.service
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl stop bordatudo.service
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart bordatudo.service
+
+# Leitura: o deploy usa para descobrir o dono do serviço e conferir se subiu.
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl is-active bordatudo.service
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl show bordatudo.service -p User --value
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl show bordatudo.service -p Group --value

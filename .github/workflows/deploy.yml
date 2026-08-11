@@ -1,0 +1,165 @@
+# ==========================================================================
+#  Entrega automática — Borda Tudo
+#
+#  Dois trabalhos em sequência: PROVAR e ENTREGAR. O segundo só existe se o
+#  primeiro passar (`needs`), então suíte vermelha não vira sistema no ar.
+#
+#  ESTE PROJETO É DIFERENTE DOS OUTROS em duas coisas que o portão precisa
+#  respeitar:
+#
+#  1. O SITE ESTÁ TRAVADO EM CONSTRUÇÃO de propósito — `/` responde 503, e isso
+#     é o comportamento CORRETO. Quem está no ar é o `/restrito`. Um portão que
+#     exigisse 200 na raiz reprovaria o estado desejado.
+#
+#  2. O /restrito vive no PostgreSQL, e o esquema dele vem de arquivos .sql
+#     numerados (não há ferramenta de migração). O portão levanta um Postgres
+#     descartável e aplica os arquivos na ordem.
+#
+#  A CHAVE DESTE WORKFLOW NÃO DÁ SHELL: no servidor ela está presa a um
+#  `command=` com `restrict`, provado antes de ser ligada no deploy.
+# ==========================================================================
+name: Provar e entregar
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: entrega-bordatudo
+  cancel-in-progress: false
+
+jobs:
+  provar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bordatudo
+          POSTGRES_PASSWORD: senha-de-prova-descartavel
+          POSTGRES_DB: bordatudo_producao
+        ports: ["5432:5432"]
+        # Sem o health check o passo seguinte corre antes de o banco aceitar
+        # conexão, e a falha aparece como "connection refused" — que parece
+        # erro de código e é de tempo.
+        options: >-
+          --health-cmd "pg_isready -U bordatudo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: bordatudo
+      PGPASSWORD: senha-de-prova-descartavel
+      PGDATABASE: bordatudo_producao
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Instalar dependências
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+
+      - name: Todo JavaScript compila
+        run: |
+          erros=0
+          while IFS= read -r f; do
+            node --check "$f" || { echo "ERRO de sintaxe: $f"; erros=1; }
+          done < <(git ls-files '*.js' '*.cjs')
+          exit $erros
+
+      - name: Todo shell script compila
+        run: |
+          erros=0
+          while IFS= read -r f; do
+            bash -n "$f" || { echo "ERRO de sintaxe: $f"; erros=1; }
+          done < <(git ls-files '*.sh')
+          exit $erros
+
+      - name: Nenhum script com fim de linha do Windows
+        run: |
+          if git ls-files '*.sh' | xargs grep -lP '\r$' 2>/dev/null | grep .; then
+            echo "Os arquivos acima têm CRLF — o bash não roda assim."
+            exit 1
+          fi
+          echo "todos com LF"
+
+      # O 01 cria papel e banco, e aqui quem faz isso é o próprio serviço do
+      # Postgres (POSTGRES_USER/POSTGRES_DB acima) — por isso ele fica de fora.
+      # Os demais entram na ordem do nome, como o rodar.cjs faria.
+      # `ON_ERROR_STOP=1` para o passo falhar no primeiro erro, em vez de seguir
+      # com um esquema pela metade e reprovar depois num teste que parece outro
+      # problema.
+      - name: Montar o esquema do /restrito
+        run: |
+          for f in sql/02-esquema.sql sql/04-cadastros.sql sql/05-senha-provisoria.sql sql/06-preco-pagamento-dono.sql; do
+            echo "  aplicando $f"
+            psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U bordatudo -d bordatudo_producao -f "$f" -q
+          done
+
+      # A chave da cifra é gerada aqui e morre com a execução: em produção ela
+      # protege dado de cliente, e a de prova não pode ter relação com aquela.
+      # 32 bytes em base64 — texto solto não decodifica e a camada recusa.
+      - name: Gerar a chave de cifra da prova
+        run: echo "DADOS_CHAVE=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
+      # As duas suítes SOBEM O PRÓPRIO SERVIDOR, cada uma na sua porta (5199 e
+      # 5198), e conferem antes se a porta está livre. Não há processo para eu
+      # levantar nem para matar aqui — e por isso também não há risco de um
+      # pkill pegar o vizinho.
+      #
+      # 439 + 47 checagens. A do /restrito cria os próprios registros e os
+      # apaga: provado aqui contra um Postgres de verdade, com as dez tabelas
+      # contadas antes e depois — nenhuma mudou.
+      - name: Suíte do /restrito (439) e do site (47)
+        run: npm test
+
+  entregar:
+    needs: provar
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Preparar a chave e o host conhecido
+        env:
+          CHAVE: ${{ secrets.SSH_CHAVE_ENTREGA }}
+          HOST_CONHECIDO: ${{ secrets.SSH_HOST_CONHECIDO }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/id_entrega
+          chmod 600 ~/.ssh/id_entrega
+          # Host FIXADO, não aceito na hora: com StrictHostKeyChecking=no,
+          # qualquer servidor no meio do caminho receberia a conexão — e a
+          # chave junto.
+          printf '%s\n' "$HOST_CONHECIDO" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Pedir a entrega
+        env:
+          DESTINO: ${{ secrets.SSH_DESTINO }}
+        run: |
+          set -o pipefail
+          ssh -T -i ~/.ssh/id_entrega \
+              -o BatchMode=yes -o ConnectTimeout=20 \
+              -o StrictHostKeyChecking=yes \
+              "$DESTINO" 2>&1 | tee saida-da-entrega.txt
+
+      - name: Guardar o log da entrega
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-da-entrega
+          path: saida-da-entrega.txt
+          retention-days: 30
+          if-no-files-found: ignore
