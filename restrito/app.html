@@ -43,6 +43,19 @@
   --vermelho-fundo: #fbeceb;
   --ambar: #8a5a00;
   --ambar-fundo: #fdf3df;
+  /* AZUL = jornada em aberto. Não é bom nem ruim: é "ainda está acontecendo".
+     Antes isso era vermelho, e vermelho ao lado de vermelho-de-dívida fazia o
+     escritório ler "esse aí deve horas" para quem está trabalhando agora. */
+  --azul: #14568f;
+  --azul-fundo: #e8f0f9;
+  /* `--laranja` era usada em QUINZE lugares e não existia em lugar nenhum. Uma
+     variável indefinida não avisa: a declaração inteira é descartada em
+     silêncio, e o hover das abas, a borda do "Cadastros" aberto e o destaque
+     do número escolhido simplesmente não aconteciam. Ninguém vê o que não
+     acontece — o painel parecia apenas "sem resposta ao toque". É o laranja da
+     marca, o mesmo `--linha-viva`, com o nome pelo qual metade do arquivo já
+     o chamava. */
+  --laranja: #f86519;
 
   --fonte: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -321,16 +334,65 @@ textarea { min-height: 74px; resize: vertical; }
    número já sai com "+" ou "−" na frente: cerca de 8% dos homens não separam
    as duas cores, e uma coluna em que a única diferença entre dever e sobrar é
    o tom seria, para eles, uma coluna sem informação nenhuma. */
-.saldo-mais  { color: var(--verde);    font-weight: 800; }
-.saldo-menos { color: var(--vermelho); font-weight: 800; }
-.saldo-zero  { color: #75758a;         font-weight: 700; }
-.resumo-dia b.saldo-mais  { color: var(--verde); }
-.resumo-dia b.saldo-menos { color: var(--vermelho); }
-.resumo-dia b.saldo-zero  { color: #75758a; }
+.saldo-mais   { color: var(--verde);    font-weight: 800; }
+.saldo-menos  { color: var(--vermelho); font-weight: 800; }
+.saldo-aberto { color: var(--azul);     font-weight: 800; }
+.saldo-zero   { color: #75758a;         font-weight: 700; }
 
-/* A jornada esquecida em aberto pinta a linha inteira: ela conta hora para
-   sempre, e no meio de trinta linhas iguais ninguém a encontra. */
-.linha--alerta > td { background: var(--vermelho-fundo); }
+/* A COR É POR PESSOA, NUNCA NO TOTAL GERAL.
+   O card do total já foi verde e vermelho, e era leitura errada: o geral é a
+   soma de gente que deve com gente que sobrou, e pintá-lo de verde diz "está
+   tudo certo" numa fábrica onde alguém deve trinta horas. Quem tem saldo é o
+   operador; o geral é só aritmética. Por isso o `b` do card fica na cor do
+   texto, e as três classes acima só valem dentro da tabela. */
+.resumo-dia b { color: var(--tinta); }
+
+/* A EXCEÇÃO: o card do PRÓPRIO operador. Ali o total é de uma pessoa só, e
+   verde ou vermelho dizem algo verdadeiro sobre ela — é o oposto do total do
+   escritório, que mistura quem deve com quem sobrou. Escrevi a regra de cima
+   sem esta exceção e o saldo do mês saiu azul-tinta na tela do operador: a
+   proibição certa aplicada no lugar errado. */
+.resumo-dia--pessoal b.saldo-mais  { color: var(--verde); }
+.resumo-dia--pessoal b.saldo-menos { color: var(--vermelho); }
+.resumo-dia--pessoal b.saldo-aberto { color: var(--azul); }
+
+/* A jornada em aberto pinta a linha inteira — em AZUL. Ela precisa ser achada
+   no meio de trinta linhas iguais, mas não é dívida: é gente trabalhando
+   agora. Vermelho aqui competia com o vermelho de quem realmente deve. */
+.linha--alerta > td { background: var(--azul-fundo); }
+.etiqueta--azul { background: var(--azul-fundo); color: var(--azul); }
+
+/* ==========================================================================
+   CALENDÁRIO DO OPERADOR
+
+   Sete colunas fixas porque a semana tem sete dias — e é a forma que a pessoa
+   já sabe ler sem legenda. Uma lista de trinta linhas mostraria os mesmos
+   números e esconderia a única coisa que o calendário mostra sozinho: que a
+   falta caiu numa terça, e que as três seguidas foram na mesma semana.
+
+   O DIA É UM BOTÃO DE VERDADE (`<button>`), não uma `div` com clique. Assim ele
+   entra na ordem do Tab, responde ao Enter e é anunciado como botão — de graça,
+   por ser o elemento certo.
+   ========================================================================== */
+.calendario { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.calendario__cab { text-align: center; font-size: 10.5px; font-weight: 800; padding: 4px 0;
+  letter-spacing: .08em; text-transform: uppercase; color: #75758a; }
+.dia { display: flex; flex-direction: column; gap: 2px; min-height: 76px; padding: 7px 6px;
+  border: 1px solid #dcdce7; border-radius: 8px; background: var(--papel);
+  font: inherit; text-align: left; cursor: pointer; transition: border-color .12s, background .12s; }
+.dia:hover { border-color: var(--laranja); }
+.dia__n { font: 800 15px var(--mono); color: var(--tinta); }
+.dia__h { font: 700 12.5px var(--mono); color: #4a4a5c; }
+.dia__s { font: 800 12.5px var(--mono); margin-top: auto; }
+/* Dia fora do mês e dia futuro NÃO somem: sumir deixa buraco na grade e
+   desalinha a semana. Ficam apagados e sem clique. */
+.dia--vazio { border: 0; background: transparent; cursor: default; }
+.dia--futuro { background: #fbfbfd; cursor: default; }
+.dia--futuro .dia__n { color: #a6a6b8; }
+.dia--hoje { border-color: var(--tinta); box-shadow: inset 0 0 0 1px var(--tinta); }
+.dia--aberta { background: var(--azul-fundo); border-color: #c3d9ee; }
+.dia--sem { background: var(--prata-fundo); }
+.aviso--azul { background: var(--azul-fundo); color: var(--azul); border: 1px solid #c3d9ee; }
 
 /* Os três números do cliente viram BOTÃO. Herdam o cartão para a tela não
    mudar de cara; o que muda é o cursor, a borda no toque e a marca do que
@@ -512,6 +574,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     <nav class="menu" id="menu" hidden>
       <div class="menu__grupo">Chão de fábrica</div>
       <button data-tela="operar">Minha produção</button>
+      <button data-tela="minhas-horas">Minhas horas</button>
       <div class="menu__grupo">Administrativo</div>
       <button data-tela="producao">Produção</button>
       <button data-tela="horarios">Horários</button>
@@ -895,8 +958,165 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         '<br><small style="color:#6b6b78">Pode voltar depois — as horas do dia somam.</small></p>';
     }
 
+    /* O CAMINHO PARA AS PRÓPRIAS HORAS FICA AQUI, e não só no menu: o menu está
+       escondido para quem não é administrador, e é justamente o operador o dono
+       desta informação. Sem este botão, a tela existiria para quem menos
+       precisa dela. */
+    html += '<p style="text-align:center;margin:26px 0 0">' +
+      '<button class="btn btn--fantasma" data-acao="minhas-horas">Ver minhas horas do mês</button></p>';
+
     html += "</div>";
     alvo.innerHTML = html;
+  }
+
+  /* ========================================================================
+     MINHAS HORAS — o calendário do próprio operador
+
+     A tela de Horários é do escritório: mostra todo mundo, e o operador não
+     entra nela. Mas quem trabalha é quem mais precisa saber quanto trabalhou —
+     e até aqui a resposta dele era perguntar. Perguntar transforma uma conta em
+     uma conversa, e conversa sobre hora sempre tem dois números.
+
+     SÓ AS DELE, e isso é garantido no SERVIDOR: o `usuario_id` vem da sessão,
+     nunca da URL. A conta é a MESMA do escritório — se as duas telas somassem
+     de jeitos diferentes, a primeira divergência viraria discussão sobre quem
+     está certo em vez de sobre a hora que faltou.
+     ====================================================================== */
+  var MES_ABERTO = null;      /* "AAAA-MM"; nulo = o mês corrente, decidido pelo servidor */
+  var MEU_MES = null;         /* a resposta inteira, para a modal do dia não pedir de novo */
+
+  const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
+                 "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+
+  function nomeDoMes(mes) {
+    return MESES[Number(mes.slice(5, 7)) - 1] + " de " + mes.slice(0, 4);
+  }
+  /* Anda de mês em mês SEM `new Date(...).setMonth()`: somar 1 a 31 de janeiro
+     daria 3 de março. Aqui a conta é feita nos números do próprio "AAAA-MM". */
+  function mesVizinho(mes, passo) {
+    let a = Number(mes.slice(0, 4)), m = Number(mes.slice(5, 7)) + passo;
+    while (m < 1) { m += 12; a -= 1; }
+    while (m > 12) { m -= 12; a += 1; }
+    return a + "-" + String(m).padStart(2, "0");
+  }
+
+  async function pintarMinhasHoras() {
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+
+    const r = await api("/restrito/api/meu-mes" + (MES_ABERTO ? "?mes=" + MES_ABERTO : ""));
+    MEU_MES = r;
+    MES_ABERTO = r.mes;
+    const t = r.total;
+
+    /* Em que coluna cai o dia 1º. `Date.UTC` de propósito: no fuso do Brasil,
+       `new Date("2026-08-01")` já nasce no dia 31 de julho às 21h, e o mês
+       inteiro começaria uma casa à esquerda. */
+    const vazias = new Date(Date.UTC(Number(r.mes.slice(0, 4)), Number(r.mes.slice(5, 7)) - 1, 1)).getUTCDay();
+
+    const celula = (d) => {
+      const cls = ["dia"];
+      if (d.futuro) cls.push("dia--futuro");
+      if (d.hoje) cls.push("dia--hoje");
+      if (d.aberta) cls.push("dia--aberta");
+      if (!d.batidas.length && !d.futuro && d.previsto === 0) cls.push("dia--sem");
+      const clicavel = d.batidas.length > 0;
+      return "<button class=\"" + cls.join(" ") + "\"" +
+        (clicavel ? ' data-acao="ver-dia" data-dia="' + d.dia + '"' : " disabled") + ">" +
+        '<span class="dia__n">' + Number(d.dia.slice(8)) + "</span>" +
+        (d.batidas.length
+          ? '<span class="dia__h">' + duracao(d.trabalhado) + "</span>" +
+            '<span class="dia__h" style="color:#8a8a99">' + d.batidas.length +
+              (d.batidas.length === 1 ? " batida" : " batidas") + "</span>"
+          : "") +
+        '<span class="dia__s">' +
+          (d.aberta ? '<span class="saldo-aberto">em curso</span>'
+            : d.saldo === null ? ""
+            : (Math.abs(d.saldo) < 60 && d.previsto ? '<span class="saldo-zero">em dia</span>'
+               : d.saldo === 0 && !d.previsto ? ""
+               : saldoTexto(d.saldo))) +
+        "</span></button>";
+    };
+
+    alvo.innerHTML =
+      '<h1 class="titulo-tela">Minhas horas</h1>' +
+      '<p class="subtitulo-tela">Toque num dia para ver as entradas e saídas. ' +
+        '<button class="btn btn--fantasma btn--mini" data-acao="voltar-operar">voltar para a produção</button></p>' +
+
+      '<div class="bloco"><div class="bloco__corpo">' +
+        '<div class="abas-periodo" style="justify-content:space-between">' +
+          '<button class="btn btn--fantasma" data-acao="mes" data-mes="' + mesVizinho(r.mes, -1) + '">← ' +
+            nomeDoMes(mesVizinho(r.mes, -1)) + "</button>" +
+          "<b style=\"font-size:16px\">" + nomeDoMes(r.mes) + "</b>" +
+          '<button class="btn btn--fantasma" data-acao="mes" data-mes="' + mesVizinho(r.mes, 1) + '">' +
+            nomeDoMes(mesVizinho(r.mes, 1)) + " →</button>" +
+        "</div>" +
+      "</div></div>" +
+
+      '<div class="bloco"><div class="bloco__corpo">' +
+        '<div class="resumo-dia resumo-dia--pessoal">' +
+          "<div><b>" + duracao(t.trabalhado) + "</b><span>trabalhado</span></div>" +
+          "<div><b>" + (t.saldo === null ? "—" : duracao(t.previsto)) + "</b><span>combinado</span></div>" +
+          /* AQUI a cor no total ESTÁ certa, e no painel do escritório não: este
+             total é de UMA pessoa. Verde ou vermelho dizem algo verdadeiro
+             sobre ela. Lá o total misturava gente que deve com gente que
+             sobrou, e cor nenhuma seria honesta. */
+          '<div><b class="' + classeSaldo(t.saldo) + '">' +
+            (t.saldo === null ? "—" : comSinal(t.saldo)) + "</b><span>saldo do mês</span></div>" +
+          "<div><b>" + num(t.diasComBatida) + "</b><span>dias trabalhados</span></div>" +
+        "</div>" +
+        (r.expediente
+          ? '<p style="margin:12px 0 0;font-size:13px;color:#6b6b78">Combinado: ' +
+            esc(resumoExpediente(r.expediente)) + "</p>"
+          : '<p style="margin:12px 0 0;font-size:13px;color:#6b6b78">Você não tem horário combinado ' +
+            "cadastrado, então não há saldo a mostrar — só as horas batidas.</p>") +
+        '<p style="margin:8px 0 0;font-size:13px;color:#6b6b78">O dia de hoje entra no saldo ' +
+          "depois que você marcar a saída.</p>" +
+      "</div></div>" +
+
+      '<div class="bloco"><div class="bloco__corpo">' +
+        '<div class="calendario">' +
+          ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"]
+            .map((d) => '<div class="calendario__cab">' + d + "</div>").join("") +
+          '<div class="dia dia--vazio"></div>'.repeat(vazias) +
+          r.dias.map(celula).join("") +
+        "</div>" +
+      "</div></div>";
+  }
+
+  function modalDoDia(dia) {
+    const d = (MEU_MES && MEU_MES.dias || []).filter((x) => x.dia === dia)[0];
+    if (!d) return;
+    abrirModal({
+      titulo: dataCurta(dia) + " — " + (MEU_MES.operador || ""),
+      leitura: true,
+      confirmar: "Fechar",
+      corpo:
+        '<div class="resumo-dia resumo-dia--pessoal" style="margin-bottom:14px">' +
+          "<div><b>" + duracao(d.trabalhado) + "</b><span>trabalhado</span></div>" +
+          "<div><b>" + (d.previsto === null ? "—" : duracao(d.previsto)) + "</b><span>combinado</span></div>" +
+          '<div><b class="' + (d.aberta ? "saldo-aberto" : classeSaldo(d.saldo)) + '">' +
+            (d.aberta ? "em curso" : d.saldo === null ? "—" : comSinal(d.saldo)) +
+            "</b><span>saldo do dia</span></div>" +
+        "</div>" +
+        '<div class="rolagem"><table><thead><tr>' +
+          "<th>Entrada</th><th>Saída</th><th class=\"num\">Tempo</th>" +
+        "</tr></thead><tbody>" +
+        d.batidas.map((b) =>
+          "<tr>" +
+          "<td>" + hora(b.inicio) + "</td>" +
+          "<td>" + (b.fim ? hora(b.fim) : '<span class="etiqueta etiqueta--azul">em curso</span>') + "</td>" +
+          '<td class="num">' + duracao(b.segundos) + "</td>" +
+          "</tr>").join("") +
+        "</tbody></table></div>" +
+        (d.aberta
+          ? '<p style="margin:12px 0 0;font-size:13px" class="saldo-aberto">' +
+            "Ainda há um período em aberto. O saldo deste dia é calculado quando você marcar a saída.</p>"
+          : d.previsto === null
+            ? '<p style="margin:12px 0 0;font-size:13px;color:#6b6b78">' +
+              "Sem horário combinado para este dia — as horas contam, mas não há saldo.</p>"
+            : ""),
+    });
   }
 
   /* ---- abrir ficha ------------------------------------------------ */
@@ -1222,6 +1442,14 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     const classe = s > 0 ? "saldo-mais" : "saldo-menos";
     return '<span class="' + classe + '">' + (s > 0 ? "+" : "−") + duracao(Math.abs(s)) + "</span>";
   }
+  /* O saldo de quem está com jornada aberta: azul, e com o "em curso" escrito.
+     O número continua à vista — esconder faria pensar que o sistema perdeu a
+     conta — mas a cor avisa que ele ainda vai mudar. */
+  function saldoEmCurso(segundos) {
+    return '<span class="saldo-aberto">' +
+      (segundos === null || segundos === undefined ? "—" : comSinal(segundos)) +
+      ' <small>em curso</small></span>';
+  }
   function classeSaldo(segundos) {
     if (segundos === null || segundos === undefined || Math.abs(Number(segundos)) < 60) return "saldo-zero";
     return Number(segundos) > 0 ? "saldo-mais" : "saldo-menos";
@@ -1280,17 +1508,18 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       '<div class="bloco__topo"><h2>Saldo de horas</h2><span class="espaco"></span>' +
         '<span class="etiqueta etiqueta--cinza">' + dataCurta(s.de) + " a " + dataCurta(s.ate) + "</span></div>" +
       '<div class="bloco__corpo">' +
+        /* SEM COR NENHUMA AQUI. Estes números são a soma de gente que deve com
+           gente que sobrou — verde no total diria "está tudo certo" numa
+           fábrica com alguém devendo trinta horas, e vermelho acusaria a
+           fábrica inteira por causa de um. A cor é do operador, na tabela
+           abaixo; o sinal continua escrito, que é o que informa. */
         '<div class="resumo-dia">' +
           "<div><b>" + duracao(g.trabalhado) + "</b><span>trabalhado</span></div>" +
           "<div><b>" + duracao(g.previsto) + "</b><span>combinado</span></div>" +
-          '<div><b class="' + classeSaldo(g.saldo) + '">' + comSinal(g.saldo) +
-            "</b><span>saldo geral</span></div>" +
-          /* ZERO NÃO GANHA SINAL NEM COR. "−0h00" em vermelho lê-se como uma
-             dívida pequena, e é o oposto: é a fábrica inteira em dia. */
-          '<div><b class="' + (Number(g.positivo) ? "saldo-mais" : "saldo-zero") + '">' +
-            (Number(g.positivo) ? "+" + duracao(g.positivo) : "0h00") + "</b><span>horas a mais</span></div>" +
-          '<div><b class="' + (Number(g.negativo) ? "saldo-menos" : "saldo-zero") + '">' +
-            (Number(g.negativo) ? "−" + duracao(Math.abs(g.negativo)) : "0h00") +
+          "<div><b>" + comSinal(g.saldo) + "</b><span>saldo geral</span></div>" +
+          "<div><b>" + (Number(g.positivo) ? "+" + duracao(g.positivo) : "0h00") +
+            "</b><span>horas a mais</span></div>" +
+          "<div><b>" + (Number(g.negativo) ? "−" + duracao(Math.abs(g.negativo)) : "0h00") +
             "</b><span>horas a repor</span></div>" +
         "</div>" +
         /* A regra do dia de hoje fica ESCRITA na tela, e não só no código. Sem
@@ -1315,12 +1544,17 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             "<tr>" +
             "<td>" + esc(l.operador) +
               (l.ativo ? "" : ' <span class="etiqueta etiqueta--cinza">inativo</span>') +
-              (l.abertas ? ' <span class="etiqueta etiqueta--vermelha">' + l.abertas +
+              (l.abertas ? ' <span class="etiqueta etiqueta--azul">' + l.abertas +
                 " em aberto</span>" : "") + "</td>" +
             '<td class="num">' + num(l.dias) + "</td>" +
             '<td class="num">' + duracao(l.trabalhado) + "</td>" +
             '<td class="num">' + (l.previsto === null ? "—" : duracao(l.previsto)) + "</td>" +
-            '<td class="num">' + saldoTexto(l.saldo) + "</td>" +
+            /* AZUL VENCE O VERDE E O VERMELHO enquanto houver jornada aberta.
+               O saldo de quem ainda está na máquina é provisório: a hora que
+               falta pode ser a que ele está trabalhando agora. Mostrá-lo em
+               vermelho manda o escritório cobrar uma dívida que talvez não
+               exista quando ele bater a saída. */
+            '<td class="num">' + (l.abertas ? saldoEmCurso(l.saldo) : saldoTexto(l.saldo)) + "</td>" +
             "<td><small>" + esc(resumoExpediente(l.expediente) || "não definido") + "</small></td>" +
             "</tr>").join("") +
           "</tbody></table></div>"
@@ -1357,8 +1591,12 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       /* O AVISO DAS ABERTAS VEM ANTES DE TUDO, e some quando não há nenhuma.
          É a única informação desta tela que pede ação hoje; enterrada no meio
          da lista, ela seria vista amanhã. */
+      /* AZUL, e não vermelho. Jornada aberta não é erro: às dez da manhã a
+         fábrica inteira está com jornada aberta, e um alerta vermelho todo dia
+         de manhã é um alerta que ninguém mais lê. O vermelho ficou reservado a
+         quem realmente deve horas, na tabela de saldo. */
       (abertas.length
-        ? '<div class="aviso aviso--erro" style="margin-bottom:16px"><b>' +
+        ? '<div class="aviso aviso--azul" style="margin-bottom:16px"><b>' +
           abertas.length + (abertas.length === 1 ? " jornada aberta" : " jornadas abertas") + ".</b> " +
           "Enquanto não forem encerradas, o tempo continua contando: " +
           abertas.map((j) => esc(j.operador || j.login) + " (desde " + dataHora(j.inicio) +
@@ -1414,10 +1652,10 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
               "<td>" + esc(j.operador || j.login) + "</td>" +
               "<td>" + dataHora(j.inicio) + "</td>" +
               "<td>" + (j.aberta
-                ? '<b style="color:var(--laranja)">em aberto</b>'
+                ? '<b class="saldo-aberto">em aberto</b>'
                 : dataHora(j.fim)) + "</td>" +
               '<td class="num">' + duracao(j.segundos) +
-                (j.aberta ? ' <small style="color:#8a8a99">correndo</small>' : "") + "</td>" +
+                (j.aberta ? ' <small class="saldo-aberto">correndo</small>' : "") + "</td>" +
               '<td class="num">' + num(j.fichas) + "</td>" +
               '<td class="num">' + num(j.pecas) + "</td>" +
               '<td><button class="btn btn--fantasma btn--mini" data-acao="editar-jornada" data-id="' +
@@ -3165,8 +3403,14 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         '<div class="modal__corpo">' + cfg.corpo +
           '<div class="aviso aviso--erro" data-erro hidden></div></div>' +
         '<div class="modal__pe">' + (cfg.extra || "") +
-          '<button class="btn btn--fantasma" data-fechar>Cancelar</button>' +
-          '<button class="btn ' + (cfg.classe || "") + '" data-confirmar>' + esc(cfg.confirmar || "Salvar") + "</button>" +
+          /* Modal de LEITURA não pede para cancelar. "Cancelar" ali sugere que
+             há algo em curso a desfazer, e a pessoa hesita antes de fechar uma
+             tela que só mostra. Um botão só, e ele fecha. */
+          (cfg.leitura
+            ? '<button class="btn" data-fechar>' + esc(cfg.confirmar || "Fechar") + "</button>"
+            : '<button class="btn btn--fantasma" data-fechar>Cancelar</button>' +
+              '<button class="btn ' + (cfg.classe || "") + '" data-confirmar>' +
+                esc(cfg.confirmar || "Salvar") + "</button>") +
         "</div>" +
       "</div></div>";
 
@@ -3239,6 +3483,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
 
     try {
       if (tela === "operar") { await carregarDia(); pintarOperar(); }
+      else if (tela === "minhas-horas") await pintarMinhasHoras();
       else if (tela === "producao") await pintarProducao();
       else if (tela === "horarios") await pintarHorarios();
       else if (tela === "lotes") await pintarLotes();
@@ -3333,6 +3578,13 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         await carregarDia(); pintarOperar();
         recado("Produção iniciada. Bom trabalho!");
       }
+      else if (acao === "minhas-horas") { MES_ABERTO = null; await irPara("minhas-horas"); }
+      else if (acao === "voltar-operar") await irPara("operar");
+      else if (acao === "mes") {
+        MES_ABERTO = b.getAttribute("data-mes");
+        await pintarMinhasHoras();
+      }
+      else if (acao === "ver-dia") modalDoDia(b.getAttribute("data-dia"));
       else if (acao === "abrir-ficha") await modalAbrirFicha();
       else if (acao === "fechar-ficha") await modalFecharFicha();
       else if (acao === "cancelar-ficha") {

@@ -1930,6 +1930,98 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   }
 
   /* ======================================================================
+     O MÊS DO OPERADOR — o calendário das próprias horas
+
+     Ele vê SÓ AS DELE, e isso não é configuração: o `usuario_id` vem da SESSÃO,
+     nunca da URL. Se viesse por parâmetro, trocar um número na barra de
+     endereços mostraria a folha de ponto do colega — e horário de trabalho é
+     dado de pessoa, não do sistema.
+
+     A conta é a MESMA da tela do escritório, e de propósito: se o operador
+     somasse de um jeito e o administrador de outro, a primeira divergência
+     viraria discussão sobre quem está certo em vez de sobre a hora que faltou.
+     Por isso o dia de hoje aqui também só entra depois de encerrado, e jornada
+     aberta também vale zero.
+
+     O mês vem INTEIRO, inclusive os dias sem batida: um calendário com buracos
+     nos dias vazios não deixa ver que faltou justamente ali.
+     ====================================================================== */
+  if (caminho === "/restrito/api/meu-mes" && req.method === "GET") {
+    const url = new URL(req.url, "http://localhost");
+    const pedido = String(url.searchParams.get("mes") || "").trim();
+    const agora = await Q.get("SELECT current_date::text hoje, to_char(current_date, 'YYYY-MM') mes");
+    /* Mês fora do formato vira o mês corrente em vez de erro: quem digita na
+       barra de endereços erra, e uma tela em branco não ensina nada. */
+    const mes = /^\d{4}-(0[1-9]|1[0-2])$/.test(pedido) ? pedido : agora.mes;
+
+    const ano = Number(mes.slice(0, 4)), num = Number(mes.slice(5, 7));
+    /* Dia 0 do mês SEGUINTE é o último deste — poupa a tabela de 30/31 e o
+       fevereiro bissexto, que é onde essa conta costuma errar. */
+    const ultimoDia = new Date(Date.UTC(ano, num, 0)).getUTCDate();
+    const primeiro = mes + "-01";
+    const ultimo = mes + "-" + String(ultimoDia).padStart(2, "0");
+
+    const u = await Q.get("SELECT nome, usuario, expediente FROM usuarios WHERE id = ?", sessao.usuarioId);
+    const batidas = await Q.all(
+      `SELECT id, inicio, fim, inicio::date::text dia,
+              EXTRACT(EPOCH FROM (COALESCE(fim, now()) - inicio))::bigint segundos,
+              (fim IS NULL) aberta
+         FROM jornadas
+        WHERE usuario_id = ? AND inicio::date BETWEEN ?::date AND ?::date
+        ORDER BY inicio`, sessao.usuarioId, primeiro, ultimo);
+
+    const porDia = new Map();
+    for (const b of batidas) {
+      if (!porDia.has(b.dia)) porDia.set(b.dia, []);
+      porDia.get(b.dia).push(b);
+    }
+
+    const dias = [];
+    for (let d = 1; d <= ultimoDia; d++) {
+      const dia = mes + "-" + String(d).padStart(2, "0");
+      const minhas = porDia.get(dia) || [];
+      const aberta = minhas.some((b) => b.aberta);
+      const futuro = dia > agora.hoje;
+      const ehHoje = dia === agora.hoje;
+      /* Fechado só conta quando fechou. O resto da regra está no comentário de
+         `saldoDoPeriodo` — aqui ela é aplicada dia a dia. */
+      const trabalhado = minhas.reduce((s, b) => s + (b.fim ? Number(b.segundos) : 0), 0);
+      const conta = !futuro && !(ehHoje && (!minhas.length || aberta));
+      const previsto = conta ? previstoDoDia(u.expediente, new Date(dia + "T00:00:00Z").getUTCDay()) : null;
+      dias.push({
+        dia, futuro, hoje: ehHoje, aberta, conta,
+        /* Dois números, e não um: `trabalhado` é o que o dia mostra — as horas
+           existem mesmo no dia que ainda não fechou. `contado` é o que entra no
+           saldo. Um número só obrigaria a escolher entre esconder a hora do dia
+           de hoje ou contá-la antes do tempo. */
+        trabalhado,
+        contado: conta ? trabalhado : 0,
+        previsto,
+        saldo: conta && previsto !== null ? trabalhado - previsto : null,
+        batidas: minhas.map((b) => ({
+          id: b.id, inicio: b.inicio, fim: b.fim,
+          segundos: Number(b.segundos), aberta: b.aberta,
+        })),
+      });
+    }
+
+    const comSaldo = dias.filter((x) => x.saldo !== null);
+    return responder(res, 200, {
+      mes, hoje: agora.hoje,
+      operador: u.nome || u.usuario,
+      expediente: u.expediente || null,
+      dias,
+      total: {
+        trabalhado: dias.reduce((s, x) => s + x.contado, 0),
+        previsto: comSaldo.reduce((s, x) => s + x.previsto, 0),
+        saldo: comSaldo.length ? comSaldo.reduce((s, x) => s + x.saldo, 0) : null,
+        diasComBatida: dias.filter((x) => x.batidas.length).length,
+        abertas: dias.filter((x) => x.aberta).length,
+      },
+    });
+  }
+
+  /* ======================================================================
      FICHA
      ====================================================================== */
   if (caminho === "/restrito/api/fichas" && req.method === "POST") {
