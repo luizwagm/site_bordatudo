@@ -964,7 +964,15 @@ function lerExpediente(valor) {
          isso isto NÃO é barrado — a tela de horários mede o que foi batido, não
          o combinado. O que é barrado é a igualdade, que significa zero hora. */
       if (ent === sai) throw new Error("a entrada e a saída não podem ser a mesma hora");
-      dias[dia] = { entrada: ent, saida: sai };
+      /* INTERVALO em MINUTOS, e não em hora marcada de saída e volta do almoço.
+         A batida já registra QUANDO a pessoa parou; o combinado só precisa de
+         QUANTO se desconta. Fixar "almoço é 12:00 às 13:00" transformaria quem
+         come 12h20 em devedor de horas sem ter trabalhado um minuto a menos. */
+      const int = Number(String(def.intervalo ?? "").replace(",", "."));
+      const minutos = Number.isFinite(int) && int > 0 ? Math.round(int) : 0;
+      if (minutos >= 24 * 60) throw new Error("o intervalo não cabe no dia");
+      dias[dia] = minutos ? { entrada: ent, saida: sai, intervalo: minutos }
+                          : { entrada: ent, saida: sai };
     } else {
       const h = Number(String(def.horas ?? "").replace(",", "."));
       if (!Number.isFinite(h) || h <= 0) continue;                 // dia sem horas = não trabalha
@@ -978,6 +986,163 @@ function lerExpediente(valor) {
      vazio" — que a tela teria de distinguir de nulo sem nenhum ganho. */
   if (!Object.keys(dias).length) return null;
   return { tipo, dias };
+}
+
+/* Quantos segundos essa pessoa combinou trabalhar num dia da semana.
+   Devolve 0 quando o dia não está no expediente — que é "não trabalha", e não
+   "faltou". `null` só quando não há expediente nenhum: aí não existe combinado
+   e, portanto, não existe saldo. Zero e "não sei" precisam ser coisas
+   diferentes, senão quem nunca teve horário combinado apareceria devendo o
+   período inteiro. */
+function previstoDoDia(expediente, diaDaSemana) {
+  if (!expediente || !expediente.dias) return null;
+  const d = expediente.dias[String(diaDaSemana)] || expediente.dias[diaDaSemana];
+  if (!d) return 0;
+
+  if (expediente.tipo === "horas") return Math.round(Number(d.horas || 0) * 3600);
+
+  const mins = (h) => {
+    const p = HORA.exec(String(h || ""));
+    return p ? Number(p[1]) * 60 + Number(p[2]) : null;
+  };
+  const ent = mins(d.entrada), sai = mins(d.saida);
+  if (ent === null || sai === null) return 0;
+  /* Saída MENOR que entrada é o turno que atravessa a meia-noite (22h → 06h).
+     Sem o `+24h` ele viraria um número negativo que some dentro da soma do mês
+     e puxa o total de todo mundo para baixo, sem nenhuma linha parecer errada. */
+  const bruto = (sai > ent ? sai - ent : sai + 24 * 60 - ent) * 60;
+  return Math.max(0, bruto - Number(d.intervalo || 0) * 60);
+}
+
+/* ==========================================================================
+   SALDO DE HORAS — o que foi batido menos o que foi combinado
+
+   Três decisões que mudam o número, e por isso ficam escritas:
+
+   1. O DIA DE HOJE SÓ ENTRA DEPOIS DE ENCERRADO. Enquanto a jornada está
+      aberta, "trabalhou 2h de 8h" é verdade e é inútil: às 9 da manhã a
+      fábrica inteira apareceria devendo 6 horas, todo santo dia, e o vermelho
+      deixaria de querer dizer alguma coisa. O dia de hoje entra quando o
+      operador encerra — e o dia sem nenhuma batida ainda não é falta, é dia
+      que não acabou.
+
+   2. SÓ JORNADA FECHADA CONTA. Uma jornada de ontem que ficou aberta não vale
+      `agora - início`: isso somaria a madrugada inteira e mais o dia seguinte.
+      Ela conta ZERO e aparece no aviso de jornadas abertas — o dia fica
+      vermelho, que é exatamente o que faz alguém ir corrigir a batida.
+
+   3. AS PARES DO DIA SOMAM. Quem sai para o almoço e volta gera duas jornadas
+      no mesmo dia; o combinado é do DIA, não da batida. Por isso a conta é
+      agrupada por dia e só depois comparada com o expediente daquele dia da
+      semana — comparar batida a batida acusaria meio dia de falta em quem
+      almoçou.
+
+   Sem período fechado não há saldo: "desde sempre" não tem quantos dias
+   combinados, e um total sem divisor é um número inventado.
+   ========================================================================== */
+const TETO_DE_DIAS = 400;      /* filtro de anos não trava o servidor contando dia a dia */
+
+async function saldoDoPeriodo({ de, ate, usuarioId }) {
+  if (!de || !ate) return { calculado: false, motivo: "escolha um período para calcular o saldo" };
+
+  /* "Hoje" é o do BANCO. O relógio da máquina de quem abriu a tela pode estar
+     num fuso adiantado, e aí o dia de hoje entraria no saldo antes da hora. */
+  const agora = await Q.get("SELECT current_date::text hoje");
+  const hoje = agora.hoje;
+
+  const cond = ["u.papel <> 'dono'", "j.inicio >= ?", "j.inicio <= ?"];
+  const args = [de + " 00:00:00", ate + " 23:59:59"];
+  if (usuarioId) { cond.push("j.usuario_id = ?"); args.push(usuarioId); }
+
+  /* Uma linha por operador e por DIA — as batidas do dia já somadas aqui. */
+  const porDia = await Q.all(
+    `SELECT j.usuario_id, j.inicio::date::text dia,
+            COALESCE(SUM(EXTRACT(EPOCH FROM (j.fim - j.inicio)))
+                     FILTER (WHERE j.fim IS NOT NULL), 0)::bigint segundos,
+            COUNT(*) FILTER (WHERE j.fim IS NULL)::int abertas,
+            COUNT(*)::int batidas
+       FROM jornadas j JOIN usuarios u ON u.id = j.usuario_id
+      WHERE ${cond.join(" AND ")}
+      GROUP BY j.usuario_id, j.inicio::date`, ...args);
+
+  const pessoas = await Q.all(
+    "SELECT id, nome, usuario, ativo, expediente FROM usuarios WHERE papel <> 'dono'" +
+    (usuarioId ? " AND id = ?" : ""), ...(usuarioId ? [usuarioId] : []));
+
+  const dias = new Map();       /* usuario_id -> { dia -> linha } */
+  for (const l of porDia) {
+    if (!dias.has(l.usuario_id)) dias.set(l.usuario_id, new Map());
+    dias.get(l.usuario_id).set(l.dia, l);
+  }
+
+  /* Calendário do período em UTC de propósito: somar 86.400.000 ms sobre um
+     horário local pula ou repete um dia nas viradas de horário de verão, e o
+     saldo do mês sairia com um dia a mais ou a menos. */
+  const emMs = (t) => { const p = t.split("-").map(Number); return Date.UTC(p[0], p[1] - 1, p[2]); };
+  const emTexto = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const inicio = emMs(de);
+  const fim = Math.min(emMs(ate), emMs(hoje));      /* futuro não tem saldo */
+  let cortado = false;
+  let primeiro = inicio;
+  if (fim >= inicio && (fim - inicio) / 86400000 + 1 > TETO_DE_DIAS) {
+    primeiro = fim - (TETO_DE_DIAS - 1) * 86400000;
+    cortado = true;
+  }
+
+  const linhas = [];
+  for (const p of pessoas) {
+    const meus = dias.get(p.id) || new Map();
+    if (!meus.size && (!p.ativo || !p.expediente)) continue;    /* nem bateu ponto nem tem combinado */
+
+    let trabalhado = 0, previsto = 0, diasComBatida = 0, abertas = 0, semCombinado = 0;
+    for (let ms = primeiro; ms <= fim; ms += 86400000) {
+      const dia = emTexto(ms);
+      const l = meus.get(dia);
+      const ehHoje = dia === hoje;
+      /* Hoje só entra se já foi encerrado; e um dia de hoje sem batida nenhuma
+         ainda não aconteceu. */
+      if (ehHoje && (!l || l.abertas > 0)) { if (l) abertas += l.abertas; continue; }
+      if (l) { abertas += l.abertas; if (l.batidas) diasComBatida++; trabalhado += Number(l.segundos); }
+      const esperado = previstoDoDia(p.expediente, new Date(ms).getUTCDay());
+      if (esperado === null) semCombinado++; else previsto += esperado;
+    }
+
+    /* Sem expediente não há saldo — e mostrar zero seria dizer "está em dia". */
+    const temCombinado = !!p.expediente && semCombinado === 0;
+    linhas.push({
+      usuario_id: p.id, operador: p.nome || p.usuario, login: p.usuario, ativo: !!p.ativo,
+      trabalhado, dias: diasComBatida, abertas,
+      previsto: temCombinado ? previsto : null,
+      saldo: temCombinado ? trabalhado - previsto : null,
+      expediente: p.expediente || null,
+    });
+  }
+
+  linhas.sort((a, b) => {
+    if ((a.saldo === null) !== (b.saldo === null)) return a.saldo === null ? 1 : -1;
+    if (a.saldo !== null) return a.saldo - b.saldo;          /* quem mais deve, primeiro */
+    return String(a.operador).localeCompare(String(b.operador), "pt-BR");
+  });
+
+  const comSaldo = linhas.filter((l) => l.saldo !== null);
+  return {
+    calculado: true, de, ate, hoje, cortado,
+    itens: linhas,
+    geral: {
+      operadores: linhas.length,
+      /* O total geral soma POSITIVOS E NEGATIVOS — é o que sobra para a
+         fábrica. Os dois lados vão separados junto porque um saldo geral zerado
+         pode ser "todo mundo em dia" ou "um devendo 20h e outro com 20h
+         extras", e essas duas fábricas não são a mesma. */
+      trabalhado: linhas.reduce((s, l) => s + l.trabalhado, 0),
+      previsto: comSaldo.reduce((s, l) => s + l.previsto, 0),
+      saldo: comSaldo.reduce((s, l) => s + l.saldo, 0),
+      positivo: comSaldo.reduce((s, l) => s + Math.max(0, l.saldo), 0),
+      negativo: comSaldo.reduce((s, l) => s + Math.min(0, l.saldo), 0),
+      semCombinado: linhas.length - comSaldo.length,
+      abertas: linhas.reduce((s, l) => s + l.abertas, 0),
+    },
+  };
 }
 
 const REFERENCIAS = {
@@ -1748,7 +1913,20 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       pontos: a.pontos + Number(f.total_pontos || 0),
     }), { pecas: 0, pontos: 0 });
 
-    return responder(res, 200, { jornada: jornada || null, ficha: ficha || null, fechadas, soma });
+    /* As BATIDAS DE HOJE — o operador sai para o almoço, volta e bate de novo,
+       e o dia dele vira dois ou três pares. Sem esta lista a tela mostraria
+       "desde 13h20" e a manhã inteira sumiria da vista de quem trabalhou. */
+    const periodos = await Q.all(
+      `SELECT id, inicio, fim,
+              EXTRACT(EPOCH FROM (COALESCE(fim, now()) - inicio))::bigint segundos
+         FROM jornadas
+        WHERE usuario_id = ? AND inicio::date = current_date
+        ORDER BY inicio`, uid);
+    const trabalhado = periodos.reduce(
+      (s, p) => s + (p.fim ? Number(p.segundos) : 0), 0);
+
+    return responder(res, 200, {
+      jornada: jornada || null, ficha: ficha || null, fechadas, soma, periodos, trabalhado });
   }
 
   /* ======================================================================
@@ -2465,8 +2643,25 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
               COUNT(*) FILTER (WHERE j.fim IS NULL) abertas
          FROM jornadas j JOIN usuarios u ON u.id = j.usuario_id ${clausula}`, ...args);
 
+    /* AS ABERTAS VÊM FORA DA PAGINAÇÃO **E FORA DO PERÍODO**.
+       O aviso vermelho da tela dizia "1 jornada aberta" com o resumo logo
+       abaixo dizendo 2: ele contava só as que caíram na página aberta. E o
+       caso pior nem aparecia — a jornada esquecida há dez dias fica fora de
+       "últimos 7 dias", que é justamente o recorte padrão. A informação mais
+       urgente da tela não pode depender de qual página se está vendo nem de
+       qual data se escolheu. É uma consulta pequena por construção: o banco só
+       permite uma aberta por pessoa. */
+    const abertas = await Q.all(
+      `SELECT j.id, j.inicio, u.nome AS operador, u.usuario AS login,
+              EXTRACT(EPOCH FROM (now() - j.inicio))::bigint AS segundos
+         FROM jornadas j JOIN usuarios u ON u.id = j.usuario_id
+        WHERE j.fim IS NULL AND u.papel <> 'dono'` +
+        (usuarioId ? " AND j.usuario_id = ?" : "") +
+        " ORDER BY j.inicio", ...(usuarioId ? [usuarioId] : []));
+
     return responder(res, 200, Object.assign(
-      { itens, resumo }, envelope(Number(total.c), rec)));
+      { itens, resumo, abertas, saldos: await saldoDoPeriodo({ de, ate, usuarioId }) },
+      envelope(Number(total.c), rec)));
   }
 
   /* Corrigir a jornada. Mesmo espírito da correção de ficha: o operador

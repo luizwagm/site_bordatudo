@@ -30,7 +30,13 @@ const restrito = require("./restrito");
    servidor). Tem de ser ANTES de qualquer consulta ao Postgres. */
 carregarAmbiente(__dirname);
 
-const APP_VERSION = "1.11.0";
+/* A VERSÃO VEM DO package.json, e não de uma constante aqui.
+   Estava presa em "1.11.0" enquanto o pacote já ia em 1.13.0: o número que o
+   painel mostrava era o de duas versões atrás. Versão errada na tela é pior do
+   que versão nenhuma — é com ela que se decide se o deploy subiu, e ela dizia
+   que não tinha subido. Duas fontes para o mesmo número sempre divergem; a que
+   o `npm version` atualiza é esta. */
+const APP_VERSION = require("./package.json").version;
 const PORTA = Number(process.env.PORT) || 5193;
 const HOST = process.env.HOST || "127.0.0.1";
 const RAIZ = __dirname;

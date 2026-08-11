@@ -316,6 +316,22 @@ textarea { min-height: 74px; resize: vertical; }
 .resumo-dia span { font-size: 11.5px; font-weight: 700; letter-spacing: .07em;
   text-transform: uppercase; color: #75758a; }
 
+/* SALDO DE HORAS — a cor é o dado, e por isso nunca vem sozinha.
+   Verde e vermelho carregam o sinal para quem lê a tabela de relance, mas o
+   número já sai com "+" ou "−" na frente: cerca de 8% dos homens não separam
+   as duas cores, e uma coluna em que a única diferença entre dever e sobrar é
+   o tom seria, para eles, uma coluna sem informação nenhuma. */
+.saldo-mais  { color: var(--verde);    font-weight: 800; }
+.saldo-menos { color: var(--vermelho); font-weight: 800; }
+.saldo-zero  { color: #75758a;         font-weight: 700; }
+.resumo-dia b.saldo-mais  { color: var(--verde); }
+.resumo-dia b.saldo-menos { color: var(--vermelho); }
+.resumo-dia b.saldo-zero  { color: #75758a; }
+
+/* A jornada esquecida em aberto pinta a linha inteira: ela conta hora para
+   sempre, e no meio de trinta linhas iguais ninguém a encontra. */
+.linha--alerta > td { background: var(--vermelho-fundo); }
+
 /* Os três números do cliente viram BOTÃO. Herdam o cartão para a tela não
    mudar de cara; o que muda é o cursor, a borda no toque e a marca do que
    está aberto — os sinais de que ali se clica. Sem eles, um cartão idêntico
@@ -766,14 +782,24 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     if (!DIA) { alvo.innerHTML = '<div class="carregando">carregando…</div>'; return; }
 
     const j = DIA.jornada, f = DIA.ficha;
+    const batidas = (DIA && DIA.periodos) || [];
+    const voltando = !j && batidas.length > 0;    /* já trabalhou hoje e parou */
     let html = '<div class="palco">';
 
     /* --- a) ainda não começou --------------------------------------- */
     if (!j) {
       html +=
-        '<h1 class="titulo-tela">Bom dia, ' + esc((EU.nome || EU.usuario).split(" ")[0]) + "</h1>" +
-        '<p class="subtitulo-tela">Marque o início para começar a registrar a produção.</p>' +
-        '<button class="gigante" data-acao="iniciar-jornada">Início de produção' +
+        '<h1 class="titulo-tela">' +
+          (voltando ? "De volta, " : "Bom dia, ") + esc((EU.nome || EU.usuario).split(" ")[0]) + "</h1>" +
+        '<p class="subtitulo-tela">' +
+          (voltando
+            /* Quem voltou do almoço precisa saber que a manhã não se perdeu.
+               Sem esta frase, "Início de produção" na tela às 13h parece que o
+               dia está começando do zero — e é aí que alguém deixa de bater. */
+            ? "Você já trabalhou <b>" + duracao(DIA.trabalhado || 0) + "</b> hoje. Marque a volta para continuar."
+            : "Marque o início para começar a registrar a produção.") + "</p>" +
+        '<button class="gigante" data-acao="iniciar-jornada">' +
+        (voltando ? "Voltar para a produção" : "Início de produção") +
         "<small>agora são " + hora(new Date().toISOString()) + "</small></button>";
     } else {
       /* --- c) ficha aberta ------------------------------------------ */
@@ -803,7 +829,13 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             '<div class="emcurso__marcador">Em produção</div>' +
             '<div class="emcurso__linha"><span class="emcurso__cliente">Desde ' + hora(j.inicio) + "</span></div>" +
             '<div class="emcurso__dados">' +
-              '<div class="dado"><b>' + decorrido(j.inicio) + "</b><span>na fábrica</span></div>" +
+              '<div class="dado"><b>' + decorrido(j.inicio) + "</b><span>neste período</span></div>" +
+              (batidas.length > 1
+                /* Só aparece quando houve intervalo. Num dia de uma batida só,
+                   "no dia" repetiria o número ao lado e viraria ruído. */
+                ? '<div class="dado"><b>' + duracao((DIA.trabalhado || 0) +
+                    Math.max(0, Math.round((Date.now() - new Date(j.inicio).getTime()) / 1000))) +
+                  "</b><span>no dia</span></div>" : "") +
               '<div class="dado"><b>' + num(DIA.soma.pecas) + "</b><span>peças hoje</span></div>" +
               '<div class="dado"><b>' + num(DIA.soma.pontos) + "</b><span>pontos hoje</span></div>" +
             "</div>" +
@@ -838,9 +870,29 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         "</div>";
     }
 
+    /* --- as batidas do dia ------------------------------------------ */
+    if (batidas.length) {
+      html +=
+        '<div class="bloco" style="margin-top:22px">' +
+          '<div class="bloco__topo"><h2>Horários de hoje</h2><span class="espaco"></span>' +
+            '<span class="etiqueta etiqueta--cinza">' + duracao(DIA.trabalhado || 0) +
+            " já encerrado</span></div>" +
+          '<div class="rolagem"><table><thead><tr>' +
+            "<th>Entrada</th><th>Saída</th><th class=\"num\">Tempo</th>" +
+          "</tr></thead><tbody>" +
+          batidas.map((p) =>
+            "<tr><td>" + hora(p.inicio) + "</td>" +
+            "<td>" + (p.fim ? hora(p.fim)
+              : '<span class="etiqueta etiqueta--verde">em curso</span>') + "</td>" +
+            '<td class="num">' + duracao(Number(p.segundos)) + "</td></tr>").join("") +
+          "</tbody></table></div>" +
+        "</div>";
+    }
+
     if (j && !f) {
       html += '<p style="text-align:center;margin:20px 0 0">' +
-        '<button class="btn btn--fantasma" data-acao="encerrar-jornada">Encerrar produção do dia</button></p>';
+        '<button class="btn btn--fantasma" data-acao="encerrar-jornada">Sair (intervalo ou fim do dia)</button>' +
+        '<br><small style="color:#6b6b78">Pode voltar depois — as horas do dia somam.</small></p>';
     }
 
     html += "</div>";
@@ -1119,7 +1171,37 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
      for gritada. Por isso ela aparece com destaque e o total dela é o tempo
      CORRENDO, não um traço.
      ====================================================================== */
-  var filtroHorarios = { de: "", ate: "", usuario: "" };
+  /* ABRE EM 7 DIAS, e não em "tudo" como a tela de Produção.
+     Lá o padrão certo é mostrar tudo, porque a pergunta é "o que já foi
+     bordado". Aqui a pergunta virou "quanto sobrou ou faltou", e saldo sem
+     período não existe: sem começo e fim não há quantos dias combinados para
+     comparar, e um total sem divisor é um número inventado. Por isso esta tela
+     não tem a aba "Tudo" — quem quiser o histórico inteiro escolhe as datas, e
+     aí sabe de que recorte é o número que está lendo. */
+  var ATALHOS_HORARIOS = [
+    { chave: "7",  rotulo: "7 dias",  dias: 7 },
+    { chave: "15", rotulo: "15 dias", dias: 15 },
+    { chave: "30", rotulo: "30 dias", dias: 30 },
+  ];
+  var filtroHorarios = { de: diasAtras(7), ate: hoje(), usuario: "", atalho: "7" };
+
+  function aplicarAtalhoHorarios(chave) {
+    const a = ATALHOS_HORARIOS.filter((x) => x.chave === chave)[0];
+    if (!a) return;
+    filtroHorarios.atalho = a.chave;
+    filtroHorarios.de = diasAtras(a.dias);
+    filtroHorarios.ate = hoje();
+  }
+
+  /* Qual aba acender a partir das datas — o mesmo raciocínio da tela de
+     Produção: um só par `de`/`ate` manda, e a aba é consequência dele. Duas
+     fontes de período deixariam uma aba acesa contradizendo os campos logo
+     abaixo. Vazio = filtro digitado à mão, nenhuma aba acesa. */
+  function atalhoHorarios(de, ate) {
+    if (!de || !ate || ate !== hoje()) return "";
+    for (const a of ATALHOS_HORARIOS) if (diasAtras(a.dias) === de) return a.chave;
+    return "";
+  }
 
   function duracao(segundos) {
     const s = Math.max(0, Number(segundos) || 0);
@@ -1128,6 +1210,27 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     /* "7h05" e não "7.08 horas": o escritório anota hora e minuto, e décimo de
        hora obriga a converter de cabeça na hora de comparar com o combinado. */
     return h + "h" + String(m).padStart(2, "0");
+  }
+
+  /* O saldo com sinal e cor. Menos de um minuto vira zero de propósito: um
+     saldo de "+0h00" pintado de verde por causa de 40 segundos de arredondamento
+     seria uma cor mentindo sobre uma diferença que não existe. */
+  function saldoTexto(segundos) {
+    if (segundos === null || segundos === undefined) return '<span class="saldo-zero">—</span>';
+    const s = Number(segundos);
+    if (Math.abs(s) < 60) return '<span class="saldo-zero">em dia</span>';
+    const classe = s > 0 ? "saldo-mais" : "saldo-menos";
+    return '<span class="' + classe + '">' + (s > 0 ? "+" : "−") + duracao(Math.abs(s)) + "</span>";
+  }
+  function classeSaldo(segundos) {
+    if (segundos === null || segundos === undefined || Math.abs(Number(segundos)) < 60) return "saldo-zero";
+    return Number(segundos) > 0 ? "saldo-mais" : "saldo-menos";
+  }
+  function comSinal(segundos) {
+    if (segundos === null || segundos === undefined) return "—";
+    const s = Number(segundos);
+    if (Math.abs(s) < 60) return "0h00";
+    return (s > 0 ? "+" : "−") + duracao(Math.abs(s));
   }
 
   /* O expediente combinado, em uma linha legível. Vira o "de quanto era para
@@ -1139,11 +1242,90 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     const dias = Object.keys(exp.dias).map(Number).sort();
     if (!dias.length) return "";
     if (exp.tipo === "fixo") {
-      return dias.map((d) => DIAS_CURTOS[d] + " " + exp.dias[d].entrada + "–" + exp.dias[d].saida).join(" · ");
+      return dias.map((d) => DIAS_CURTOS[d] + " " + exp.dias[d].entrada + "–" + exp.dias[d].saida +
+        /* O intervalo aparece porque é ele que explica a diferença entre a
+           janela na parede (7h30–17h) e as horas devidas (8h30). Sem mostrá-lo,
+           o combinado da tela parece uma hora menor do que a pessoa esperava e
+           vira reclamação. */
+        (exp.dias[d].intervalo ? " (−" + exp.dias[d].intervalo + "min)" : "")).join(" · ");
     }
     const total = dias.reduce((a, d) => a + Number(exp.dias[d].horas || 0), 0);
     return dias.map((d) => DIAS_CURTOS[d] + " " + exp.dias[d].horas + "h").join(" · ") +
       "  (" + total + "h por semana)";
+  }
+
+  /* ----------------------------------------------------------------------
+     O SALDO — o que foi batido menos o que foi combinado.
+
+     Vem PRONTO do servidor. Fazer a conta aqui exigiria mandar o expediente de
+     todo mundo e o calendário do período para o navegador refazer dia a dia — e
+     o relógio do computador do escritório é o mesmo que erra em fuso e faria o
+     dia de hoje entrar no saldo antes da hora.
+
+     O TOTAL GERAL MOSTRA OS TRÊS NÚMEROS, e não só a soma. Um saldo geral em
+     zero pode ser "todo mundo em dia" ou "um devendo 20h e outro com 20h
+     extras" — e essas duas fábricas não são a mesma nem de longe. A soma
+     sozinha esconde exatamente o caso que precisa de decisão.
+     -------------------------------------------------------------------- */
+  function saldoHtml(s) {
+    if (!s || !s.calculado) {
+      return '<div class="aviso" style="margin-bottom:16px">' +
+        esc((s && s.motivo) || "saldo não calculado") + "</div>";
+    }
+    const g = s.geral;
+    const comCombinado = (s.itens || []).filter((l) => l.saldo !== null);
+    const sem = (s.itens || []).filter((l) => l.saldo === null);
+
+    return '<div class="bloco">' +
+      '<div class="bloco__topo"><h2>Saldo de horas</h2><span class="espaco"></span>' +
+        '<span class="etiqueta etiqueta--cinza">' + dataCurta(s.de) + " a " + dataCurta(s.ate) + "</span></div>" +
+      '<div class="bloco__corpo">' +
+        '<div class="resumo-dia">' +
+          "<div><b>" + duracao(g.trabalhado) + "</b><span>trabalhado</span></div>" +
+          "<div><b>" + duracao(g.previsto) + "</b><span>combinado</span></div>" +
+          '<div><b class="' + classeSaldo(g.saldo) + '">' + comSinal(g.saldo) +
+            "</b><span>saldo geral</span></div>" +
+          /* ZERO NÃO GANHA SINAL NEM COR. "−0h00" em vermelho lê-se como uma
+             dívida pequena, e é o oposto: é a fábrica inteira em dia. */
+          '<div><b class="' + (Number(g.positivo) ? "saldo-mais" : "saldo-zero") + '">' +
+            (Number(g.positivo) ? "+" + duracao(g.positivo) : "0h00") + "</b><span>horas a mais</span></div>" +
+          '<div><b class="' + (Number(g.negativo) ? "saldo-menos" : "saldo-zero") + '">' +
+            (Number(g.negativo) ? "−" + duracao(Math.abs(g.negativo)) : "0h00") +
+            "</b><span>horas a repor</span></div>" +
+        "</div>" +
+        /* A regra do dia de hoje fica ESCRITA na tela, e não só no código. Sem
+           ela, quem abre às 9h vê o próprio dia fora da conta e conclui que o
+           sistema perdeu a batida da manhã. */
+        '<p style="margin:14px 0 0;font-size:13px;color:#6b6b78">' +
+          "O dia de hoje só entra no saldo depois de encerrado — enquanto a jornada está aberta, " +
+          "ela conta nas horas do dia, mas não no saldo. Jornada esquecida em aberto conta zero " +
+          "e aparece no aviso vermelho." +
+          (g.semCombinado
+            ? " <b>" + g.semCombinado + (g.semCombinado === 1 ? " operador" : " operadores") +
+              " sem expediente definido</b> — sem combinado não há saldo." : "") +
+          (s.cortado ? " O período é longo demais e o saldo foi calculado sobre os últimos 400 dias." : "") +
+        "</p>" +
+      "</div>" +
+      (comCombinado.length || sem.length
+        ? '<div class="rolagem"><table><thead><tr>' +
+          "<th>Operador</th><th class=\"num\">Dias</th><th class=\"num\">Trabalhado</th>" +
+          "<th class=\"num\">Combinado</th><th class=\"num\">Saldo</th><th>Expediente</th>" +
+          "</tr></thead><tbody>" +
+          (s.itens || []).map((l) =>
+            "<tr>" +
+            "<td>" + esc(l.operador) +
+              (l.ativo ? "" : ' <span class="etiqueta etiqueta--cinza">inativo</span>') +
+              (l.abertas ? ' <span class="etiqueta etiqueta--vermelha">' + l.abertas +
+                " em aberto</span>" : "") + "</td>" +
+            '<td class="num">' + num(l.dias) + "</td>" +
+            '<td class="num">' + duracao(l.trabalhado) + "</td>" +
+            '<td class="num">' + (l.previsto === null ? "—" : duracao(l.previsto)) + "</td>" +
+            '<td class="num">' + saldoTexto(l.saldo) + "</td>" +
+            "<td><small>" + esc(resumoExpediente(l.expediente) || "não definido") + "</small></td>" +
+            "</tr>").join("") +
+          "</tbody></table></div>"
+        : '<div class="bloco__corpo"><p class="vazio">Nenhum operador com jornada ou expediente no período.</p></div>') +
+    "</div>";
   }
 
   async function pintarHorarios() {
@@ -1162,11 +1344,15 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     const r = await api("/restrito/api/horarios?" + q.toString());
     if (r.pagina !== pag("horarios").pagina) pag("horarios").pagina = r.pagina;
 
-    const abertas = (r.itens || []).filter((j) => j.aberta);
+    /* Vem do servidor inteiro, não da página nem do período — ver o comentário
+       da rota. Aqui elas só são desenhadas. */
+    const abertas = r.abertas || [];
+    const s = r.saldos || { calculado: false };
+    const aceso = atalhoHorarios(filtroHorarios.de, filtroHorarios.ate);
 
     alvo.innerHTML =
       '<h1 class="titulo-tela">Horários</h1>' +
-      '<p class="subtitulo-tela">Quem começou, quem terminou e quanto tempo ficou.</p>' +
+      '<p class="subtitulo-tela">Quem começou, quem terminou, quanto tempo ficou — e o saldo.</p>' +
 
       /* O AVISO DAS ABERTAS VEM ANTES DE TUDO, e some quando não há nenhuma.
          É a única informação desta tela que pede ação hoje; enterrada no meio
@@ -1175,18 +1361,32 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         ? '<div class="aviso aviso--erro" style="margin-bottom:16px"><b>' +
           abertas.length + (abertas.length === 1 ? " jornada aberta" : " jornadas abertas") + ".</b> " +
           "Enquanto não forem encerradas, o tempo continua contando: " +
-          abertas.map((j) => esc(j.operador) + " (" + duracao(j.segundos) + ")").join(", ") + "."
+          abertas.map((j) => esc(j.operador || j.login) + " (desde " + dataHora(j.inicio) +
+            ", " + duracao(j.segundos) + ")").join(", ") + ". " +
+          /* Sem esta frase, o aviso citando alguém que não está na lista abaixo
+             parece defeito da tela. Ele é de propósito: a esquecida de dez dias
+             atrás não cabe em "últimos 7 dias" e é a que mais precisa aparecer. */
+          "<small>Aparecem aqui mesmo quando estão fora do período filtrado.</small>"
         : "") +
 
-      '<div class="bloco"><div class="bloco__corpo"><div class="filtros">' +
-        '<label class="campo"><span>De</span><input type="date" id="fh-de" value="' + filtroHorarios.de + '"></label>' +
-        '<label class="campo"><span>Até</span><input type="date" id="fh-ate" value="' + filtroHorarios.ate + '"></label>' +
-        '<label class="campo"><span>Operador</span><select id="fh-usuario">' +
-          opcoes(usuarios, filtroHorarios.usuario, "todos") + "</select></label>" +
-        '<button class="btn" data-acao="filtrar-horarios">Filtrar</button>' +
-        ((filtroHorarios.de || filtroHorarios.ate || filtroHorarios.usuario)
-          ? '<button class="btn btn--fantasma" data-acao="limpar-horarios">Limpar filtro</button>' : "") +
-      "</div></div></div>" +
+      '<div class="bloco"><div class="bloco__corpo">' +
+        '<div class="abas-periodo">' +
+          ATALHOS_HORARIOS.map((a) =>
+            '<button class="aba' + (aceso === a.chave ? " on" : "") + '" data-acao="periodo-horarios" ' +
+            'data-periodo="' + a.chave + '">' + a.rotulo + "</button>").join("") +
+          (aceso ? "" : '<span class="aba aba--marca">período escolhido</span>') +
+        "</div>" +
+        '<div class="filtros" style="margin-top:12px">' +
+          '<label class="campo"><span>De</span><input type="date" id="fh-de" value="' + filtroHorarios.de + '"></label>' +
+          '<label class="campo"><span>Até</span><input type="date" id="fh-ate" value="' + filtroHorarios.ate + '"></label>' +
+          '<label class="campo"><span>Operador</span><select id="fh-usuario">' +
+            opcoes(usuarios, filtroHorarios.usuario, "todos") + "</select></label>" +
+          '<button class="btn" data-acao="filtrar-horarios">Filtrar</button>' +
+          '<button class="btn btn--fantasma" data-acao="limpar-horarios">Voltar ao padrão</button>' +
+        "</div>" +
+      "</div></div>" +
+
+      saldoHtml(s) +
 
       '<div class="bloco"><div class="bloco__corpo">' +
         '<div class="resumo-dia">' +
@@ -1200,8 +1400,14 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         '<div class="bloco__topo"><h2>Jornadas</h2></div>' +
         (r.itens.length
           ? '<div class="rolagem"><table><thead><tr>' +
+            /* A coluna "Combinado" saiu daqui. Ela repetia o expediente inteiro
+               em CADA uma das trinta linhas — "seg 07:30–17:00 · ter 07:30–17:00
+               · …" seis vezes seguidas para a mesma pessoa — e empurrava início,
+               fim e total para fora da tela, que são os dados desta tabela. O
+               combinado agora aparece UMA vez por operador, na tabela de saldo
+               logo acima, que é onde ele serve para alguma coisa. */
             "<th>Operador</th><th>Início</th><th>Fim</th><th class=\"num\">Total</th>" +
-            "<th>Combinado</th><th class=\"num\">Fichas</th><th class=\"num\">Peças</th><th></th>" +
+            "<th class=\"num\">Fichas</th><th class=\"num\">Peças</th><th></th>" +
             "</tr></thead><tbody>" +
             r.itens.map((j) =>
               '<tr' + (j.aberta ? ' class="linha--alerta"' : "") + ">" +
@@ -1212,7 +1418,6 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
                 : dataHora(j.fim)) + "</td>" +
               '<td class="num">' + duracao(j.segundos) +
                 (j.aberta ? ' <small style="color:#8a8a99">correndo</small>' : "") + "</td>" +
-              '<td><small>' + esc(resumoExpediente(j.expediente) || "—") + "</small></td>" +
               '<td class="num">' + num(j.fichas) + "</td>" +
               '<td class="num">' + num(j.pecas) + "</td>" +
               '<td><button class="btn btn--fantasma btn--mini" data-acao="editar-jornada" data-id="' +
@@ -2833,7 +3038,17 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
                   esc(atual ? atual.entrada : "07:30") + '" style="width:110px">' +
                 '<span style="color:#8a8a99">até</span>' +
                 '<input type="time" data-dia="' + d + '" data-campo="saida" value="' +
-                  esc(atual ? atual.saida : "17:00") + '" style="width:110px">'
+                  esc(atual ? atual.saida : "17:00") + '" style="width:110px">' +
+                /* INTERVALO EM MINUTOS, não em hora marcada de saída e volta do
+                   almoço. A batida do operador já registra QUANDO ele parou; o
+                   combinado só precisa de QUANTO se desconta. Marcar "almoço é
+                   12:00 às 13:00" faria de quem come 12h20 um devedor de horas
+                   sem ter trabalhado um minuto a menos. */
+                '<span style="color:#8a8a99">−</span>' +
+                '<input type="text" inputmode="numeric" data-dia="' + d + '" data-campo="intervalo" value="' +
+                  esc(atual && atual.intervalo ? atual.intervalo : "") +
+                  '" placeholder="0" style="width:64px">' +
+                '<span style="color:#8a8a99">min de intervalo</span>'
               : '<input type="text" inputmode="decimal" data-dia="' + d + '" data-campo="horas" value="' +
                   esc(atual ? atual.horas : "8") + '" style="width:80px"> <span style="color:#8a8a99">horas</span>';
             return '<div style="display:flex;gap:9px;align-items:center;margin-bottom:7px;flex-wrap:wrap">' +
@@ -2868,7 +3083,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         function lerDia(d) {
           const pega = (c) => (tabela.querySelector('[data-dia="' + d + '"][data-campo="' + c + '"]') || {}).value;
           return tipo === "fixo"
-            ? { entrada: pega("entrada"), saida: pega("saida") }
+            ? { entrada: pega("entrada"), saida: pega("saida"), intervalo: pega("intervalo") }
             : { horas: pega("horas") };
         }
 
@@ -3127,10 +3342,10 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         recado("Ficha cancelada.");
       }
       else if (acao === "encerrar-jornada") {
-        if (!confirm("Encerrar a produção do dia?")) return;
+        if (!confirm("Marcar a saída agora? Se for intervalo, é só marcar a volta depois.")) return;
         await enviar("/restrito/api/jornadas/" + DIA.jornada.id + "/encerrar", "PUT");
         await carregarDia(); pintarOperar();
-        recado("Produção encerrada. Até amanhã!");
+        recado("Saída marcada às " + hora(new Date().toISOString()) + ".");
       }
 
       /* ---- produção ---- */
@@ -3145,17 +3360,29 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         filtroProducao = { de: "", ate: "", usuario: "", cliente: "", soltas: false, atalho: "tudo" };
         await pintarProducao();
       }
+      else if (acao === "periodo-horarios") {
+        aplicarAtalhoHorarios(b.getAttribute("data-periodo"));
+        pag("horarios").pagina = 1;
+        await pintarHorarios();
+      }
       else if (acao === "filtrar-horarios") {
+        const de = document.getElementById("fh-de").value;
+        const ate = document.getElementById("fh-ate").value;
+        /* PERÍODO ABERTO NÃO PASSA: sem começo e sem fim o saldo não existe, e
+           a tela mostraria a lista cheia com o bloco de saldo dizendo "escolha
+           um período" logo acima — dois estados contraditórios na mesma tela.
+           Falta do outro extremo é preenchida em vez de recusada: quem digitou
+           só "de" quis "daquele dia até hoje". */
         filtroHorarios = {
-          de: document.getElementById("fh-de").value,
-          ate: document.getElementById("fh-ate").value,
+          de: de || (ate ? ate : diasAtras(7)),
+          ate: ate || hoje(),
           usuario: document.getElementById("fh-usuario").value,
         };
         pag("horarios").pagina = 1;      /* filtrar sempre volta para a página 1 */
         await pintarHorarios();
       }
       else if (acao === "limpar-horarios") {
-        filtroHorarios = { de: "", ate: "", usuario: "" };
+        filtroHorarios = { de: diasAtras(7), ate: hoje(), usuario: "", atalho: "7" };
         pag("horarios").pagina = 1;
         await pintarHorarios();
       }
