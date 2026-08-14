@@ -1,6 +1,6 @@
 {
   "name": "borda-tudo",
-  "version": "1.15.0",
+  "version": "1.17.1",
   "private": true,
   "description": "Borda Tudo — Bordados Computadorizados · Caruaru-PE",
   "main": "server.js",
@@ -10,7 +10,7 @@
     "backup": "node backup.js agora",
     "backup:status": "node backup.js status",
     "logo": "node src/logo-transparente.cjs && node src/conferir-logo.cjs",
-    "test": "node testar-restrito.cjs && node testar-site.cjs"
+    "test": "node testar-restrito.cjs && node testar-financeiro.cjs && node testar-site.cjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.3.0",

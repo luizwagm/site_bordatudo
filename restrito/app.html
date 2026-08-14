@@ -507,6 +507,46 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   padding: 12px 20px; border-radius: 999px; background: var(--tinta-fundo); color: #fff;
   font-weight: 600; box-shadow: 0 12px 34px rgb(0 0 0 / .3); max-width: 92vw; text-align: center; }
 .recado--erro { background: var(--vermelho); }
+
+/* ==========================================================================
+   SOMAR FICHAS — a barra e a coluna de seleção
+   ========================================================================== */
+/* ------------------------------------------------------------------------
+   CAIXA DE ESCOLHA COM FILTRO
+   A lista é POSICIONADA sobre o que vem depois, e não empurra o formulário:
+   uma lista que empurra faz os campos de baixo pularem a cada tecla digitada,
+   e o dedo erra o botão que estava mirando. Por isso `position:absolute` e o
+   rótulo com `position:relative`.
+   ------------------------------------------------------------------------ */
+.busca-escolha { position: relative; }
+.busca-escolha__lista { position: absolute; top: 100%; left: 0; right: 0; z-index: 30;
+  max-height: 232px; overflow-y: auto; margin-top: 3px;
+  background: var(--papel); border: 1px solid var(--linha); border-radius: var(--raio);
+  box-shadow: 0 10px 26px rgba(20, 20, 40, .16); }
+.busca-escolha__lista[hidden] { display: none; }
+.busca-escolha__item { display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 12px; border: 0; background: none; text-align: left; cursor: pointer;
+  font: inherit; font-size: 14px; color: var(--tinta); }
+.busca-escolha__item[hidden] { display: none; }
+/* `.marcado` é o teclado; `:hover` é o mouse. Os dois pintam igual para que a
+   pessoa que alterna entre os dois não veja dois destaques ao mesmo tempo. */
+.busca-escolha__item:hover, .busca-escolha__item.marcado { background: var(--azul-fundo); }
+.busca-escolha__item small { margin-left: auto; }
+
+.barra-somar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; margin: 0 0 10px; border-radius: var(--raio);
+  background: var(--azul-fundo); border: 1px solid #c3d9ee; }
+.barra-somar[hidden] { display: none; }
+.barra-somar__conta { font-size: 13.5px; color: var(--azul); }
+.barra-somar__conta b { font-family: var(--mono); font-size: 16px; }
+/* A barra de baixo gruda no fim da tabela em vez de flutuar solta. */
+[data-somar=baixo] { margin: 10px 0 0; }
+th.sel, td.sel { width: 34px; padding-left: 12px; padding-right: 0; }
+td.sel input, th.sel input { width: 17px; height: 17px; accent-color: var(--tinta);
+  cursor: pointer; margin: 0; display: block; }
+/* A linha marcada muda de fundo: numa tabela de trinta linhas, o quadradinho
+   de 17px não é sinal suficiente de "esta vai ser somada". */
+tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
 </style>
 </head>
 <body>
@@ -578,7 +618,8 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       <div class="menu__grupo">Administrativo</div>
       <button data-tela="producao">Produção</button>
       <button data-tela="horarios">Horários</button>
-      <button data-tela="lotes">Lotes e amálgama</button>
+      <button data-tela="lotes">Lotes</button>
+      <button data-tela="financeiro">Financeiro</button>
 
       <!-- Cadastros é UM item que abre quatro. São telas que se visitam de vez
            em quando — quando entra cliente novo ou desenho novo — e ocupar
@@ -650,10 +691,24 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
      turno: um pedaço atualiza, outro não, e o operador confia no pedaço velho.
      ====================================================================== */
   var EU = null;            // { usuario, nome, papel }
-  var TELA = "operar";
   var DIA = null;           // resposta de /meu-dia
   var LISTAS = {};          // cadastros carregados sob demanda
   var LOTE_ABERTO = null;   // id do lote em detalhe
+
+  /* QUAL TELA ESTÁ ABERTA — e o detalhe conta como tela.
+     `lote` e `nota` são telas próprias, não "a lista com outra coisa dentro".
+     Enquanto não eram, o aviso de tempo real repintava a LISTA enquanto a
+     pessoa estava dentro do detalhe: somar duas fichas jogava o dono de volta
+     para a lista de lotes, e a conferência de um lote grande podia ser
+     interrompida por uma ficha que outro operador fechou do outro lado da
+     fábrica. Quem pinta é quem declara — cada `pintar*` atribui esta variável,
+     e não há um segundo lugar para os dois discordarem. */
+  var TELA = "operar";
+
+  /* Detalhe aceso no botão do PAI. O menu não tem botão "lote"; sem este mapa,
+     entrar no detalhe apagaria o destaque do menu inteiro e a pessoa deixaria
+     de ver onde está. */
+  var MENU_DA_TELA = { lote: "lotes", nota: "financeiro" };
 
   /* A máquina vem do QR (`?m=<token>`) e fica guardada na aba. Sem guardar,
      qualquer recarregamento perderia a máquina e o operador teria de escanear
@@ -694,7 +749,14 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     const min = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
     return min < 60 ? min + " min" : Math.floor(min / 60) + "h" + String(min % 60).padStart(2, "0");
   }
-  const hoje = () => new Date().toISOString().slice(0, 10);
+  /* Data de HOJE em AAAA-MM-DD, pelos componentes LOCAIS.
+     `toISOString()` converte para UTC antes de cortar: às 22h de Caruaru já é o
+     dia seguinte em Greenwich, e todo campo de data abriria com amanhã. */
+  const hoje = () => {
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") +
+      "-" + String(d.getDate()).padStart(2, "0");
+  };
 
   /* Dinheiro. `dinheiro(null)` devolve travessão e não "R$ 0,00": o desenho
      ainda não precificado é diferente do que custa zero, e essa diferença é a
@@ -757,7 +819,17 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   var INTERESSE = {
     operar:   ["clientes", "desenhos", "maquinas"],
     producao: ["fichas", "clientes", "desenhos"],
+    horarios: ["horarios"],
     lotes:    ["lotes", "fichas", "clientes"],
+    /* O detalhe do lote quer as MESMAS notícias que a lista: as fichas dele
+       mudam justamente enquanto ele está aberto na tela. */
+    lote:     ["lotes", "fichas", "clientes"],
+    /* Pagamento lançado noutro aparelho tem de aparecer aqui sozinho — o saldo
+       de uma nota é o número que duas pessoas olham ao mesmo tempo com o
+       cliente na frente. Sem estas duas linhas o Financeiro nunca se
+       atualizava, embora o servidor já avisasse. */
+    financeiro: ["notas", "caixa", "lotes"],
+    nota:       ["notas", "caixa", "lotes"],
     clientes: ["clientes"],
     desenhos: ["desenhos", "clientes"],
     tabelas:  ["mercadorias", "cores", "maquinas"],
@@ -2000,6 +2072,7 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
      daquele serviço — e o sistema soma, quebra por cor e diz o que falta.
      ====================================================================== */
   async function pintarLotes() {
+    TELA = "lotes"; LOTE_ABERTO = null;
     const alvo = document.getElementById("principal");
     alvo.innerHTML = '<div class="carregando">carregando…</div>';
     const qp = new URLSearchParams({ pagina: pag("lotes").pagina, por: pag("lotes").por });
@@ -2065,7 +2138,11 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     return '<span class="etiqueta etiqueta--' + x[0] + '">' + x[1] + "</span>";
   }
 
+  /* `LOTE_ABERTO` é declarado lá em cima, com o resto do estado. Os botões da
+     barra de somar não carregam o id porque vivem FORA da tabela — e um
+     data-id repetido em dois lugares é um lugar para os dois discordarem. */
   async function pintarLote(id) {
+    TELA = "lote"; LOTE_ABERTO = id;
     const alvo = document.getElementById("principal");
     alvo.innerHTML = '<div class="carregando">carregando…</div>';
     const r = await api("/restrito/api/lotes/" + id);
@@ -2119,19 +2196,31 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
             "</div>"
           : '<p style="margin:0;color:#77778a">Nenhuma ficha neste lote ainda. Use <b>Juntar fichas</b>.</p>') +
       "</div>" +
-      (r.fichas.length ? '<div class="rolagem"><table><thead><tr>' +
+      /* A BARRA DE SOMAR APARECE ACIMA E ABAIXO, e as duas são a mesma coisa.
+         Numa tabela de trinta linhas, o botão só no topo obriga a rolar de
+         volta depois de marcar a última — e é aí que se desmarca sem querer. */
+      (r.fichas.length ? barraSomar("cima") +
+        '<div class="rolagem"><table><thead><tr>' +
+        '<th class="sel"><input type="checkbox" data-sel-todas title="Marcar todas desta página"></th>' +
         "<th>Fechada</th><th>Operador</th><th>Desenho</th><th>Mercadoria</th><th>Cor</th>" +
         '<th class="num">Peças</th><th class="num">Pontos</th></tr></thead><tbody>' +
         fatiaLote.itens.map((f) =>
-          "<tr><td>" + dataHora(f.fechada_em) + "</td><td>" + esc(f.operador_nome) + "</td>" +
+          '<tr><td class="sel"><input type="checkbox" data-ficha="' + f.id + '"></td>' +
+          "<td>" + dataHora(f.fechada_em) + "</td>" +
+          /* A ficha somada mostra TODOS os operadores. Sem isto ela diria o
+             nome de um só, e o crédito do trabalho dos outros sumiria da tela
+             que o escritório usa para conferir. */
+          "<td>" + esc(f.operadores || f.operador_nome) +
+            (f.operadores ? ' <span class="etiqueta etiqueta--cinza">somada</span>' : "") + "</td>" +
           "<td>" + esc(f.desenho_nome) + "</td><td>" + esc(f.mercadoria_nome || "—") + "</td>" +
           "<td>" + esc(f.cor_nome || "—") + "</td>" +
           '<td class="num">' + num(f.quantidade) + "</td>" +
           '<td class="num">' + num(f.total_pontos) + "</td></tr>").join("") +
         /* O rodapé é do LOTE INTEIRO — é ele que sustenta a nota. Diz isso no
            rótulo para ninguém ler "Total" como o total da página. */
-        '</tbody><tfoot><tr><td colspan="5">Total do lote</td><td class="num">' + num(r.pecas) +
+        '</tbody><tfoot><tr><td colspan="6">Total do lote</td><td class="num">' + num(r.pecas) +
         '</td><td class="num">' + num(r.pontos) + "</td></tr></tfoot></table></div>" +
+        barraSomar("baixo") +
         paginacao(fatiaLote, "lote") : "") +
       "</div>" +
 
@@ -2154,11 +2243,889 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       "</div></div>";
   }
 
+  /* ------------------------------------------------------------------
+     A BARRA DE SOMAR
+
+     Nasce escondida e só aparece a partir do SEGUNDO marcado — com um
+     selecionado não há o que somar, e um botão que não faz nada é pior que
+     botão nenhum. Some sozinha quando a seleção volta a um ou zero.
+
+     O estado da seleção vive no DOM (os próprios checkboxes), não numa
+     variável à parte. Duas fontes para a mesma verdade dariam o caso clássico:
+     a tela repinta, os checkboxes voltam vazios, e a variável continua dizendo
+     que há três marcados — e o botão soma fichas que ninguém escolheu.
+     ------------------------------------------------------------------ */
+  function barraSomar(onde) {
+    return '<div class="barra-somar" data-somar="' + onde + '" hidden>' +
+      '<span class="barra-somar__conta"><b data-conta>0</b> fichas selecionadas</span>' +
+      '<button class="btn btn--laranja btn--mini" data-acao="somar-fichas">Somar em uma ficha</button>' +
+      '<button class="btn btn--fantasma btn--mini" data-acao="limpar-selecao">Limpar</button>' +
+      "</div>";
+  }
+
+  /* Delegação no documento: a tabela é repintada a cada ação, e um listener
+     preso a cada checkbox morreria junto com o HTML antigo. */
+  document.addEventListener("change", function (ev) {
+    if (ev.target.matches("[data-ficha]")) { atualizarBarraSomar(); return; }
+    if (ev.target.matches("[data-sel-todas]")) {
+      const marcar = ev.target.checked;
+      document.querySelectorAll("[data-ficha]").forEach((c) => { c.checked = marcar; });
+      atualizarBarraSomar();
+    }
+  });
+
+  /* Delegação no documento: a tabela é repintada a cada ação, e um listener
+     preso a cada checkbox morreria junto com o HTML antigo. */
+  document.addEventListener("change", function (ev) {
+    if (ev.target.matches("[data-ficha]")) { atualizarBarraSomar(); return; }
+    if (ev.target.matches("[data-sel-todas]")) {
+      const marcar = ev.target.checked;
+      document.querySelectorAll("[data-ficha]").forEach(function (c) { c.checked = marcar; });
+      atualizarBarraSomar();
+    }
+  });
+
+  function fichasSelecionadas() {
+    return [...document.querySelectorAll("[data-ficha]:checked")].map((c) => Number(c.getAttribute("data-ficha")));
+  }
+
+  function atualizarBarraSomar() {
+    const n = fichasSelecionadas().length;
+    document.querySelectorAll("[data-somar]").forEach((b) => {
+      b.hidden = n < 2;
+      const c = b.querySelector("[data-conta]");
+      if (c) c.textContent = n;
+    });
+    /* O "marcar todas" fica meio-marcado quando só parte está: sem isso, a
+       caixa do cabeçalho diria "nenhuma" com dez linhas marcadas. */
+    const todas = document.querySelector("[data-sel-todas]");
+    if (todas) {
+      const total = document.querySelectorAll("[data-ficha]").length;
+      todas.checked = n > 0 && n === total;
+      todas.indeterminate = n > 0 && n < total;
+    }
+  }
+
+  /* ========================================================================
+     FINANCEIRO
+
+     Duas abas, porque são duas perguntas diferentes:
+
+       NOTAS  — "quem me deve, e quanto". É do cliente: a nota junta lotes,
+                tem um valor, e vai sendo quitada aos poucos.
+       CAIXA  — "quanto entrou e quanto saiu". É da fábrica: o que o cliente
+                paga entra aqui, e as despesas saem.
+
+     O mesmo dinheiro aparece nos dois: um pagamento de nota é, ao mesmo
+     tempo, uma quitação parcial e uma entrada no caixa. Ele é UM lançamento
+     visto de dois ângulos, e não dois registros — dois registros divergiriam
+     no primeiro estorno.
+     ====================================================================== */
+  var filtroNotas = { s: "aberta", cliente: "", de: "", ate: "" };
+  var filtroCaixa = { de: "", ate: "", tipo: "", funcionario: 0 };
+  var ABA_FIN = "notas";
+  var NOTA_ABERTA = null;
+
+  const FORMAS = {
+    pix: "PIX", dinheiro: "Dinheiro", cartao: "Cartão",
+    boleto: "Boleto", transferencia: "Transferência", cheque: "Cheque",
+  };
+
+  async function pintarFinanceiro() {
+    if (ABA_FIN === "caixa") return pintarCaixa();
+    if (NOTA_ABERTA) return pintarNota(NOTA_ABERTA);
+    return pintarNotas();
+  }
+
+  function abasFinanceiro() {
+    return '<nav class="abas-periodo" style="margin-bottom:18px">' +
+      '<button class="aba' + (ABA_FIN === "notas" ? " on" : "") + '" data-acao="aba-fin" data-aba="notas">' +
+        "Notas do cliente</button>" +
+      '<button class="aba' + (ABA_FIN === "caixa" ? " on" : "") + '" data-acao="aba-fin" data-aba="caixa">' +
+        "Caixa da fábrica</button></nav>";
+  }
+
+  /* ------------------------------------------------------------- as notas */
+  async function pintarNotas() {
+    TELA = "financeiro"; NOTA_ABERTA = null;
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+
+    const q = new URLSearchParams();
+    if (filtroNotas.s) q.set("s", filtroNotas.s);
+    if (filtroNotas.cliente) q.set("cliente", filtroNotas.cliente);
+    if (filtroNotas.de) q.set("de", filtroNotas.de);
+    if (filtroNotas.ate) q.set("ate", filtroNotas.ate);
+    q.set("pagina", pag("notas").pagina);
+    q.set("por", pag("notas").por);
+    const r = await api("/restrito/api/notas?" + q.toString());
+    if (r.pagina !== pag("notas").pagina) pag("notas").pagina = r.pagina;
+
+    const clientes = await lista("clientes", true);
+    const aba = (chave, rotulo) =>
+      '<a class="aba' + (filtroNotas.s === chave ? " on" : "") + '" href="#" ' +
+      'data-acao="filtro-notas" data-s="' + chave + '">' + rotulo + "</a>";
+
+    alvo.innerHTML =
+      '<h1 class="titulo-tela">Financeiro</h1>' +
+      '<p class="subtitulo-tela">A nota junta lotes de um cliente e vai sendo quitada aos poucos.</p>' +
+      abasFinanceiro() +
+
+      '<div class="bloco"><div class="bloco__corpo">' +
+        '<div class="resumo-dia">' +
+          "<div><b>" + dinheiro(r.resumo.valor) + "</b><span>em notas</span></div>" +
+          '<div><b style="color:var(--verde)">' + dinheiro(r.resumo.pago) + "</b><span>recebido</span></div>" +
+          '<div><b style="color:' + (r.resumo.saldo > 0 ? "var(--laranja)" : "var(--verde)") + '">' +
+            dinheiro(r.resumo.saldo) + "</b><span>a receber</span></div>" +
+          '<div><b style="color:' + (r.resumo.vencidas ? "var(--vermelho)" : "inherit") + '">' +
+            num(r.resumo.vencidas) + "</b><span>vencidas</span></div>" +
+        "</div>" +
+      "</div></div>" +
+
+      '<div class="bloco"><div class="bloco__topo">' +
+        '<nav class="abas" style="padding:0;border:0">' +
+          aba("aberta", "Em aberto") + aba("vencida", "Vencidas") +
+          aba("quitada", "Quitadas") + aba("", "Todas") +
+        "</nav><span class=\"espaco\"></span>" +
+        '<button class="btn btn--laranja" data-acao="nova-nota">+ Nova nota</button>' +
+      "</div>" +
+      '<div class="bloco__corpo"><div class="filtros">' +
+        '<label class="campo"><span>Cliente</span><select id="fn-cliente">' +
+          opcoes(clientes, filtroNotas.cliente, "todos") + "</select></label>" +
+        '<label class="campo"><span>De</span><input type="date" id="fn-de" value="' + filtroNotas.de + '"></label>' +
+        '<label class="campo"><span>Até</span><input type="date" id="fn-ate" value="' + filtroNotas.ate + '"></label>' +
+        '<button class="btn" data-acao="filtrar-notas">Filtrar</button>' +
+      "</div></div>" +
+      (r.itens.length
+        ? '<div class="rolagem"><table><thead><tr>' +
+          "<th>Nota</th><th>Cliente</th><th>Emitida</th><th>Vencimento</th>" +
+          '<th class="num">Lotes</th><th class="num">Valor</th><th class="num">Pago</th>' +
+          '<th class="num">Falta</th><th></th></tr></thead><tbody>' +
+          r.itens.map((n) =>
+            '<tr class="' + (n.vencida ? "linha--alerta" : "") + '">' +
+            '<td><b class="num">' + esc(n.codigo) + "</b>" +
+              (n.numero_nf ? '<br><small>NF ' + esc(n.numero_nf) + "</small>" : "") +
+              (n.situacao === "cancelada" ? ' <span class="etiqueta">cancelada</span>' : "") + "</td>" +
+            "<td>" + esc(n.cliente_nome) + "</td>" +
+            '<td class="num">' + soData(n.emitida_em) + "</td>" +
+            '<td class="num">' + (n.vencimento ? soData(n.vencimento) : "—") + "</td>" +
+            '<td class="num">' + num(n.lotes) + "</td>" +
+            '<td class="num">' + dinheiro(n.valor) + "</td>" +
+            '<td class="num" style="color:var(--verde)">' + dinheiro(n.pago) + "</td>" +
+            '<td class="num">' + (n.quitada
+              ? '<span class="etiqueta etiqueta--verde">quitada</span>'
+              : '<b style="color:' + (n.vencida ? "var(--vermelho)" : "var(--laranja)") + '">' +
+                dinheiro(n.saldo) + "</b>") + "</td>" +
+            '<td><button class="btn btn--fantasma btn--mini" data-acao="abrir-nota" data-id="' +
+              n.id + '">abrir</button></td></tr>').join("") +
+          "</tbody></table></div>" + paginacao(r, "notas")
+        : '<div class="bloco__corpo"><p class="vazio">Nenhuma nota neste recorte.</p></div>') +
+      "</div>";
+  }
+
+  /* ------------------------------------------------------- uma nota só */
+  async function pintarNota(id) {
+    TELA = "nota"; NOTA_ABERTA = id;
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+    const r = await api("/restrito/api/notas/" + id);
+    const n = r.nota;
+    const quitada = r.quitada;
+
+    alvo.innerHTML =
+      '<p><a href="#" data-acao="voltar-notas">← todas as notas</a></p>' +
+      '<h1 class="titulo-tela">' + esc(n.codigo) +
+        (quitada ? ' <span class="etiqueta etiqueta--verde">quitada</span>'
+                 : r.vencida ? ' <span class="etiqueta etiqueta--vermelha">vencida</span>' : "") +
+        (n.situacao === "cancelada" ? ' <span class="etiqueta">cancelada</span>' : "") + "</h1>" +
+      '<p class="subtitulo-tela">' + esc(n.cliente_nome) +
+        (n.numero_nf ? " · NF " + esc(n.numero_nf) : "") +
+        " · emitida em " + soData(n.emitida_em) +
+        (n.vencimento ? " · vence em " + soData(n.vencimento) : "") + "</p>" +
+
+      '<div class="bloco"><div class="bloco__corpo"><div class="resumo-dia">' +
+        "<div><b>" + dinheiro(r.valor) + "</b><span>valor da nota</span></div>" +
+        '<div><b style="color:var(--verde)">' + dinheiro(r.pago) + "</b><span>já pago</span></div>" +
+        (r.devolvido ? '<div><b style="color:var(--vermelho)">' + dinheiro(r.devolvido) +
+          "</b><span>devolvido</span></div>" : "") +
+        '<div><b style="color:' + (quitada ? "var(--verde)" : "var(--laranja)") + '">' +
+          (quitada ? "QUITADA" : dinheiro(r.saldo)) + "</b><span>falta</span></div>" +
+        "<div><b>" + num(r.pecas) + "</b><span>peças</span></div>" +
+      "</div>" +
+      (n.situacao !== "cancelada" && !quitada
+        ? '<div class="linha-botoes" style="margin-top:16px">' +
+          '<button class="btn btn--verde" data-acao="receber" data-id="' + id + '">Registrar pagamento</button>' +
+          (r.pago > r.devolvido
+            ? '<button class="btn btn--fantasma" data-acao="devolver" data-id="' + id + '">Devolver ao cliente</button>'
+            : "") +
+          "</div>"
+        : "") +
+      "</div></div>" +
+
+      '<div class="bloco"><div class="bloco__topo"><h2>Lotes desta nota</h2><span class="espaco"></span>' +
+        '<button class="btn btn--fantasma btn--mini" data-acao="trocar-lotes" data-id="' + id + '">Trocar lotes</button>' +
+      "</div><div class=\"rolagem\"><table><thead><tr>" +
+        "<th>Lote</th><th>Serviço</th><th>Entrada</th>" +
+        '<th class="num">Peças</th><th class="num">Valor</th></tr></thead><tbody>' +
+        r.lotes.map((l) =>
+          "<tr><td><b class=\"num\">" + esc(l.codigo) + "</b></td>" +
+          "<td>" + esc(l.descricao || "—") + "</td>" +
+          '<td class="num">' + (l.entrada_em ? soData(l.entrada_em) : "—") + "</td>" +
+          '<td class="num">' + num(l.pecas) + "</td>" +
+          '<td class="num">' + dinheiro(l.valor) + "</td></tr>").join("") +
+        '</tbody><tfoot><tr><td colspan="3">Soma dos lotes</td>' +
+          '<td class="num">' + num(r.pecas) + '</td><td class="num">' + dinheiro(r.bruto) + "</td></tr>" +
+        (Number(n.desconto) ? '<tr><td colspan="4">Desconto</td><td class="num">− ' +
+          dinheiro(n.desconto) + "</td></tr>" : "") +
+        (Number(n.acrescimo) ? '<tr><td colspan="4">Acréscimo</td><td class="num">+ ' +
+          dinheiro(n.acrescimo) + "</td></tr>" : "") +
+        '<tr><td colspan="4"><b>Valor da nota</b></td><td class="num"><b>' +
+          dinheiro(r.valor) + "</b></td></tr></tfoot></table></div></div>" +
+
+      '<div class="bloco"><div class="bloco__topo"><h2>Pagamentos e devoluções</h2></div>' +
+        (r.lancamentos.length
+          ? '<div class="rolagem"><table><thead><tr>' +
+            "<th>Data</th><th>Recibo</th><th>Tipo</th><th>Forma</th><th>Observação</th>" +
+            '<th class="num">Valor</th><th></th></tr></thead><tbody>' +
+            r.lancamentos.map((l) =>
+              "<tr" + (l.cancelado_em ? ' style="opacity:.5;text-decoration:line-through"' : "") + ">" +
+              '<td class="num">' + soData(l.ocorrido_em) + "</td>" +
+              '<td class="num">' + esc(l.recibo || "—") + "</td>" +
+              "<td>" + (l.tipo === "entrada"
+                ? '<span class="etiqueta etiqueta--verde">pagamento</span>'
+                : '<span class="etiqueta etiqueta--vermelha">devolução</span>') + "</td>" +
+              "<td>" + esc(FORMAS[l.forma] || l.forma) + "</td>" +
+              "<td>" + esc(l.descricao || "—") +
+                (l.cancelado_em ? "<br><small>cancelado: " + esc(l.motivo_cancelamento) + "</small>" : "") + "</td>" +
+              '<td class="num"><b style="color:' + (l.tipo === "entrada" ? "var(--verde)" : "var(--vermelho)") +
+                '">' + (l.tipo === "entrada" ? "+" : "−") + " " + dinheiro(l.valor) + "</b></td>" +
+              "<td>" + (l.cancelado_em ? "" :
+                '<a class="btn btn--fantasma btn--mini" href="/restrito/lancamentos/' + l.id +
+                  '/recibo" target="_blank" rel="noopener">recibo</a> ' +
+                '<button class="btn btn--fantasma btn--mini" data-acao="cancelar-lancamento" data-id="' +
+                  l.id + '">cancelar</button>') + "</td></tr>").join("") +
+            "</tbody></table></div>"
+          : '<div class="bloco__corpo"><p class="vazio">Nenhum pagamento ainda.</p></div>') +
+      "</div>" +
+
+      '<div class="bloco"><div class="bloco__topo"><h2>Dados da nota</h2></div><div class="bloco__corpo">' +
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Número da nota fiscal</span>' +
+            '<input id="nt-nf" value="' + esc(n.numero_nf || "") + '"></label>' +
+          '<label class="campo"><span>Emitida em</span>' +
+            '<input type="date" id="nt-emitida" value="' + String(n.emitida_em || "").slice(0, 10) + '"></label>' +
+          '<label class="campo"><span>Vencimento</span>' +
+            '<input type="date" id="nt-venc" value="' + String(n.vencimento || "").slice(0, 10) + '"></label>' +
+          '<label class="campo"><span>Desconto (R$)</span>' +
+            '<input id="nt-desc" data-moeda value="' + dinheiroCampo(n.desconto) + '"></label>' +
+          '<label class="campo"><span>Acréscimo (R$)</span>' +
+            '<input id="nt-acre" data-moeda value="' + dinheiroCampo(n.acrescimo) + '"></label>' +
+        "</div>" +
+        '<label class="campo"><span>Observação</span><textarea id="nt-obs" rows="2">' +
+          esc(n.observacao || "") + "</textarea></label>" +
+        '<div class="linha-botoes">' +
+          '<button class="btn btn--verde" data-acao="salvar-nota" data-id="' + id + '">Salvar</button>' +
+          (n.situacao === "aberta" && !r.pago
+            ? '<button class="btn btn--fantasma" data-acao="cancelar-nota" data-id="' + id + '">Cancelar nota</button>'
+            : "") +
+          (!r.lancamentos.length
+            ? '<button class="btn btn--fantasma" data-acao="apagar-nota" data-id="' + id + '">Apagar</button>'
+            : "") +
+        "</div>" +
+      "</div></div>";
+  }
+
+  /* ------------------------------------------------------------- o caixa */
+  async function pintarCaixa() {
+    TELA = "financeiro"; NOTA_ABERTA = null;
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+    const q = new URLSearchParams();
+    if (filtroCaixa.de) q.set("de", filtroCaixa.de);
+    if (filtroCaixa.ate) q.set("ate", filtroCaixa.ate);
+    if (filtroCaixa.tipo) q.set("tipo", filtroCaixa.tipo);
+    if (filtroCaixa.funcionario) q.set("funcionario", filtroCaixa.funcionario);
+    q.set("pagina", pag("caixa").pagina);
+    q.set("por", pag("caixa").por);
+    const r = await api("/restrito/api/caixa?" + q.toString());
+    if (r.pagina !== pag("caixa").pagina) pag("caixa").pagina = r.pagina;
+    filtroCaixa.de = r.de; filtroCaixa.ate = r.ate;
+
+    alvo.innerHTML =
+      '<h1 class="titulo-tela">Financeiro</h1>' +
+      '<p class="subtitulo-tela">Tudo que entrou e saiu do caixa da fábrica no período.</p>' +
+      abasFinanceiro() +
+
+      '<div class="bloco"><div class="bloco__corpo">' +
+        '<div class="resumo-dia">' +
+          '<div><b style="color:var(--verde)">' + dinheiro(r.resumo.entradas) + "</b><span>entradas</span></div>" +
+          '<div><b style="color:var(--vermelho)">' + dinheiro(r.resumo.saidas) + "</b><span>saídas</span></div>" +
+          '<div><b style="color:' + (r.resumo.saldo >= 0 ? "var(--verde)" : "var(--vermelho)") + '">' +
+            dinheiro(r.resumo.saldo) + "</b><span>saldo do período</span></div>" +
+        "</div>" +
+        '<div class="filtros" style="margin-top:16px">' +
+          '<label class="campo"><span>De</span><input type="date" id="fc-de" value="' + r.de + '"></label>' +
+          '<label class="campo"><span>Até</span><input type="date" id="fc-ate" value="' + r.ate + '"></label>' +
+          '<label class="campo"><span>Tipo</span><select id="fc-tipo">' +
+            '<option value="">tudo</option>' +
+            '<option value="entrada"' + (filtroCaixa.tipo === "entrada" ? " selected" : "") + ">só entradas</option>" +
+            '<option value="saida"' + (filtroCaixa.tipo === "saida" ? " selected" : "") + ">só saídas</option>" +
+          "</select></label>" +
+          '<button class="btn" data-acao="filtrar-caixa">Filtrar</button>' +
+          '<button class="btn btn--laranja" data-acao="nova-despesa">+ Lançar despesa</button>' +
+        "</div>" +
+      "</div></div>" +
+
+      (r.porCategoria.length
+        ? '<div class="bloco"><div class="bloco__topo"><h2>Por categoria</h2></div>' +
+          '<div class="rolagem"><table><tbody>' +
+          r.porCategoria.map((c) =>
+            "<tr><td>" + esc(c.categoria) + "</td>" +
+            '<td>' + (c.tipo === "entrada" ? "entrada" : "saída") + "</td>" +
+            '<td class="num">' + num(c.n) + "</td>" +
+            '<td class="num"><b style="color:' + (c.tipo === "entrada" ? "var(--verde)" : "var(--vermelho)") +
+              '">' + dinheiro(c.valor) + "</b></td></tr>").join("") +
+          "</tbody></table></div></div>"
+        : "") +
+
+      /* POR FUNCIONÁRIO — só aparece quando existe. Um bloco vazio permanente
+         ensina a ignorar aquele pedaço da tela.
+         A quebra por categoria responde "quanto de salário"; esta responde
+         "de quem", que é a pergunta de quem confere a folha. Cada nome leva ao
+         extrato dele, sem digitar filtro nenhum. */
+      (r.porFuncionario && r.porFuncionario.length
+        ? '<div class="bloco"><div class="bloco__topo"><h2>Por funcionário</h2>' +
+          "<small>no período</small></div>" +
+          '<div class="rolagem"><table><tbody>' +
+          r.porFuncionario.map((f) =>
+            "<tr><td><b>" + esc(f.nome) + "</b></td>" +
+            "<td>" + esc(f.categoria) + "</td>" +
+            '<td class="num">' + num(f.n) + "</td>" +
+            '<td class="num"><b style="color:var(--vermelho)">' + dinheiro(f.valor) + "</b></td>" +
+            '<td><button class="btn btn--fantasma btn--mini" data-acao="filtrar-funcionario" ' +
+              'data-id="' + f.id + '">ver só ele</button></td></tr>').join("") +
+          "</tbody></table></div></div>"
+        : "") +
+
+      '<div class="bloco"><div class="bloco__topo"><h2>Lançamentos</h2>' +
+        (filtroCaixa.funcionario
+          ? '<button class="btn btn--fantasma btn--mini" data-acao="filtrar-funcionario" data-id="0">' +
+            "mostrar todos</button>" : "") + "</div>" +
+        (r.itens.length
+          ? '<div class="rolagem"><table><thead><tr>' +
+            "<th>Data</th><th>Descrição</th><th>Categoria</th><th>Forma</th><th>Quem lançou</th>" +
+            '<th class="num">Valor</th><th></th></tr></thead><tbody>' +
+            r.itens.map((l) =>
+              "<tr" + (l.cancelado_em ? ' style="opacity:.5;text-decoration:line-through"' : "") + ">" +
+              '<td class="num">' + soData(l.ocorrido_em) + "</td>" +
+              "<td>" + esc(l.descricao || (l.nota_codigo ? "Nota " + l.nota_codigo : "—")) +
+                /* De quem veio (cliente) e para quem foi (funcionário) ficam na
+                   MESMA célula da descrição, porque são a resposta da mesma
+                   pergunta: de quem é este dinheiro. */
+                (l.cliente_nome ? "<br><small>" + esc(l.cliente_nome) + "</small>" : "") +
+                (l.funcionario_nome
+                  ? '<br><small style="color:var(--laranja)">→ ' + esc(l.funcionario_nome) + "</small>"
+                  : "") + "</td>" +
+              "<td>" + esc(l.categoria) + "</td>" +
+              "<td>" + esc(FORMAS[l.forma] || l.forma) + "</td>" +
+              "<td><small>" + esc(l.quem || "—") + "</small></td>" +
+              '<td class="num"><b style="color:' + (l.tipo === "entrada" ? "var(--verde)" : "var(--vermelho)") +
+                '">' + (l.tipo === "entrada" ? "+" : "−") + " " + dinheiro(l.valor) + "</b></td>" +
+              "<td>" + (l.cancelado_em ? "" :
+                (l.recibo ? '<a class="btn btn--fantasma btn--mini" href="/restrito/lancamentos/' + l.id +
+                  '/recibo" target="_blank" rel="noopener">recibo</a> ' : "") +
+                '<button class="btn btn--fantasma btn--mini" data-acao="cancelar-lancamento" data-id="' +
+                  l.id + '">cancelar</button>') + "</td></tr>").join("") +
+            "</tbody></table></div>" + paginacao(r, "caixa")
+          : '<div class="bloco__corpo"><p class="vazio">Nenhum lançamento no período.</p></div>') +
+      "</div>";
+
+    CATEGORIAS_DESPESA = r.categorias;
+    FUNCIONARIOS = r.funcionarios || [];
+  }
+  /* `[{nome, pedeFuncionario}]` — a tela guarda o que o servidor disse, e não
+     a palavra "Salários" escrita aqui. Renomear a categoria pelo cadastro
+     continua funcionando. */
+  var CATEGORIAS_DESPESA = [];
+  var FUNCIONARIOS = [];
+
+  /* ======================================================================
+     CAIXA DE ESCOLHA COM FILTRO
+
+     Um `<select>` comum não filtra: com trinta funcionários, achar um nome é
+     rolar uma lista. Um `<input list=datalist>` filtra de graça mas guarda o
+     TEXTO, e dois "José" viram o mesmo valor — num lançamento de salário isso
+     é pagar a pessoa errada no relatório.
+
+     Então: um campo de texto que filtra, uma lista que aparece embaixo, e o id
+     guardado num campo escondido. O id só existe depois de ESCOLHER da lista;
+     digitar um nome parecido e sair não seleciona ninguém, e é o servidor que
+     recusa o lançamento sem funcionário — não uma adivinhação da tela.
+
+     Escrito UMA vez, com nome próprio, porque a segunda tela que precisar de
+     escolha filtrada vai chamar isto em vez de copiar. Devolve o HTML; quem
+     abre a modal chama `ligarBuscaEscolha` no `aoAbrir`.
+     ====================================================================== */
+  function campoBuscaEscolha(id, rotulo, itens, opcoes) {
+    const o = opcoes || {};
+    return '<label class="campo busca-escolha" data-busca="' + id + '"><span>' + esc(rotulo) + "</span>" +
+      '<input type="text" id="' + id + '-txt" autocomplete="off" role="combobox" ' +
+        'aria-expanded="false" aria-autocomplete="list" ' +
+        'placeholder="' + esc(o.dica || "digite para procurar") + '">' +
+      '<input type="hidden" id="' + id + '">' +
+      '<div class="busca-escolha__lista" hidden>' +
+        itens.map((x) =>
+          '<button type="button" class="busca-escolha__item" data-valor="' + esc(String(x.id)) + '" ' +
+            'data-texto="' + esc(x.nome) + '">' + esc(x.nome) +
+            (x.ativo === false ? '<small class="etiqueta etiqueta--cinza">desligado</small>' : "") +
+          "</button>").join("") +
+      "</div></label>";
+  }
+
+  function ligarBuscaEscolha(caixa, id) {
+    const raiz = caixa.querySelector('[data-busca="' + id + '"]');
+    if (!raiz) return;
+    const txt = raiz.querySelector("#" + id + "-txt");
+    const val = raiz.querySelector("#" + id);
+    const lista = raiz.querySelector(".busca-escolha__lista");
+    const itens = [...lista.querySelectorAll(".busca-escolha__item")];
+
+    /* Sem acento e sem caixa: quem procura "jose" tem de achar "José". A busca
+       é por PEDAÇO e não por começo — o sobrenome é o que muita gente digita. */
+    const chao = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+    let marcado = -1;
+
+    function filtrar() {
+      const q = chao(txt.value.trim());
+      let vistos = 0;
+      itens.forEach((b) => {
+        const bate = !q || chao(b.getAttribute("data-texto")).indexOf(q) >= 0;
+        b.hidden = !bate;
+        b.classList.remove("marcado");
+        if (bate) vistos++;
+      });
+      marcado = -1;
+      lista.hidden = vistos === 0;
+      txt.setAttribute("aria-expanded", String(!lista.hidden));
+    }
+    function visiveis() { return itens.filter((b) => !b.hidden); }
+    function marcar(n) {
+      const v = visiveis();
+      if (!v.length) return;
+      marcado = (n + v.length) % v.length;
+      v.forEach((b, i) => b.classList.toggle("marcado", i === marcado));
+      v[marcado].scrollIntoView({ block: "nearest" });
+    }
+    function escolher(b) {
+      val.value = b.getAttribute("data-valor");
+      txt.value = b.getAttribute("data-texto");
+      lista.hidden = true;
+      txt.setAttribute("aria-expanded", "false");
+    }
+
+    txt.addEventListener("input", function () {
+      /* Mexeu no texto: a escolha anterior deixa de valer. Manter o id antigo
+         enquanto o campo mostra outro nome é a forma silenciosa de gravar a
+         pessoa errada. */
+      val.value = "";
+      filtrar();
+    });
+    txt.addEventListener("focus", filtrar);
+    txt.addEventListener("keydown", function (ev) {
+      if (ev.key === "ArrowDown") { ev.preventDefault(); if (lista.hidden) filtrar(); marcar(marcado + 1); }
+      else if (ev.key === "ArrowUp") { ev.preventDefault(); marcar(marcado - 1); }
+      else if (ev.key === "Enter") {
+        const v = visiveis();
+        if (!lista.hidden && v[marcado]) { ev.preventDefault(); escolher(v[marcado]); }
+      } else if (ev.key === "Escape" && !lista.hidden) {
+        /* Esc fecha a LISTA antes de fechar a modal — senão escolher errado
+           obrigaria a reabrir tudo. O `stopPropagation` é o que segura isso. */
+        ev.stopPropagation(); lista.hidden = true;
+        txt.setAttribute("aria-expanded", "false");
+      }
+    });
+    lista.addEventListener("mousedown", function (ev) {
+      /* `mousedown` e não `click`: o `blur` do campo esconderia a lista antes
+         de o clique chegar, e o item nunca seria escolhido. */
+      const b = ev.target.closest(".busca-escolha__item");
+      if (b) { ev.preventDefault(); escolher(b); }
+    });
+    txt.addEventListener("blur", function () {
+      setTimeout(function () {
+        lista.hidden = true;
+        txt.setAttribute("aria-expanded", "false");
+        /* Saiu sem escolher da lista: limpa o texto solto. Deixar "Jos" escrito
+           num campo que não selecionou ninguém faz a tela parecer preenchida. */
+        if (!val.value) txt.value = "";
+      }, 120);
+    });
+  }
+
+  /* ---------------------------------------------------------- nova nota */
+  async function modalNovaNota() {
+    const clientes = await lista("clientes");
+    abrirModal({
+      titulo: "Nova nota",
+      corpo:
+        '<label class="campo"><span>Cliente</span><select id="nn-cliente">' +
+          opcoes(clientes, "", "— escolha —") + "</select></label>" +
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Número da nota fiscal (opcional)</span><input id="nn-nf"></label>' +
+          '<label class="campo"><span>Vencimento</span><input type="date" id="nn-venc"></label>' +
+        "</div>" +
+        '<div id="nn-lotes"><p style="color:#77778a;margin:0">Escolha o cliente para ver os lotes.</p></div>',
+      confirmar: "Criar nota",
+      classe: "btn--laranja",
+      aoAbrir: function (caixa) {
+        const sel = caixa.querySelector("#nn-cliente");
+        const area = caixa.querySelector("#nn-lotes");
+        sel.addEventListener("change", async function () {
+          if (!sel.value) { area.innerHTML = ""; return; }
+          area.innerHTML = '<p style="color:#77778a">carregando lotes…</p>';
+          /* SÓ LOTES SEM NOTA. Um lote já faturado noutra nota apareceria como
+             disponível e a criação falharia no servidor — melhor não oferecer
+             do que oferecer e recusar. */
+          const r = await api("/restrito/api/lotes?cliente=" + sel.value + "&semNota=1&por=200");
+          const livres = r.lotes || [];
+          if (!livres.length) {
+            area.innerHTML = '<div class="aviso aviso--erro">Este cliente não tem lote fora de nota. ' +
+              "Crie o lote e junte as fichas antes de emitir a nota.</div>";
+            return;
+          }
+          area.innerHTML =
+            '<div style="font-size:11.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;' +
+              'color:#8a8a99;margin:14px 0 8px">Lotes deste cliente ainda sem nota</div>' +
+            '<div class="escolha">' + livres.map((l) =>
+              '<label><input type="checkbox" data-lote value="' + l.id + '">' +
+              "<span><b>" + esc(l.codigo) + "</b> — " + dinheiro(l.valor) +
+              (l.descricao ? " · " + esc(l.descricao) : "") +
+              "<small>" + num(l.pecas || 0) + " peças · " + esc(l.situacao) + "</small></span></label>").join("") +
+            "</div>" +
+            '<p style="margin:10px 0 0;font-size:13px;color:#77778a" id="nn-soma">Nada selecionado.</p>';
+          area.addEventListener("change", function () {
+            const marcados = [...area.querySelectorAll("[data-lote]:checked")];
+            const total = marcados.reduce((a, c) =>
+              a + Number(livres.find((l) => String(l.id) === c.value).valor || 0), 0);
+            area.querySelector("#nn-soma").innerHTML = marcados.length
+              ? "<b>" + marcados.length + " lote(s)</b> · a nota fica em <b>" + dinheiro(total) + "</b>"
+              : "Nada selecionado.";
+          });
+        });
+      },
+      aoConfirmar: async function (caixa) {
+        const cliente = caixa.querySelector("#nn-cliente").value;
+        if (!cliente) throw new Error("Escolha o cliente.");
+        const lotes = [...caixa.querySelectorAll("[data-lote]:checked")].map((c) => Number(c.value));
+        if (!lotes.length) throw new Error("Escolha ao menos um lote.");
+        const r = await enviar("/restrito/api/notas", "POST", {
+          cliente_id: Number(cliente), lotes,
+          numero_nf: caixa.querySelector("#nn-nf").value,
+          vencimento: caixa.querySelector("#nn-venc").value || null,
+        });
+        recado("Nota " + r.codigo + " criada.");
+        NOTA_ABERTA = r.id;
+        await pintarNota(r.id);
+      },
+    });
+  }
+
+  /* -------------------------------------------------- pagamento / devolução */
+  async function modalLancarNota(id, ehDevolucao) {
+    const r = await api("/restrito/api/notas/" + id);
+    const teto = ehDevolucao ? r.pago - r.devolvido : r.saldo;
+    abrirModal({
+      titulo: ehDevolucao ? "Devolver ao cliente" : "Registrar pagamento",
+      corpo:
+        '<div class="aviso aviso--info" style="margin-bottom:14px">' +
+          "Nota <b>" + esc(r.nota.codigo) + "</b> de <b>" + esc(r.nota.cliente_nome) + "</b>.<br>" +
+          "Valor <b>" + dinheiro(r.valor) + "</b> · já pago <b>" + dinheiro(r.pago) + "</b> · " +
+          (ehDevolucao ? "dá para devolver até <b>" : "falta <b>") + dinheiro(teto) + "</b>." +
+        "</div>" +
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Valor (R$)</span>' +
+            '<input id="lc-valor" data-moeda inputmode="decimal" value="' +
+            (ehDevolucao ? "" : dinheiroCampo(teto)) + '" autofocus>' +
+            /* O campo já vem com o saldo INTEIRO no pagamento: quitar de uma
+               vez é o caso mais comum, e digitar de novo um número que a tela
+               acabou de mostrar é trabalho sem motivo. */
+            "<small>" + (ehDevolucao ? "" : "Já vem com o saldo. Mude para pagamento parcial.") +
+            "</small></label>" +
+          '<label class="campo"><span>Data</span><input type="date" id="lc-data" value="' +
+            hoje() + '"></label>' +
+          '<label class="campo"><span>Forma</span><select id="lc-forma">' +
+            Object.keys(FORMAS).map((k) => '<option value="' + k + '">' + FORMAS[k] + "</option>").join("") +
+          "</select></label>" +
+        "</div>" +
+        '<label class="campo"><span>Observação (sai no recibo)</span>' +
+          '<input id="lc-obs" maxlength="200"></label>',
+      confirmar: ehDevolucao ? "Registrar devolução" : "Registrar pagamento",
+      classe: ehDevolucao ? "btn--perigo" : "btn--verde",
+      aoConfirmar: async function (caixa) {
+        const r2 = await enviar("/restrito/api/lancamentos", "POST", {
+          categoria: ehDevolucao ? "devolucao" : "recebimento",
+          nota_id: id,
+          valor: caixa.querySelector("#lc-valor").value,
+          ocorrido_em: caixa.querySelector("#lc-data").value,
+          forma: caixa.querySelector("#lc-forma").value,
+          descricao: caixa.querySelector("#lc-obs").value,
+        });
+        recado("Registrado. Recibo " + r2.recibo + ".");
+        await pintarNota(id);
+        /* O recibo abre sozinho: o gesto seguinte é sempre imprimir e
+           entregar, e obrigar a procurar o botão depois de salvar é atrito
+           num fluxo que acontece com o cliente esperando na frente. */
+        window.open("/restrito/lancamentos/" + r2.id + "/recibo", "_blank", "noopener");
+      },
+    });
+  }
+
+  /* -------------------------------------------------------- nova despesa */
+  function modalNovaDespesa() {
+    abrirModal({
+      titulo: "Lançar no caixa",
+      corpo:
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Tipo</span><select id="dp-tipo">' +
+            '<option value="saida">Saída — despesa</option>' +
+            '<option value="entrada">Entrada — outro dinheiro que entrou</option>' +
+          "</select></label>" +
+          '<label class="campo"><span>Categoria</span><select id="dp-cat">' +
+            CATEGORIAS_DESPESA.map((c) => '<option value="' + esc(c.nome) + '"' +
+              (c.pedeFuncionario ? ' data-pede-funcionario="1"' : "") + ">" +
+              esc(c.nome) + "</option>").join("") +
+          "</select></label>" +
+        "</div>" +
+
+        /* O campo do funcionário nasce ESCONDIDO e aparece quando a categoria
+           escolhida pede. Deixá-lo sempre visível convidaria a preencher em
+           conta de luz — e o servidor recusaria depois de tudo digitado. */
+        '<div id="dp-quem" hidden>' +
+          campoBuscaEscolha("dp-func", "Funcionário", FUNCIONARIOS,
+            { dica: "digite parte do nome" }) +
+        "</div>" +
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Valor (R$)</span>' +
+            '<input id="dp-valor" data-moeda inputmode="decimal" autofocus></label>' +
+          '<label class="campo"><span>Data</span><input type="date" id="dp-data" value="' +
+            hoje() + '"></label>' +
+          '<label class="campo"><span>Forma</span><select id="dp-forma">' +
+            Object.keys(FORMAS).map((k) => '<option value="' + k + '">' + FORMAS[k] + "</option>").join("") +
+          "</select></label>" +
+        "</div>" +
+        '<label class="campo"><span>Descrição</span>' +
+          '<input id="dp-desc" maxlength="200" placeholder="ex.: linha para a máquina 3"></label>' +
+        '<p style="margin:0;font-size:13px;color:#77778a">Despesa da fábrica não pertence a nota nenhuma. ' +
+        "Para registrar pagamento de cliente, abra a nota dele.</p>",
+      confirmar: "Lançar",
+      classe: "btn--laranja",
+      aoAbrir: function (caixa) {
+        ligarBuscaEscolha(caixa, "dp-func");
+        const cat = caixa.querySelector("#dp-cat");
+        const quem = caixa.querySelector("#dp-quem");
+        const tipo = caixa.querySelector("#dp-tipo");
+        const desc = caixa.querySelector("#dp-desc");
+
+        function acertar() {
+          const op = cat.options[cat.selectedIndex];
+          /* Salário é SAÍDA, sempre. Mostrar o campo numa entrada deixaria
+             registrar "recebi salário de fulano", que não é coisa deste caixa. */
+          const pede = !!(op && op.getAttribute("data-pede-funcionario")) && tipo.value === "saida";
+          quem.hidden = !pede;
+          if (!pede) {
+            caixa.querySelector("#dp-func").value = "";
+            caixa.querySelector("#dp-func-txt").value = "";
+          } else if (!desc.value.trim()) {
+            /* A descrição é obrigatória no servidor, e "Salário" é o que
+               qualquer um escreveria aqui. Preenchido, e ainda editável. */
+            desc.value = op.textContent.trim();
+          }
+        }
+        cat.addEventListener("change", acertar);
+        tipo.addEventListener("change", acertar);
+        acertar();
+      },
+      aoConfirmar: async function (caixa) {
+        await enviar("/restrito/api/lancamentos", "POST", {
+          tipo: caixa.querySelector("#dp-tipo").value,
+          categoria: caixa.querySelector("#dp-cat").value,
+          valor: caixa.querySelector("#dp-valor").value,
+          ocorrido_em: caixa.querySelector("#dp-data").value,
+          forma: caixa.querySelector("#dp-forma").value,
+          descricao: caixa.querySelector("#dp-desc").value,
+          funcionario_id: caixa.querySelector("#dp-quem").hidden
+            ? null : (Number(caixa.querySelector("#dp-func").value) || null),
+        });
+        recado("Lançado no caixa.");
+        await pintarCaixa();
+      },
+    });
+  }
+
+  /* --------------------------------------------------------- trocar lotes */
+  async function modalTrocarLotes(id) {
+    const r = await api("/restrito/api/notas/" + id);
+    const dentro = r.lotes.map((l) => l.id);
+    /* Os que já estão na nota MAIS os livres do mesmo cliente, numa lista só.
+       Marcar e desmarcar é a operação inteira; o servidor reconcilia. */
+    const livres = (await api("/restrito/api/lotes?cliente=" + r.nota.cliente_id +
+      "&semNota=1&por=200")).lotes || [];
+    const todos = r.lotes.map((l) => Object.assign({}, l, { _dentro: true }))
+      .concat(livres.map((l) => Object.assign({}, l, { _dentro: false })));
+
+    abrirModal({
+      titulo: "Lotes da nota " + r.nota.codigo,
+      corpo:
+        '<p style="margin:0 0 12px;color:#55555f">Marque os lotes que fazem parte desta nota. ' +
+        "Desmarcar devolve o lote para a lista de disponíveis.</p>" +
+        '<div class="escolha">' + todos.map((l) =>
+          '<label><input type="checkbox" data-lote value="' + l.id + '"' +
+            (l._dentro ? " checked" : "") + ">" +
+          "<span><b>" + esc(l.codigo) + "</b> — " + dinheiro(l.valor) +
+          (l.descricao ? " · " + esc(l.descricao) : "") +
+          "<small>" + num(l.pecas || 0) + " peças</small></span></label>").join("") + "</div>",
+      confirmar: "Salvar lotes",
+      classe: "btn--laranja",
+      aoConfirmar: async function (caixa) {
+        const lotes = [...caixa.querySelectorAll("[data-lote]:checked")].map((c) => Number(c.value));
+        if (!lotes.length) throw new Error("A nota precisa de ao menos um lote.");
+        await enviar("/restrito/api/notas/" + id + "/lotes", "PUT", { lotes });
+        recado("Lotes atualizados.");
+        await pintarNota(id);
+      },
+    });
+    void dentro;
+  }
+
+  /* ------------------------------------------------- cancelar lançamento */
+  function modalCancelarLancamento(id, depois) {
+    abrirModal({
+      titulo: "Cancelar lançamento",
+      corpo:
+        '<div class="aviso aviso--erro" style="margin-bottom:14px">O lançamento NÃO é apagado: ' +
+        "ele fica riscado na lista e para de contar. Um recibo já entregue precisa continuar " +
+        "tendo lastro no sistema.</div>" +
+        '<label class="campo"><span>Por que está cancelando?</span>' +
+          '<input id="cl-motivo" maxlength="200" autofocus placeholder="ex.: cheque devolvido"></label>',
+      confirmar: "Cancelar o lançamento",
+      classe: "btn--perigo",
+      aoConfirmar: async function (caixa) {
+        const motivo = caixa.querySelector("#cl-motivo").value.trim();
+        if (motivo.length < 3) throw new Error("Escreva o motivo.");
+        await enviar("/restrito/api/lancamentos/" + id + "/cancelar", "PUT", { motivo });
+        recado("Lançamento cancelado.");
+        await depois();
+      },
+    });
+  }
+
   function quebraBloco(titulo, itens) {
     if (!itens || !itens.length) return "";
     return "<div><div style=\"font-size:11.5px;font-weight:800;letter-spacing:.07em;" +
       "text-transform:uppercase;color:#8a8a99;margin-bottom:9px\">" + esc(titulo) + "</div>" +
       '<div class="quebra">' + barras(itens.map((i) => ({ nome: i.nome, valor: i.pecas }))) + "</div></div>";
+  }
+
+  /* ------------------------------------------------------------------
+     A MODAL DE SOMAR — mostra a conta ANTES de fazer
+
+     Ela existe porque somar fichas de pontuação diferente MUDA o total, e o
+     total vai para o recibo que o cliente assina. A pessoa tem de ver o número
+     que vai sair, não descobrir depois de impresso.
+
+     Dois estados, como pedido:
+       · fichas do mesmo desenho e mesma pontuação → confirmação normal;
+       · qualquer divergência → aviso em vermelho, dizendo o que diverge.
+     Nos dois casos dá para confirmar ou cancelar.
+     ------------------------------------------------------------------ */
+  async function modalSomarFichas(loteId) {
+    const ids = fichasSelecionadas();
+    if (ids.length < 2) return;
+
+    const detalhe = await api("/restrito/api/lotes/" + loteId);
+    const sel = detalhe.fichas.filter((f) => ids.includes(f.id));
+    if (sel.length !== ids.length) {
+      recado("Alguma ficha saiu da lista. Recarregue a tela.", true);
+      return;
+    }
+
+    const pecas = sel.reduce((a, f) => a + Number(f.quantidade || 0), 0);
+    const pontos = sel.reduce((a, f) => a + Number(f.total_pontos || 0), 0);
+    const valor = sel.reduce((a, f) => a + Number(f.total_valor || 0), 0);
+    const pontuacao = Math.max(1, Math.round(pontos / pecas));
+    const depois = pecas * pontuacao;
+    const diferenca = depois - pontos;
+
+    const distintos = (campo) => [...new Set(sel.map((f) => String(f[campo] || "")))];
+    const desenhos = distintos("desenho_nome");
+    const cores = distintos("cor_nome");
+    const mercadorias = distintos("mercadoria_nome");
+    const pontuacoes = distintos("pontuacao");
+    const precos = distintos("preco_unitario");
+
+    const diverge = [];
+    if (desenhos.length > 1) diverge.push("desenhos diferentes (" + desenhos.map(esc).join(", ") + ")");
+    if (cores.length > 1) diverge.push("cores diferentes (" + cores.map((c) => esc(c || "sem cor")).join(", ") + ")");
+    if (mercadorias.length > 1) diverge.push("mercadorias diferentes");
+    if (pontuacoes.length > 1) diverge.push("pontuações diferentes");
+    if (precos.length > 1) diverge.push("preços diferentes");
+
+    const mudaTotal = diferenca !== 0;
+
+    abrirModal({
+      titulo: "Somar " + sel.length + " fichas em uma",
+      corpo:
+        '<div class="rolagem" style="margin-bottom:16px"><table><thead><tr>' +
+          "<th>Fechada</th><th>Operador</th><th>Desenho</th><th>Cor</th>" +
+          '<th class="num">Peças</th><th class="num">Pontos/peça</th><th class="num">Pontos</th>' +
+        "</tr></thead><tbody>" +
+        sel.map((f) =>
+          "<tr><td>" + dataHora(f.fechada_em) + "</td><td>" + esc(f.operador_nome) + "</td>" +
+          "<td>" + esc(f.desenho_nome) + "</td><td>" + esc(f.cor_nome || "—") + "</td>" +
+          '<td class="num">' + num(f.quantidade) + "</td>" +
+          '<td class="num">' + num(f.pontuacao) + "</td>" +
+          '<td class="num">' + num(f.total_pontos) + "</td></tr>").join("") +
+        '<tr style="font-weight:800"><td colspan="4">Soma</td>' +
+          '<td class="num">' + num(pecas) + '</td><td class="num"></td>' +
+          '<td class="num">' + num(pontos) + "</td></tr>" +
+        "</tbody></table></div>" +
+
+        (diverge.length
+          ? '<div class="aviso aviso--erro" style="margin-bottom:14px">' +
+            "<b>Estas fichas não são iguais.</b><br>São " + diverge.join("; ") + "." +
+            (mudaTotal
+              ? "<br><br><b>E a soma muda o total:</b> os pontos vão de <b>" + num(pontos) +
+                "</b> para <b>" + num(depois) + "</b> (" + (diferenca > 0 ? "+" : "") + num(diferenca) +
+                "). Numa ficha só existe uma pontuação por peça, e a média não fecha exata."
+              : "<br><br>Mesmo assim o total de pontos <b>não muda</b> — as pontuações se compensam.") +
+            "</div>"
+          : '<div class="aviso aviso--ok" style="margin-bottom:14px">' +
+            "<b>São fichas do mesmo desenho e mesma pontuação.</b> A soma fecha exata: " +
+            "nada muda nos totais." + "</div>") +
+
+        '<div class="grade-form" style="gap:14px">' +
+          '<div><div style="font-size:11.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;' +
+            'color:#8a8a99;margin-bottom:6px">Vai virar</div>' +
+            "<b>" + num(pecas) + " peças</b> · " + num(pontuacao) + " pontos/peça · <b>" +
+            num(depois) + " pontos</b>" +
+            (valor ? " · " + dinheiro(valor) : "") + "</div>" +
+          '<div><div style="font-size:11.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;' +
+            'color:#8a8a99;margin-bottom:6px">Operadores</div>' +
+            esc([...new Set(sel.map((f) => f.operadores || f.operador_nome))].join(", ")) + "</div>" +
+        "</div>" +
+        '<p style="margin:16px 0 0;font-size:13px;color:#77778a">As ' + sel.length +
+        " fichas saem da lista e ficam guardadas no banco, apontando para a nova. " +
+        "Nada é apagado.</p>",
+      confirmar: "Somar as " + sel.length + " fichas",
+      classe: diverge.length ? "btn--perigo" : "btn--laranja",
+      aoConfirmar: async function () {
+        const r = await enviar("/restrito/api/fichas/somar", "POST", { ids });
+        recado(
+          "Somadas em uma ficha de " + num(r.pecas) + " peças." +
+          (r.diferenca_pontos ? " (arredondamento: " + (r.diferenca_pontos > 0 ? "+" : "") +
+            num(r.diferenca_pontos) + " pontos)" : ""));
+        await pintarLote(loteId);
+      },
+    });
   }
 
   /* A tela de juntar mostra, numa lista só, as fichas QUE JÁ ESTÃO no lote e as
@@ -2168,7 +3135,18 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   async function modalAmalgamar(id) {
     const detalhe = await api("/restrito/api/lotes/" + id);
     const dentro = detalhe.fichas.map((f) => f.id);
-    const soltas = (await api("/restrito/api/producao?soltas=1&cliente=" + detalhe.lote.cliente_id)).fichas;
+    /* `por=500` — o teto da rota — e não a paginação padrão de 20.
+       Esta tela existe para juntar TUDO que é do serviço; com 20 por página,
+       um lote de trinta fichas soltas mostrava vinte, e as dez que não
+       apareciam ficavam de fora do lote sem que nada na tela dissesse que
+       existiam. Uma lista de escolha não pode paginar: o que não está à vista
+       não é escolhido nem recusado, é esquecido. */
+    const soltasR = await api(
+      "/restrito/api/producao?soltas=1&por=500&cliente=" + detalhe.lote.cliente_id);
+    const soltas = soltasR.fichas;
+    /* Se um dia passar de 500, o aviso aparece em vez de o excedente sumir
+       calado — é a diferença entre um limite conhecido e uma perda invisível. */
+    const excedeu = soltasR.total && soltasR.total > soltas.length;
 
     const todas = detalhe.fichas.map((f) => Object.assign({}, f, { _dentro: true }))
       .concat(soltas.map((f) => Object.assign({}, f, { _dentro: false })))
@@ -2184,6 +3162,10 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       corpo:
         '<p style="margin:0 0 14px;color:#55555f">Marque tudo que faz parte deste serviço de ' +
         "<b>" + esc(detalhe.lote.cliente_nome) + "</b>. Desmarcar tira do lote e devolve para a lista de soltas.</p>" +
+        (excedeu
+          ? '<div class="aviso aviso--erro" style="margin-bottom:12px">Este cliente tem mais de 500 fichas ' +
+            "soltas e nem todas cabem nesta lista. Junte estas primeiro e abra de novo.</div>"
+          : "") +
         '<div class="linha-botoes" style="margin-bottom:10px">' +
           '<button type="button" class="btn btn--fantasma btn--mini" data-marcar="todas">Marcar todas</button>' +
           '<button type="button" class="btn btn--fantasma btn--mini" data-marcar="nenhuma">Desmarcar todas</button>' +
@@ -2472,6 +3454,11 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
     horarios: () => pintarHorarios(),
     lotes: () => pintarLotes(),
     lote: () => pintarLote(LOTE_ABERTO),
+    /* Pagamento lançado noutro aparelho aparece aqui sozinho: o saldo de uma
+       nota é a informação que duas pessoas olham ao mesmo tempo quando o
+       cliente está na frente. */
+    notas: () => pintarFinanceiro(),
+    caixa: () => (ABA_FIN === "caixa" ? pintarCaixa() : Promise.resolve()),
     tabelas: () => pintarTabelas(),
     usuarios: () => pintarUsuarios(),
     operar: () => pintarOperar(),
@@ -3448,8 +4435,26 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
         ok.disabled = false;
       }
     });
+
+    /* Esc fecha, pelo mesmo caminho do botão Cancelar — nunca confirma.
+       Sem isto a única saída é acertar o × com o mouse, e quem abriu a modal
+       por engano no meio do expediente fica preso nela. O ouvinte é do
+       documento, e não da caixa, porque o foco pode estar fora dela; ele se
+       remove sozinho ao fechar para não sobrar um por modal aberta. */
+    const porEsc = (ev) => {
+      if (ev.key !== "Escape") return;
+      document.removeEventListener("keydown", porEsc);
+      fecharModal(); saiu();
+    };
+    document.addEventListener("keydown", porEsc);
+    ouvintesDeEsc.push(porEsc);
   }
+  /* Os ouvintes de Esc vivos. `fecharModal` pode ser chamado pelo × , pela
+     confirmação ou pelo próprio Esc — e em todos os casos o ouvinte tem de
+     sair junto, ou a próxima tecla Esc fecharia uma modal que já não existe. */
+  const ouvintesDeEsc = [];
   function fecharModal() {
+    while (ouvintesDeEsc.length) document.removeEventListener("keydown", ouvintesDeEsc.pop());
     document.getElementById("modais").innerHTML = "";
     /* Chegou aviso enquanto a modal estava aberta? Aplica agora. Sem isto, o
        operador que ficou dez minutos com uma ficha aberta voltaria para uma
@@ -3470,13 +4475,16 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   async function irPara(tela) {
     TELA = tela;
     fecharSuspensos();
+    /* O detalhe acende o botão do PAI: quem está dentro de um lote continua
+       vendo "Lotes" aceso, porque é de lá que ele veio e é para lá que volta. */
+    const noMenu = MENU_DA_TELA[tela] || tela;
     document.querySelectorAll("#menu button[data-tela]").forEach(function (b) {
-      b.setAttribute("aria-current", String(b.getAttribute("data-tela") === tela));
+      b.setAttribute("aria-current", String(b.getAttribute("data-tela") === noMenu));
     });
 
     /* O botão "Cadastros" fica aceso quando qualquer filha dele está aberta, e
        escreve QUAL — senão o menu não diz onde a pessoa está. */
-    const dentro = DENTRO_DE_CADASTROS[tela];
+    const dentro = DENTRO_DE_CADASTROS[noMenu];
     const abre = document.querySelector('[data-abrir="cadastros"]');
     abre.setAttribute("aria-current", String(!!dentro));
     document.getElementById("menu-cadastros-rotulo").textContent = dentro || "Cadastros";
@@ -3487,6 +4495,18 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       else if (tela === "producao") await pintarProducao();
       else if (tela === "horarios") await pintarHorarios();
       else if (tela === "lotes") await pintarLotes();
+      /* Repintar o DETALHE, não a lista. Sem estas duas linhas o aviso de
+         tempo real caía no `else` vazio e a tela ficava congelada — ou, pior,
+         antes de `lote` existir como tela, repintava a lista e expulsava quem
+         estava conferindo o lote. O `||` cobre o caso em que o id se perdeu
+         (sessão retomada, por exemplo): volta para a lista em vez de pedir o
+         detalhe de `null`. */
+      else if (tela === "lote") { if (LOTE_ABERTO) await pintarLote(LOTE_ABERTO); else await pintarLotes(); }
+      else if (tela === "nota") { if (NOTA_ABERTA) await pintarNota(NOTA_ABERTA); else await pintarNotas(); }
+      /* Clicar no MENU sempre volta para a lista: quem clica em "Financeiro"
+         estando dentro de uma nota quer sair dela. Diferente do repintar de
+         tempo real acima, que tem de ficar onde está. */
+      else if (tela === "financeiro") { NOTA_ABERTA = null; await pintarFinanceiro(); }
       else if (tela === "clientes") await pintarClientes();
       else if (tela === "desenhos") await pintarDesenhos();
       else if (tela === "tabelas") await pintarTabelas();
@@ -3665,7 +4685,78 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
       else if (acao === "novo-lote") await modalNovoLote(null);
       else if (acao === "abrir-lote") await pintarLote(id);
       else if (acao === "voltar-lotes") await pintarLotes();
+      /* ---- financeiro ---- */
+      else if (acao === "aba-fin") {
+        ABA_FIN = b.getAttribute("data-aba");
+        NOTA_ABERTA = null;
+        await pintarFinanceiro();
+      }
+      else if (acao === "filtro-notas") {
+        filtroNotas.s = b.getAttribute("data-s");
+        pag("notas").pagina = 1;
+        await pintarNotas();
+      }
+      else if (acao === "filtrar-notas") {
+        filtroNotas.cliente = document.getElementById("fn-cliente").value;
+        filtroNotas.de = document.getElementById("fn-de").value;
+        filtroNotas.ate = document.getElementById("fn-ate").value;
+        pag("notas").pagina = 1;
+        await pintarNotas();
+      }
+      else if (acao === "nova-nota") await modalNovaNota();
+      else if (acao === "abrir-nota") { NOTA_ABERTA = Number(id); await pintarNota(id); }
+      else if (acao === "voltar-notas") { NOTA_ABERTA = null; await pintarNotas(); }
+      else if (acao === "receber") await modalLancarNota(id, false);
+      else if (acao === "devolver") await modalLancarNota(id, true);
+      else if (acao === "cancelar-lancamento") {
+        modalCancelarLancamento(id, () => (NOTA_ABERTA ? pintarNota(NOTA_ABERTA) : pintarCaixa()));
+      }
+      else if (acao === "salvar-nota") {
+        await enviar("/restrito/api/notas/" + id, "PUT", {
+          numero_nf: document.getElementById("nt-nf").value,
+          emitida_em: document.getElementById("nt-emitida").value,
+          vencimento: document.getElementById("nt-venc").value || null,
+          desconto: document.getElementById("nt-desc").value || "0",
+          acrescimo: document.getElementById("nt-acre").value || "0",
+          observacao: document.getElementById("nt-obs").value,
+        });
+        recado("Nota salva.");
+        await pintarNota(id);
+      }
+      else if (acao === "cancelar-nota") {
+        if (!confirm("Cancelar esta nota? Ela deixa de ser cobrada.")) return;
+        await enviar("/restrito/api/notas/" + id, "PUT", { situacao: "cancelada" });
+        recado("Nota cancelada."); await pintarNota(id);
+      }
+      else if (acao === "apagar-nota") {
+        if (!confirm("Apagar a nota? Os lotes voltam a ficar disponíveis — o trabalho não se perde.")) return;
+        await enviar("/restrito/api/notas/" + id, "DELETE");
+        recado("Nota apagada."); NOTA_ABERTA = null; await pintarNotas();
+      }
+      else if (acao === "trocar-lotes") await modalTrocarLotes(id);
+      /* "ver só ele" e "mostrar todos" são o MESMO botão com id diferente:
+         zero limpa. Dois tratadores para ligar e desligar o mesmo filtro é um
+         lugar a mais para eles discordarem. */
+      else if (acao === "filtrar-funcionario") {
+        filtroCaixa.funcionario = Number(id) || 0;
+        pag("caixa").pagina = 1;
+        await pintarCaixa();
+      }
+      else if (acao === "filtrar-caixa") {
+        filtroCaixa.de = document.getElementById("fc-de").value;
+        filtroCaixa.ate = document.getElementById("fc-ate").value;
+        filtroCaixa.tipo = document.getElementById("fc-tipo").value;
+        pag("caixa").pagina = 1;
+        await pintarCaixa();
+      }
+      else if (acao === "nova-despesa") modalNovaDespesa();
+
       else if (acao === "amalgamar") await modalAmalgamar(id);
+      else if (acao === "somar-fichas") await modalSomarFichas(LOTE_ABERTO);
+      else if (acao === "limpar-selecao") {
+        document.querySelectorAll("[data-ficha]:checked").forEach((c) => { c.checked = false; });
+        atualizarBarraSomar();
+      }
       else if (acao === "editar-lote") {
         const r = await api("/restrito/api/lotes/" + id);
         await modalNovoLote(r.lote);

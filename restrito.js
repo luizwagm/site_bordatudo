@@ -461,6 +461,19 @@ const escH = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
 const N_BR = new Intl.NumberFormat("pt-BR");
 const nBr = (v) => N_BR.format(Number(v || 0));
 
+/* Dinheiro no papel. `preco_unitario` e `total_valor` são NUMERIC(12,2) e
+   chegam do Postgres como TEXTO ("12.50") — o driver não converte, de propósito,
+   para não perder precisão em ponto flutuante. Por isso o Number() explícito.
+
+   Valor ausente vira travessão, e não "R$ 0,00": desenho sem preço cadastrado
+   é diferente de desenho de graça, e num recibo assinado essa diferença é a
+   distância entre "ainda não precificamos" e "não vamos cobrar". */
+const RS_BR = new Intl.NumberFormat("pt-BR", {
+  style: "currency", currency: "BRL", minimumFractionDigits: 2,
+});
+const rsBr = (v) =>
+  (v === null || v === undefined || v === "") ? "—" : RS_BR.format(Number(v));
+
 function dataBr(d) {
   if (!d) return "—";
   const x = new Date(d);
@@ -470,6 +483,25 @@ function soData(d) {
   if (!d) return "—";
   return new Date(d).toLocaleDateString("pt-BR");
 }
+
+/* AAAA-MM-DD de uma data, para COMPARAR — nunca para mostrar.
+   Uma coluna DATE volta do Postgres como objeto Date, e `String(data)` dá
+   "Wed Jan 01 2020": cortar dez caracteres disso produz "Wed Jan 01", que numa
+   comparação de texto é MAIOR que "2026-08-13" e faz toda nota vencida parecer
+   em dia. O erro é silencioso, porque a mesma expressão funciona quando o valor
+   já chega como texto.
+   Os componentes são LOCAIS, e não `toISOString()`, porque o driver monta a
+   data na meia-noite local: num servidor a leste de Greenwich o ISO devolveria
+   o dia anterior. */
+function emIso(d) {
+  if (!d) return "";
+  const x = d instanceof Date ? d : new Date(d);
+  if (isNaN(x)) return "";
+  return x.getFullYear() + "-" +
+    String(x.getMonth() + 1).padStart(2, "0") + "-" +
+    String(x.getDate()).padStart(2, "0");
+}
+const hojeIso = () => emIso(new Date());
 
 /* O detalhe do lote é montado UMA vez e serve à tela e ao recibo. Se cada um
    somasse por conta própria, o papel que o cliente leva embora poderia
@@ -501,9 +533,18 @@ async function detalheDoLote(lote) {
     const m = {};
     for (const f of fichas) {
       const k = f[chave] || "(não informado)";
-      m[k] = (m[k] || 0) + Number(f.quantidade || 0);
+      if (!m[k]) m[k] = { pecas: 0, pontos: 0, valor: 0 };
+      m[k].pecas += Number(f.quantidade || 0);
+      /* Pontos e valor viajam junto com as peças. A quebra por desenho sem os
+         pontos não responde a pergunta que ela existe para responder — dois
+         desenhos com a mesma quantidade de peças podem ter custado trabalho
+         muito diferente, e é o ponto que mede isso. */
+      m[k].pontos += Number(f.total_pontos || 0);
+      m[k].valor += Number(f.total_valor || 0);
     }
-    return Object.entries(m).map(([nome, q]) => ({ nome, pecas: q })).sort((a, b) => b.pecas - a.pecas);
+    return Object.entries(m)
+      .map(([nome, v]) => ({ nome, pecas: v.pecas, pontos: v.pontos, valor: v.valor }))
+      .sort((a, b) => b.pecas - a.pecas);
   };
 
   return {
@@ -512,25 +553,25 @@ async function detalheDoLote(lote) {
     porCor: agrupar("cor_nome"),
     porMercadoria: agrupar("mercadoria_nome"),
     porOperador: agrupar("operador_nome"),
+    porDesenho: agrupar("desenho_nome"),
   };
 }
 
 function reciboDoLote(dados, empresa, opcoes) {
-  const { lote, fichas, pecas, pontos, porCor, porMercadoria, porOperador, cliente } = dados;
+  /* `pontos`, `porCor` e `porOperador` vêm no `dados` e NÃO são desestruturados
+     aqui de propósito: eles alimentam a tela do lote, não este papel. Deixá-los
+     no escopo do recibo seria o convite para alguém reimprimi-los sem perceber
+     que o cliente não deve vê-los. */
+  const { lote, fichas, pecas, valor, porMercadoria, porDesenho, cliente } = dados;
   const paisagem = opcoes.orientacao === "paisagem";
   const prev = lote.quantidade_prevista == null ? null : Number(lote.quantidade_prevista);
   const falta = prev == null ? null : prev - pecas;
 
-  /* "(não informado)" NÃO conta como cor. Um lote com duas fichas sem cor
-     anunciaria "2 cores" no papel que o cliente assina — e a quebra logo
-     abaixo mostraria uma cor só. */
-  const SEM = "(não informado)";
-  const nCores = porCor.filter((c) => c.nome !== SEM).length;
-
   const quebra = (titulo, itens) => !itens.length ? "" : `
     <div class="quebra">
       <h3>${escH(titulo)}</h3>
-      <table class="mini"><tbody>
+      <table class="mini">
+        <tbody>
         ${itens.map((i) => `<tr><td>${escH(i.nome)}</td><td class="n">${nBr(i.pecas)}</td></tr>`).join("")}
       </tbody></table>
     </div>`;
@@ -604,13 +645,24 @@ function reciboDoLote(dados, empresa, opcoes) {
   td.n, th.n { text-align: right; font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
   tfoot td { font-weight: 800; border-top: 1.5px solid #1e275f; border-bottom: 0; }
 
-  .quebras { display: grid; grid-template-columns: repeat(${paisagem ? 3 : 3}, 1fr); gap: 14px; }
+  /* ATENÇÃO: este CSS mora dentro de um template literal — CRASE AQUI FECHA A
+     STRING e o arquivo inteiro deixa de compilar. Comentário sem crase.
+     auto-fit e não um número fixo de colunas: a composição tem duas caixas
+     hoje e podia ter quatro amanhã, e uma grade de 3 com 2 caixas deixa um
+     terço da folha em branco no meio do papel. O minmax também impede que uma
+     caixa só estique de margem a margem. */
+  .quebras { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px; align-items: start; }
   .quebra { border: 1px solid #e2e2ea; border-radius: 3px; padding: 8px 10px; break-inside: avoid; }
   table.mini td { padding: 3px 0; border-bottom: 1px dotted #e2e2ea; font-size: 11.5px; }
   table.mini tr:last-child td { border-bottom: 0; }
 
+  /* Sobrou uma caixa só. Com flex:1 ela esticaria de ponta a ponta da folha, e
+     um número de dois dígitos perdido no meio de uma faixa azul-marinho
+     inteira lê-se como cabeçalho, não como total. Largura pelo conteúdo. */
   .totais { display: flex; gap: 10px; margin-top: 12px; break-inside: avoid; }
-  .total { flex: 1; border: 1.5px solid #1e275f; border-radius: 3px; padding: 8px 12px; text-align: center; }
+  .total { min-width: 150px; border: 1.5px solid #1e275f; border-radius: 3px;
+    padding: 8px 16px; text-align: center; }
   .total b { display: block; font: 800 20px ui-monospace, Consolas, monospace; color: #1e275f; }
   .total span { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: #55555f; }
   .total--destaque { background: #1e275f; color: #fff;
@@ -703,38 +755,45 @@ function reciboDoLote(dados, empresa, opcoes) {
         falta == null ? "—" : nBr(Math.abs(falta)) + " peças"}</span></div>
     </div>
 
+    <!-- A TABELA É A CONTA, NÃO O RELATÓRIO.
+         Saíram operador, cor e os dois campos de ponto; entraram valor unitário
+         e valor total. O motivo é o que o cliente faz com este papel: ele
+         confere o que vai pagar, linha a linha. Operador, cor e ponto não mudam
+         o valor de nada — respondem "como foi produzido", que é pergunta da
+         fábrica e está inteira na tela do lote. -->
     <h2>Produção — ${fichas.length} ficha${fichas.length === 1 ? "" : "s"}</h2>
     <table>
       <thead><tr>
-        <th>Data</th><th>Operador</th><th>Desenho</th><th>Mercadoria</th><th>Cor</th>
-        <th class="n">Peças</th><th class="n">Pontos/peça</th><th class="n">Total de pontos</th>
+        <th>Data</th><th>Desenho</th><th>Mercadoria</th>
+        <th class="n">Valor unitário</th><th class="n">Peças</th><th class="n">Valor total</th>
       </tr></thead>
       <tbody>${fichas.map((f) => `<tr>
         <td>${soData(f.fechada_em)}</td>
-        <td>${escH(f.operador_nome)}</td>
         <td>${escH(f.desenho_nome)}</td>
         <td>${escH(f.mercadoria_nome || "—")}</td>
-        <td>${escH(f.cor_nome || "—")}</td>
+        <td class="n">${rsBr(f.preco_unitario)}</td>
         <td class="n">${nBr(f.quantidade)}</td>
-        <td class="n">${nBr(f.pontuacao)}</td>
-        <td class="n">${nBr(f.total_pontos)}</td>
-      </tr>`).join("") || '<tr><td colspan="8">Nenhuma ficha neste lote.</td></tr>'}</tbody>
-      <tfoot><tr><td colspan="5">Total</td>
-        <td class="n">${nBr(pecas)}</td><td class="n"></td><td class="n">${nBr(pontos)}</td></tr></tfoot>
+        <td class="n">${rsBr(f.total_valor)}</td>
+      </tr>`).join("") || '<tr><td colspan="6">Nenhuma ficha neste lote.</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="3">Total</td>
+        <td class="n"></td>
+        <td class="n">${nBr(pecas)}</td>
+        <td class="n">${valor ? rsBr(valor) : "—"}</td></tr></tfoot>
     </table>
 
+    <!-- O RECIBO É DO CLIENTE, NÃO DA FÁBRICA.
+         Ponto, cor e operador saíram daqui: são as medidas de COMO o serviço
+         foi feito — quanto trabalho deu, quem bordou, em que linha. O cliente
+         confere o que recebeu e o que vai pagar, e nada disso muda o valor de
+         nada. Continuam inteiros na tela do lote, que é onde a fábrica olha. -->
     <div class="totais">
       <div class="total total--destaque"><b>${nBr(pecas)}</b><span>peças produzidas</span></div>
-      <div class="total"><b>${nBr(pontos)}</b><span>pontos bordados</span></div>
-      <div class="total"><b>${nCores}</b><span>cor${nCores === 1 ? "" : "es"}</span></div>
-      <div class="total"><b>${porOperador.length}</b><span>operador${porOperador.length === 1 ? "" : "es"}</span></div>
     </div>
 
     <h2>Composição</h2>
     <div class="quebras">
-      ${quebra("Por cor", porCor)}
+      ${quebra("Peças por desenho", porDesenho)}
       ${quebra("Por mercadoria", porMercadoria)}
-      ${quebra("Por operador", porOperador)}
     </div>
 
     <div class="assinaturas">
@@ -759,6 +818,120 @@ function reciboDoLote(dados, empresa, opcoes) {
       <span>${escH(empresa.curto || empresa.nome)}${empresa.versao ? " · sistema v" + escH(empresa.versao) : ""}</span>
     </div>
 
+  </div>
+</div>
+</body></html>`;
+}
+
+/* ==========================================================================
+   RECIBO DE PAGAMENTO
+
+   Papel pequeno, uma coisa só: "recebemos X, ainda faltam Y". A folha é A5
+   porque um recibo de meia página gasta metade do papel e cabe na mão — o
+   recibo de produção é A4 porque lá há uma tabela para conferir.
+
+   O SALDO IMPRESSO É O DAQUELE MOMENTO. Uma reimpressão feita mês que vem tem
+   de dizer exatamente o mesmo que o papel que o cliente guardou; se mostrasse
+   o saldo de hoje, os dois discordariam e não haveria como saber qual vale.
+   ========================================================================== */
+function reciboDePagamento(dados, empresa, opcoes) {
+  const { lancamento: l, nota, conta, pagoAte, faltavaDepois } = dados;
+  const ehDevolucao = l.tipo === "saida";
+  const FORMAS = {
+    pix: "PIX", dinheiro: "Dinheiro", cartao: "Cartão", boleto: "Boleto",
+    transferencia: "Transferência", cheque: "Cheque",
+  };
+
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escH(l.recibo)} — recibo de ${ehDevolucao ? "devolução" : "pagamento"}</title>
+<style>
+  @page { size: A5 landscape; margin: 10mm 12mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 12px/1.5 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    color: #1a1a1f; background: #eceef5; }
+  .folha { background: #fff; max-width: 200mm; margin: 14px auto; padding: 14mm 14mm 10mm;
+    position: relative; box-shadow: 0 2px 18px rgb(0 0 0 / .12); }
+  @media print { body { background: #fff; } .folha { box-shadow: none; margin: 0; max-width: none; padding: 0; } }
+  .cabeca { display: flex; justify-content: space-between; align-items: flex-start;
+    border-bottom: 2px solid #1e275f; padding-bottom: 9px; margin-bottom: 14px; }
+  .cabeca b { font-size: 15px; color: #1e275f; display: block; }
+  .cabeca span { display: block; font-size: 10.5px; color: #55555f; }
+  .doc { text-align: right; }
+  .doc b { font-size: 12.5px; }
+  .doc .cod { font: 800 17px ui-monospace, Consolas, monospace; color: #d9440e; }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  .valorao { font: 800 30px ui-monospace, Consolas, monospace; color: ${ehDevolucao ? "#b3261e" : "#157a4a"};
+    margin: 6px 0 2px; }
+  .extenso { font-size: 11px; color: #55555f; margin-bottom: 14px; }
+  .campos { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 14px; margin-bottom: 14px; }
+  .campo b { display: block; font-size: 9px; letter-spacing: .07em; text-transform: uppercase; color: #8a8a99; }
+  .campo span { font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 11.5px; }
+  th, td { padding: 5px 7px; border-bottom: 1px solid #e6e8f0; text-align: left; }
+  th { background: #f4f5f9; font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: #55555f; }
+  .n { text-align: right; font-family: ui-monospace, Consolas, monospace; }
+  .saldo { display: flex; gap: 10px; margin-bottom: 14px; }
+  .saldo > div { flex: 1; padding: 9px 11px; border: 1px solid #dfe2ec; border-radius: 5px; }
+  .saldo b { display: block; font: 800 16px ui-monospace, Consolas, monospace; }
+  .saldo span { font-size: 9px; letter-spacing: .07em; text-transform: uppercase; color: #8a8a99; }
+  .falta b { color: ${faltavaDepois > 0.004 ? "#b3261e" : "#157a4a"}; }
+  .assina { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+  .assina div { border-top: 1px solid #1a1a1f; padding-top: 5px; font-size: 10px; text-align: center; }
+  .pe { margin-top: 14px; font-size: 9.5px; color: #8a8a99; display: flex; justify-content: space-between; }
+</style></head><body>
+<div class="folha">
+  <div class="cabeca">
+    <div>
+      <b>${escH(empresa.nome)}</b>
+      <span>${empresa.cnpj ? "CNPJ " + escH(empresa.cnpj) + " · " : ""}${escH(empresa.endereco)}</span>
+      <span>${[empresa.telefone && "Tel. " + empresa.telefone, empresa.email].filter(Boolean).map(escH).join(" · ")}</span>
+    </div>
+    <div class="doc">
+      <b>Recibo de ${ehDevolucao ? "devolução" : "pagamento"}</b>
+      <div class="cod">${escH(l.recibo)}</div>
+      <span style="font-size:10px;color:#55555f">${soData(l.ocorrido_em)}</span>
+    </div>
+  </div>
+
+  <h1>${ehDevolucao ? "Devolvemos a" : "Recebemos de"} ${escH(l.cliente_nome)}</h1>
+  <div class="valorao">${rsBr(l.valor)}</div>
+  <div class="extenso">referente à nota <b>${escH(nota.codigo)}</b>${
+    nota.numero_nf ? " · NF " + escH(nota.numero_nf) : ""}${
+    l.descricao ? " — " + escH(l.descricao) : ""}</div>
+
+  <div class="campos">
+    <div class="campo"><b>CNPJ / CPF</b><span>${escH(l.documento || "—")}</span></div>
+    <div class="campo"><b>Telefone</b><span>${escH(l.telefone || "—")}</span></div>
+    <div class="campo"><b>Forma</b><span>${escH(FORMAS[l.forma] || l.forma)}</span></div>
+    <div class="campo"><b>Emitido em</b><span>${soData(opcoes.agora)}</span></div>
+  </div>
+
+  <table>
+    <thead><tr><th>Lotes desta nota</th><th class="n">Peças</th><th class="n">Valor</th></tr></thead>
+    <tbody>${conta.lotes.map((x) => `<tr>
+      <td>${escH(x.codigo)}${x.descricao ? " — " + escH(x.descricao) : ""}</td>
+      <td class="n">${nBr(x.pecas)}</td><td class="n">${rsBr(x.valor)}</td></tr>`).join("") ||
+      '<tr><td colspan="3">—</td></tr>'}
+    </tbody>
+  </table>
+
+  <div class="saldo">
+    <div><span>Valor da nota</span><b>${rsBr(conta.valor)}</b></div>
+    <div><span>${ehDevolucao ? "Já havia entrado" : "Pago até aqui"}</span><b>${rsBr(pagoAte)}</b></div>
+    <div class="falta"><span>${faltavaDepois > 0.004 ? "Ficou faltando" : "Situação"}</span>
+      <b>${faltavaDepois > 0.004 ? rsBr(faltavaDepois) : "QUITADA"}</b></div>
+  </div>
+
+  <div class="assina">
+    <div>${escH(empresa.nome)}</div>
+    <div>${escH(l.cliente_nome)}</div>
+  </div>
+
+  <div class="pe">
+    <span>Emitido por ${escH(opcoes.porQuem || "—")}${
+      empresa.versao ? " · sistema v" + escH(empresa.versao) : ""}</span>
+    <span>${escH(l.recibo)}</span>
   </div>
 </div>
 </body></html>`;
@@ -2086,6 +2259,152 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     return responder(res, 201, { ok: true, id, pontuacao });
   }
 
+  /* ======================================================================
+     SOMAR FICHAS — várias viram uma
+
+     O caso real: o mesmo serviço foi bordado em três turnos, por três pessoas,
+     e virou três fichas. Na nota, isso é UMA linha. Somar aqui é o que evita
+     o cliente receber um recibo com o mesmo desenho repetido três vezes.
+
+     A ARITMÉTICA, que é o assunto difícil desta rota
+     ------------------------------------------------
+     `total_pontos` e `total_valor` são colunas GERADAS pelo banco
+     (quantidade × pontuação, quantidade × preço). Não existe caminho — nem por
+     SQL direto — para gravar um total que não feche com a multiplicação. Foi
+     uma trava posta de propósito, e ela morde aqui.
+
+     Somando 10 peças de 1.000 pontos com 10 de 500, o total real é 15.000. Uma
+     ficha de 20 peças com pontuação 1.000 daria 20.000; com 500, daria 10.000.
+     Nenhuma das duas é 15.000.
+
+     A saída é a MÉDIA PONDERADA: 15.000 ÷ 20 = 750 pontos/peça, e 20 × 750 dá
+     exatamente 15.000. O número por peça deixa de ser "o ponto do desenho" e
+     passa a ser "o ponto médio desta ficha somada" — que é o que ela é. Quando
+     as fichas têm a mesma pontuação, a média é igual ao original e nada muda.
+
+     Quando a divisão não é exata sobra um resto de poucos pontos (2 em 108 mil
+     num caso real). A tela mostra esse resto ANTES de confirmar, e a coluna
+     `soma_de` guarda o detalhe de cada parcela — sem ela, a média seria um
+     número indefensável seis meses depois.
+
+     NADA É APAGADO. As originais viram `situacao = 'somada'`, saem do lote e
+     apontam para a nova. Some de todas as contas, continua no banco.
+     ====================================================================== */
+  if (caminho === "/restrito/api/fichas/somar" && req.method === "POST") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador soma fichas" });
+
+    const corpo = (await lerCorpo(req)) || {};
+    const ids = Array.isArray(corpo.ids)
+      ? [...new Set(corpo.ids.map((x) => Number(x) | 0).filter((x) => x > 0))] : [];
+    if (ids.length < 2) return responder(res, 400, { error: "escolha pelo menos duas fichas" });
+    if (ids.length > 200) return responder(res, 400, { error: "no máximo 200 fichas de uma vez" });
+
+    const fichas = await Q.all(
+      `SELECT f.*, u.nome AS operador_nome, d.nome AS desenho_nome
+         FROM fichas f
+         JOIN usuarios u ON u.id = f.usuario_id
+         JOIN desenhos d ON d.id = f.desenho_id
+        WHERE f.id = ANY(?::bigint[])
+        ORDER BY f.fechada_em, f.id`,
+      "{" + ids.join(",") + "}");
+
+    if (fichas.length !== ids.length) {
+      return responder(res, 400, { error: "alguma ficha não existe mais. Recarregue a tela." });
+    }
+    /* SÓ FICHA CONCLUÍDA. Uma ficha aberta ainda não tem quantidade — somá-la
+       seria somar um número que ainda não existe. */
+    const naoFechada = fichas.find((f) => f.situacao !== "fechada");
+    if (naoFechada) {
+      return responder(res, 400, {
+        error: `a ficha ${naoFechada.id} está "${naoFechada.situacao}". Só dá para somar fichas concluídas.` });
+    }
+    /* SÓ DO MESMO CLIENTE. São serviços diferentes, e o recibo é por cliente. */
+    if (new Set(fichas.map((f) => String(f.cliente_id))).size > 1) {
+      return responder(res, 400, { error: "as fichas são de clientes diferentes. Só dá para somar do mesmo cliente." });
+    }
+    /* E do mesmo lote: somar através de lotes moveria peças de uma nota para
+       outra sem que nada na tela dissesse isso. */
+    const lotes = new Set(fichas.map((f) => String(f.lote_id)));
+    if (lotes.size > 1) {
+      return responder(res, 400, { error: "as fichas estão em lotes diferentes." });
+    }
+    const loteId = fichas[0].lote_id;
+    if (loteId) {
+      const lote = await Q.get("SELECT situacao FROM lotes WHERE id = ?", loteId);
+      if (lote && lote.situacao === "faturado") {
+        return responder(res, 409, {
+          error: "este lote já foi faturado e não aceita mais mudança de fichas." });
+      }
+    }
+
+    const pecas = fichas.reduce((a, f) => a + Number(f.quantidade || 0), 0);
+    const pontos = fichas.reduce((a, f) => a + Number(f.total_pontos || 0), 0);
+    const valor = fichas.reduce((a, f) => a + Number(f.total_valor || 0), 0);
+    if (pecas <= 0) return responder(res, 400, { error: "as fichas somam zero peça." });
+
+    const pontuacao = Math.max(1, Math.round(pontos / pecas));
+    /* O preço fica nulo quando NENHUMA parcela tinha preço — média de nada é
+       nada, e gravar 0,00 diria "de graça" no lugar de "sem preço". */
+    const temPreco = fichas.some((f) => f.preco_unitario !== null && f.preco_unitario !== undefined);
+    const preco = temPreco ? Math.round((valor / pecas) * 100) / 100 : null;
+
+    /* Campo que TODAS têm igual continua; campo que diverge vira nulo. Manter o
+       valor de uma delas faria a ficha somada dizer "cor: azul" carregando as
+       peças amarelas junto. */
+    const mesmo = (campo) => {
+      const s = new Set(fichas.map((f) => String(f[campo])));
+      return s.size === 1 ? fichas[0][campo] : null;
+    };
+    const nomes = [...new Set(fichas.map((f) => f.operador_nome).filter(Boolean))];
+
+    const detalhe = fichas.map((f) => ({
+      id: f.id, operador: f.operador_nome, desenho: f.desenho_nome,
+      pecas: Number(f.quantidade || 0), pontuacao: Number(f.pontuacao),
+      preco: f.preco_unitario === null ? null : Number(f.preco_unitario),
+      pontos: Number(f.total_pontos || 0), fechada_em: f.fechada_em,
+    }));
+
+    let novaId = null;
+    /* TUDO NUMA TRANSAÇÃO. Sem ela, uma queda entre criar a nova e marcar as
+       antigas deixaria as peças contadas DUAS vezes — na ficha nova e nas
+       originais ainda fechadas. É o erro que ninguém percebe até a nota sair
+       com o dobro. */
+    await Q.tx(async () => {
+      novaId = await Q.inserir(
+        `INSERT INTO fichas
+           (usuario_id, jornada_id, maquina_id, cliente_id, desenho_id, pontuacao,
+            quantidade, mercadoria_id, cor_id, preco_unitario, observacao,
+            aberta_em, fechada_em, situacao, lote_id, operadores, soma_de)
+         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'fechada', ?, ?, ?::jsonb)
+         RETURNING id`,
+        /* `jornada_id` NULO: a ficha somada é peça administrativa, não trabalho
+           de uma jornada. As originais mantêm a jornada delas, então a produção
+           de cada operador continua contada onde sempre esteve — e sem contar
+           duas vezes, porque a tela de jornada não olha a ficha somada. */
+        fichas[0].usuario_id, mesmo("maquina_id"), fichas[0].cliente_id,
+        mesmo("desenho_id") || fichas[0].desenho_id, pontuacao, pecas,
+        mesmo("mercadoria_id"), mesmo("cor_id"), preco,
+        "Somada de " + fichas.length + " fichas: #" + fichas.map((f) => f.id).join(", #"),
+        fichas[0].aberta_em, fichas[fichas.length - 1].fechada_em,
+        loteId, nomes.join(", "), JSON.stringify(detalhe));
+
+      await Q.run(
+        `UPDATE fichas SET situacao = 'somada', lote_id = NULL, somada_em_id = ?
+          WHERE id = ANY(?::bigint[])`,
+        novaId, "{" + ids.join(",") + "}");
+    });
+
+    avisar("fichas");
+    avisar("lotes");
+    return responder(res, 201, {
+      ok: true, id: novaId, pecas, pontos, pontuacao,
+      /* A diferença de arredondamento volta para a tela poder mostrá-la. Zero
+         quando a divisão fecha, que é o caso comum. */
+      diferenca_pontos: pecas * pontuacao - pontos,
+      absorvidas: ids.length,
+    });
+  }
+
   const mFicha = /^\/restrito\/api\/fichas\/(\d+)(?:\/(fechar|cancelar))?$/.exec(caminho);
   if (mFicha) {
     const id = Number(mFicha[1]);
@@ -2447,6 +2766,483 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   }
 
   /* ---------------------------------------------------------- lotes ----- */
+  /* ======================================================================
+     FINANCEIRO
+     ======================================================================
+
+     lote → nota → lançamentos.
+
+     A NOTA é do cliente: junta um ou mais lotes e vai sendo quitada aos
+     poucos. O CAIXA é da fábrica: entra o que o cliente paga, sai o que a
+     fábrica gasta. Os dois vivem na mesma tabela `lancamentos`, com a nota
+     como coluna opcional — dinheiro que entra e dinheiro que sai são o mesmo
+     tipo de fato, o que muda é o sinal e o motivo.
+
+     O VALOR DA NOTA NÃO É GUARDADO. Ele é somado dos lotes, que somam as
+     fichas, na hora de responder. Guardar um total criaria um segundo lugar
+     para a mesma verdade, e no dia em que uma ficha fosse corrigida a nota
+     continuaria dizendo o valor antigo sem que nada avisasse.
+     ====================================================================== */
+
+  /* Uma nota inteira, com valor, pagamentos e saldo. Monta UMA vez e serve à
+     lista, ao detalhe e ao recibo — pelo mesmo motivo do `detalheDoLote`: se
+     cada tela somasse por conta própria, o papel que o cliente leva embora
+     poderia discordar da tela onde a cobrança foi conferida. */
+  async function contaDaNota(nota) {
+    const lotes = await Q.all(
+      `SELECT l.*,
+              (SELECT COALESCE(SUM(f.total_valor), 0) FROM fichas f
+                WHERE f.lote_id = l.id AND f.situacao = 'fechada') AS valor,
+              (SELECT COALESCE(SUM(f.quantidade), 0) FROM fichas f
+                WHERE f.lote_id = l.id AND f.situacao = 'fechada') AS pecas
+         FROM lotes l JOIN nota_lotes nl ON nl.lote_id = l.id
+        WHERE nl.nota_id = ? ORDER BY l.codigo`, nota.id);
+
+    const lancamentos = await Q.all(
+      `SELECT la.*, u.nome AS quem
+         FROM lancamentos la LEFT JOIN usuarios u ON u.id = la.criado_por
+        WHERE la.nota_id = ? ORDER BY la.ocorrido_em, la.id`, nota.id);
+
+    const bruto = lotes.reduce((a, l) => a + Number(l.valor || 0), 0);
+    const valor = bruto - Number(nota.desconto || 0) + Number(nota.acrescimo || 0);
+    /* Lançamento cancelado não entra em conta nenhuma — mas continua na lista,
+       riscado, porque um recibo entregue precisa de lastro mesmo depois de
+       estornado. */
+    const vivos = lancamentos.filter((l) => !l.cancelado_em);
+    const pago = vivos.filter((l) => l.tipo === "entrada").reduce((a, l) => a + Number(l.valor), 0);
+    const devolvido = vivos.filter((l) => l.tipo === "saida").reduce((a, l) => a + Number(l.valor), 0);
+    /* Devolução AUMENTA o que falta: o dinheiro voltou para o cliente, então
+       ele deve de novo. Somar em vez de subtrair aqui é o erro que faz a nota
+       aparecer quitada depois de um estorno. */
+    const saldo = Math.round((valor - pago + devolvido) * 100) / 100;
+
+    return {
+      nota, lotes, lancamentos,
+      bruto, valor, pago, devolvido, saldo,
+      pecas: lotes.reduce((a, l) => a + Number(l.pecas || 0), 0),
+      /* Quitada é CALCULADO, nunca guardado: uma coluna "paga" poderia
+         discordar da soma dos pagamentos, e a soma é que é verdade. */
+      quitada: nota.situacao !== "cancelada" && saldo <= 0.004,
+      vencida: nota.situacao !== "cancelada" && saldo > 0.004
+               && !!nota.vencimento && emIso(nota.vencimento) < hojeIso(),
+    };
+  }
+
+  /* ---------------------------------------------------------- listar notas */
+  if (caminho === "/restrito/api/notas" && req.method === "GET") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador vê o financeiro" });
+    const url = new URL(req.url, "http://localhost");
+    const clienteId = Number(url.searchParams.get("cliente")) || null;
+    const de = url.searchParams.get("de") || null;
+    const ate = url.searchParams.get("ate") || null;
+    const situacao = String(url.searchParams.get("s") || "");
+
+    const cond = ["1=1"]; const args = [];
+    if (clienteId) { cond.push("n.cliente_id = ?"); args.push(clienteId); }
+    if (de) { cond.push("n.emitida_em >= ?"); args.push(de); }
+    if (ate) { cond.push("n.emitida_em <= ?"); args.push(ate); }
+
+    const rec = recorteDaPagina(url, 30);
+    const linhas = await Q.all(
+      `SELECT n.*, c.nome AS cliente_nome FROM notas n
+         JOIN clientes c ON c.id = n.cliente_id
+        WHERE ${cond.join(" AND ")}
+        ORDER BY n.emitida_em DESC, n.id DESC`, ...args);
+
+    /* A conta é feita por nota e depois filtrada. Filtrar "quitada" no SQL
+       exigiria repetir a fórmula do saldo lá dentro — e duas fórmulas para o
+       mesmo número é como elas passam a discordar. */
+    const contas = [];
+    for (const n of linhas) contas.push(await contaDaNota(n));
+    const filtradas = !situacao ? contas
+      : situacao === "quitada" ? contas.filter((x) => x.quitada)
+      : situacao === "vencida" ? contas.filter((x) => x.vencida)
+      : situacao === "aberta" ? contas.filter((x) => !x.quitada && x.nota.situacao !== "cancelada")
+      : situacao === "cancelada" ? contas.filter((x) => x.nota.situacao === "cancelada")
+      : contas;
+
+    const pagina = filtradas.slice(rec.offset, rec.offset + rec.por);
+    return responder(res, 200, Object.assign({
+      itens: pagina.map((x) => ({
+        id: x.nota.id, codigo: x.nota.codigo, cliente_nome: x.nota.cliente_nome,
+        cliente_id: x.nota.cliente_id, numero_nf: x.nota.numero_nf,
+        emitida_em: x.nota.emitida_em, vencimento: x.nota.vencimento,
+        situacao: x.nota.situacao, lotes: x.lotes.length, pecas: x.pecas,
+        valor: x.valor, pago: x.pago, devolvido: x.devolvido, saldo: x.saldo,
+        quitada: x.quitada, vencida: x.vencida,
+      })),
+      resumo: {
+        valor: filtradas.reduce((a, x) => a + (x.nota.situacao === "cancelada" ? 0 : x.valor), 0),
+        pago: filtradas.reduce((a, x) => a + x.pago, 0),
+        saldo: filtradas.reduce((a, x) => a + (x.nota.situacao === "cancelada" ? 0 : Math.max(0, x.saldo)), 0),
+        vencidas: filtradas.filter((x) => x.vencida).length,
+      },
+    }, envelope(filtradas.length, rec)));
+  }
+
+  /* ------------------------------------------------------------ criar nota */
+  if (caminho === "/restrito/api/notas" && req.method === "POST") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador cria nota" });
+    const corpo = (await lerCorpo(req)) || {};
+    const clienteId = Number(corpo.cliente_id) || null;
+    const loteIds = Array.isArray(corpo.lotes)
+      ? [...new Set(corpo.lotes.map((x) => Number(x) | 0).filter(Boolean))] : [];
+    if (!clienteId) return responder(res, 400, { error: "escolha o cliente" });
+    if (!loteIds.length) return responder(res, 400, { error: "escolha ao menos um lote" });
+
+    const lotes = await Q.all(
+      "SELECT id, cliente_id, codigo FROM lotes WHERE id = ANY(?::bigint[])",
+      "{" + loteIds.join(",") + "}");
+    if (lotes.length !== loteIds.length) {
+      return responder(res, 400, { error: "algum lote não existe mais. Recarregue a tela." });
+    }
+    if (lotes.some((l) => Number(l.cliente_id) !== clienteId)) {
+      return responder(res, 400, { error: "há lote de outro cliente na seleção." });
+    }
+    /* Um lote em duas notas é o mesmo serviço cobrado duas vezes — e a segunda
+       cobrança pareceria tão legítima quanto a primeira. A UNIQUE do banco já
+       barra; aqui a mensagem diz QUAL lote e em que nota ele está. */
+    const jaEm = await Q.all(
+      `SELECT l.codigo, n.codigo AS nota FROM nota_lotes nl
+         JOIN lotes l ON l.id = nl.lote_id JOIN notas n ON n.id = nl.nota_id
+        WHERE nl.lote_id = ANY(?::bigint[])`, "{" + loteIds.join(",") + "}");
+    if (jaEm.length) {
+      return responder(res, 409, {
+        error: "já está em nota: " + jaEm.map((x) => `${x.codigo} (${x.nota})`).join(", ") });
+    }
+
+    const ano = new Date().getFullYear();
+    const r = await Q.get(
+      `SELECT COALESCE(MAX(split_part(codigo, '-', 3)::int), 0) AS n
+         FROM notas WHERE codigo ~ ?`, `^NOTA-${ano}-[0-9]+$`);
+    const codigo = `NOTA-${ano}-${String(Number(r?.n || 0) + 1).padStart(4, "0")}`;
+
+    let id = null;
+    await Q.tx(async () => {
+      id = await Q.inserir(
+        /* `COALESCE(?, CURRENT_DATE)` e não a data do Node: o resto do sistema
+           inteiro decide "hoje" pelo `current_date` do Postgres, e o servidor
+           roda em UTC enquanto a fábrica trabalha em UTC−3. Depois das 21h as
+           duas respostas divergem, e a nota nasceria datada de amanhã. */
+        `INSERT INTO notas (codigo, cliente_id, numero_nf, emitida_em, vencimento, observacao)
+         VALUES (?,?,?, COALESCE(?::date, CURRENT_DATE), ?,?) RETURNING id`,
+        codigo, clienteId, String(corpo.numero_nf || "").trim(),
+        corpo.emitida_em || null,
+        corpo.vencimento || null, sanitizarHtml(String(corpo.observacao || "")));
+      for (const l of loteIds) {
+        await Q.run("INSERT INTO nota_lotes (nota_id, lote_id) VALUES (?, ?)", id, l);
+      }
+    });
+    avisar("notas");
+    return responder(res, 201, { ok: true, id, codigo });
+  }
+
+  /* ---------------------------------------------------------- uma nota só */
+  const mNota = /^\/restrito\/api\/notas\/(\d+)$/.exec(caminho);
+  if (mNota) {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador vê o financeiro" });
+    const id = Number(mNota[1]);
+    const nota = await Q.get(
+      `SELECT n.*, c.nome AS cliente_nome, c.documento, c.telefone, c.cidade
+         FROM notas n JOIN clientes c ON c.id = n.cliente_id WHERE n.id = ?`, id);
+    if (!nota) return responder(res, 404, { error: "nota não encontrada" });
+
+    if (req.method === "GET") return responder(res, 200, await contaDaNota(nota));
+
+    if (req.method === "PUT") {
+      const corpo = (await lerCorpo(req)) || {};
+      const campos = {};
+      if ("numero_nf" in corpo) campos.numero_nf = String(corpo.numero_nf || "").trim().slice(0, 40);
+      if ("vencimento" in corpo) campos.vencimento = corpo.vencimento || null;
+      if ("emitida_em" in corpo && corpo.emitida_em) campos.emitida_em = corpo.emitida_em;
+      if ("observacao" in corpo) campos.observacao = sanitizarHtml(String(corpo.observacao || ""));
+      for (const k of ["desconto", "acrescimo"]) {
+        if (k in corpo) {
+          try { campos[k] = dinheiro(corpo[k], "o " + k) || "0.00"; }
+          catch (e) { return responder(res, 400, { error: e.message }); }
+        }
+      }
+      if ("situacao" in corpo) {
+        if (!["aberta", "cancelada"].includes(corpo.situacao)) {
+          return responder(res, 400, { error: "situação inválida" });
+        }
+        /* Cancelar nota que já recebeu dinheiro esconderia um pagamento que
+           existe. Estorne primeiro; a devolução fica registrada. */
+        if (corpo.situacao === "cancelada") {
+          const c = await contaDaNota(nota);
+          if (c.pago > 0) {
+            return responder(res, 409, {
+              error: "esta nota já recebeu pagamento. Estorne antes de cancelar." });
+          }
+        }
+        campos.situacao = corpo.situacao;
+      }
+      if (!Object.keys(campos).length) return responder(res, 400, { error: "nada para salvar" });
+      campos.alterado_em = new Date().toISOString();
+      await Q.run("UPDATE notas SET " + Object.keys(campos).map((k) => k + " = ?").join(", ") +
+        " WHERE id = ?", ...Object.values(campos), id);
+      avisar("notas");
+      return responder(res, 200, { ok: true });
+    }
+
+    if (req.method === "DELETE") {
+      const c = await contaDaNota(nota);
+      if (c.lancamentos.length) {
+        return responder(res, 409, {
+          error: "esta nota tem lançamentos. Cancele-a em vez de apagar." });
+      }
+      /* Apagar a nota desfaz o VÍNCULO com os lotes (ON DELETE CASCADE em
+         nota_lotes), não o trabalho: os lotes voltam a ficar disponíveis. */
+      await Q.run("DELETE FROM notas WHERE id = ?", id);
+      avisar("notas");
+      return responder(res, 200, { ok: true });
+    }
+  }
+
+  /* ------------------------------------------- trocar os lotes de uma nota */
+  const mNotaLotes = /^\/restrito\/api\/notas\/(\d+)\/lotes$/.exec(caminho);
+  if (mNotaLotes && req.method === "PUT") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador mexe na nota" });
+    const id = Number(mNotaLotes[1]);
+    const nota = await Q.get("SELECT * FROM notas WHERE id = ?", id);
+    if (!nota) return responder(res, 404, { error: "nota não encontrada" });
+    const corpo = (await lerCorpo(req)) || {};
+    const querem = Array.isArray(corpo.lotes)
+      ? [...new Set(corpo.lotes.map((x) => Number(x) | 0).filter(Boolean))] : [];
+    if (!querem.length) return responder(res, 400, { error: "a nota precisa de ao menos um lote" });
+
+    const lotes = await Q.all(
+      "SELECT id, cliente_id FROM lotes WHERE id = ANY(?::bigint[])", "{" + querem.join(",") + "}");
+    if (lotes.length !== querem.length ||
+        lotes.some((l) => Number(l.cliente_id) !== Number(nota.cliente_id))) {
+      return responder(res, 400, { error: "há lote inválido ou de outro cliente na seleção." });
+    }
+    const conflito = await Q.all(
+      `SELECT l.codigo, n.codigo AS nota FROM nota_lotes nl
+         JOIN lotes l ON l.id = nl.lote_id JOIN notas n ON n.id = nl.nota_id
+        WHERE nl.lote_id = ANY(?::bigint[]) AND nl.nota_id <> ?`,
+      "{" + querem.join(",") + "}", id);
+    if (conflito.length) {
+      return responder(res, 409, {
+        error: "já está em outra nota: " + conflito.map((x) => `${x.codigo} (${x.nota})`).join(", ") });
+    }
+
+    /* Reconcilia em vez de acumular: a tela manda a lista COMPLETA e o
+       servidor acerta. Clicar duas vezes não duplica nada. */
+    await Q.tx(async () => {
+      await Q.run("DELETE FROM nota_lotes WHERE nota_id = ?", id);
+      for (const l of querem) await Q.run("INSERT INTO nota_lotes (nota_id, lote_id) VALUES (?, ?)", id, l);
+    });
+    avisar("notas");
+    return responder(res, 200, { ok: true });
+  }
+
+  /* ---------------------------------------------------- lançar no caixa */
+  if (caminho === "/restrito/api/lancamentos" && req.method === "POST") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador lança no caixa" });
+    const corpo = (await lerCorpo(req)) || {};
+
+    const categoria = String(corpo.categoria || "").trim();
+    const CATEGORIAS_NOTA = ["recebimento", "devolucao"];
+    const tipo = CATEGORIAS_NOTA.includes(categoria)
+      ? (categoria === "recebimento" ? "entrada" : "saida")
+      : (corpo.tipo === "entrada" ? "entrada" : "saida");
+
+    let valor;
+    try { valor = dinheiro(corpo.valor, "o valor"); }
+    catch (e) { return responder(res, 400, { error: e.message }); }
+    if (!valor || Number(valor) <= 0) return responder(res, 400, { error: "informe um valor maior que zero" });
+
+    let notaId = null, clienteId = null, recibo = null, funcionarioId = null;
+    if (CATEGORIAS_NOTA.includes(categoria)) {
+      notaId = Number(corpo.nota_id) || null;
+      if (!notaId) return responder(res, 400, { error: "escolha a nota" });
+      const nota = await Q.get("SELECT * FROM notas WHERE id = ?", notaId);
+      if (!nota) return responder(res, 404, { error: "nota não encontrada" });
+      if (nota.situacao === "cancelada") {
+        return responder(res, 409, { error: "esta nota está cancelada." });
+      }
+      clienteId = nota.cliente_id;
+
+      const c = await contaDaNota(nota);
+      /* PAGAR MAIS QUE O SALDO é quase sempre erro de digitação — um zero a
+         mais. Barrar com o número na mensagem é mais útil que aceitar e deixar
+         a nota com saldo negativo, que ninguém sabe ler.
+         Uma folga de um centavo cobre arredondamento de parcela. */
+      if (categoria === "recebimento" && Number(valor) > c.saldo + 0.01) {
+        return responder(res, 400, {
+          error: `o saldo desta nota é de R$ ${c.saldo.toFixed(2).replace(".", ",")}. ` +
+                 `Não dá para receber R$ ${Number(valor).toFixed(2).replace(".", ",")}.` });
+      }
+      /* DEVOLVER mais do que entrou também não fecha: sairia dinheiro que
+         nunca chegou. */
+      if (categoria === "devolucao" && Number(valor) > c.pago - c.devolvido + 0.01) {
+        return responder(res, 400, {
+          error: `só entraram R$ ${(c.pago - c.devolvido).toFixed(2).replace(".", ",")} nesta nota. ` +
+                 "Não dá para devolver mais que isso." });
+      }
+
+      const ano = new Date().getFullYear();
+      const r = await Q.get(
+        `SELECT COALESCE(MAX(split_part(recibo, '-', 3)::int), 0) AS n
+           FROM lancamentos WHERE recibo ~ ?`, `^RC-${ano}-[0-9]+$`);
+      recibo = `RC-${ano}-${String(Number(r?.n || 0) + 1).padStart(4, "0")}`;
+    } else {
+      /* Despesa da fábrica não tem nota, e a trava do banco garante isso. */
+      if (!String(corpo.descricao || "").trim()) {
+        return responder(res, 400, { error: "descreva a despesa" });
+      }
+
+      /* A QUEM foi paga. Quem decide se a categoria pede um nome é a PRÓPRIA
+         categoria (`pede_funcionario`), não um `if (categoria === "Salários")`
+         escrito aqui: a lista é cadastrável pela tela, e no dia em que alguém
+         renomeasse "Salários" para "Folha" o campo sumiria sem erro nenhum. */
+      const cat = await Q.get(
+        "SELECT pede_funcionario FROM categorias_despesa WHERE nome = ?", categoria);
+      const pede = !!(cat && cat.pede_funcionario);
+      const quem = Number(corpo.funcionario_id) || null;
+
+      if (pede && !quem) {
+        return responder(res, 400, { error: `a categoria "${categoria}" precisa do funcionário.` });
+      }
+      /* E o contrário também é recusado: aceitar um funcionário numa conta de
+         luz encheria o relatório da folha de linhas que não são folha. */
+      if (!pede && quem) {
+        return responder(res, 400, {
+          error: `a categoria "${categoria}" não recebe funcionário.` });
+      }
+      if (quem) {
+        const f = await Q.get(
+          "SELECT id, ativo, papel FROM usuarios WHERE id = ? AND papel <> 'dono'", quem);
+        if (!f) return responder(res, 404, { error: "funcionário não encontrado" });
+        /* Desligado ainda RECEBE — rescisão e último salário são pagos depois
+           da saída. O que não pode é ele sumir da lista antes de ser pago. */
+        funcionarioId = quem;
+      }
+    }
+
+    const id = await Q.inserir(
+      `INSERT INTO lancamentos (tipo, categoria, nota_id, cliente_id, funcionario_id, valor, forma,
+                                ocorrido_em, descricao, recibo, criado_por)
+       VALUES (?,?,?,?,?,?,?, COALESCE(?::date, CURRENT_DATE), ?,?,?) RETURNING id`,
+      tipo, categoria || "outra", notaId, clienteId, funcionarioId, valor,
+      String(corpo.forma || "pix").slice(0, 30),
+      corpo.ocorrido_em || null,
+      sanitizarHtml(String(corpo.descricao || "")).slice(0, 500),
+      recibo, sessao.usuarioId);
+
+    avisar("notas"); avisar("caixa");
+    return responder(res, 201, { ok: true, id, recibo });
+  }
+
+  /* ----------------------------------------------------- cancelar lançamento */
+  const mCancelaLanc = /^\/restrito\/api\/lancamentos\/(\d+)\/cancelar$/.exec(caminho);
+  if (mCancelaLanc && req.method === "PUT") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador cancela lançamento" });
+    const id = Number(mCancelaLanc[1]);
+    const l = await Q.get("SELECT * FROM lancamentos WHERE id = ?", id);
+    if (!l) return responder(res, 404, { error: "lançamento não encontrado" });
+    if (l.cancelado_em) return responder(res, 200, { ok: true, jaEstava: true });
+    const corpo = (await lerCorpo(req)) || {};
+    const motivo = String(corpo.motivo || "").trim();
+    /* O motivo é OBRIGATÓRIO. Um cancelamento sem motivo, seis meses depois, é
+       indistinguível de um erro de operação — e é justamente o registro que
+       alguém vai procurar quando a conta não fechar. */
+    if (motivo.length < 3) return responder(res, 400, { error: "escreva o motivo do cancelamento" });
+
+    /* NÃO se apaga: marca. Um recibo já entregue precisa continuar tendo
+       lastro no sistema mesmo depois de estornado. */
+    await Q.run(
+      `UPDATE lancamentos SET cancelado_em = now(), cancelado_por = ?, motivo_cancelamento = ?
+        WHERE id = ?`, sessao.usuarioId, motivo.slice(0, 300), id);
+    avisar("notas"); avisar("caixa");
+    return responder(res, 200, { ok: true });
+  }
+
+  /* ------------------------------------------------------------ o caixa */
+  if (caminho === "/restrito/api/caixa" && req.method === "GET") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador vê o caixa" });
+    const url = new URL(req.url, "http://localhost");
+    /* Mês corrente por padrão. `emIso` e não `toISOString`: o primeiro dia do
+       mês é construído na meia-noite LOCAL, e converter para UTC devolveria o
+       último dia do mês anterior a oeste de Greenwich — o caixa abriria com um
+       dia a mais e um dia a menos. */
+    const hoje = new Date();
+    const de = url.searchParams.get("de") || emIso(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
+    const ate = url.searchParams.get("ate") || hojeIso();
+    const tipo = url.searchParams.get("tipo");
+
+    const cond = ["la.ocorrido_em BETWEEN ? AND ?"]; const args = [de, ate];
+    if (tipo === "entrada" || tipo === "saida") { cond.push("la.tipo = ?"); args.push(tipo); }
+
+    /* `?funcionario=` — a folha de uma pessoa só. É a pergunta que se faz na
+       hora de conferir "quanto já paguei a ela este mês". */
+    const doFuncionario = Number(url.searchParams.get("funcionario")) || null;
+    if (doFuncionario) { cond.push("la.funcionario_id = ?"); args.push(doFuncionario); }
+
+    const rec = recorteDaPagina(url, 40);
+    const itens = await Q.all(
+      `SELECT la.*, u.nome AS quem, c.nome AS cliente_nome, n.codigo AS nota_codigo,
+              f.nome AS funcionario_nome
+         FROM lancamentos la
+         LEFT JOIN usuarios u ON u.id = la.criado_por
+         LEFT JOIN clientes c ON c.id = la.cliente_id
+         LEFT JOIN notas n ON n.id = la.nota_id
+         LEFT JOIN usuarios f ON f.id = la.funcionario_id
+        WHERE ${cond.join(" AND ")}
+        ORDER BY la.ocorrido_em DESC, la.id DESC
+        LIMIT ? OFFSET ?`, ...args, rec.por, rec.offset);
+
+    const total = await Q.get(
+      `SELECT COUNT(*) c FROM lancamentos la WHERE ${cond.join(" AND ")}`, ...args);
+
+    /* O resumo é do PERÍODO INTEIRO, não da página. Somar só o que está na
+       tela daria um saldo que muda ao virar de página. E o cancelado fica de
+       fora: ele aparece na lista, riscado, e não conta. */
+    const soma = await Q.get(
+      `SELECT
+         COALESCE(SUM(valor) FILTER (WHERE tipo = 'entrada' AND cancelado_em IS NULL), 0) entradas,
+         COALESCE(SUM(valor) FILTER (WHERE tipo = 'saida'   AND cancelado_em IS NULL), 0) saidas
+         FROM lancamentos la WHERE ${cond.join(" AND ")}`, ...args);
+
+    const porCategoria = await Q.all(
+      `SELECT categoria, tipo, COALESCE(SUM(valor), 0) valor, COUNT(*)::int n
+         FROM lancamentos la
+        WHERE ${cond.join(" AND ")} AND la.cancelado_em IS NULL
+        GROUP BY categoria, tipo ORDER BY valor DESC`, ...args);
+
+    /* Quanto foi para cada pessoa no período. A quebra por CATEGORIA responde
+       "quanto de salário"; esta responde "de quem" — e é a que alguém procura
+       quando um funcionário pergunta o que já recebeu no mês. */
+    const porFuncionario = await Q.all(
+      `SELECT f.id, f.nome, la.categoria, COALESCE(SUM(la.valor), 0) valor, COUNT(*)::int n
+         FROM lancamentos la JOIN usuarios f ON f.id = la.funcionario_id
+        WHERE ${cond.join(" AND ")} AND la.cancelado_em IS NULL
+        GROUP BY f.id, f.nome, la.categoria ORDER BY valor DESC`, ...args);
+
+    /* `categorias` sai como OBJETO e não como lista de nomes: a tela precisa
+       saber quais pedem funcionário, e devolver isso num segundo campo
+       paralelo criaria duas listas para manter em acordo. */
+    const categorias = await Q.all(
+      "SELECT nome, pede_funcionario FROM categorias_despesa WHERE ativo ORDER BY ordem, nome");
+
+    /* Quem pode aparecer na caixinha de funcionário. Inativo ENTRA: rescisão e
+       último salário são pagos depois do desligamento, e sumir da lista antes
+       disso impediria justamente o pagamento que fecha o vínculo. */
+    const funcionarios = await Q.all(
+      "SELECT id, nome, ativo FROM usuarios WHERE papel <> 'dono' ORDER BY ativo DESC, nome");
+
+    return responder(res, 200, Object.assign({
+      itens, porCategoria, porFuncionario, funcionarios,
+      categorias: categorias.map((c) => ({ nome: c.nome, pedeFuncionario: !!c.pede_funcionario })),
+      de, ate,
+      resumo: {
+        entradas: Number(soma.entradas), saidas: Number(soma.saidas),
+        saldo: Number(soma.entradas) - Number(soma.saidas),
+      },
+    }, envelope(Number(total.c), rec)));
+  }
+
   if (caminho === "/restrito/api/lotes" && req.method === "GET") {
     const url = new URL(req.url, "http://localhost");
     const situacao = url.searchParams.get("situacao");
@@ -2460,6 +3256,14 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     if (pago === "1") onde.push("l.pago_em IS NOT NULL");
     const doCliente = Number(url.searchParams.get("cliente")) || null;
     if (doCliente) { onde.push("l.cliente_id = ?"); args.push(doCliente); }
+
+    /* `?semNota=1` — os lotes que ainda podem entrar numa nota.
+       A tela de nova nota oferece SÓ estes: um lote já cobrado noutra nota
+       apareceria como disponível e a criação falharia no servidor. Melhor não
+       oferecer do que oferecer e recusar depois de escolhido. */
+    if (url.searchParams.get("semNota") === "1") {
+      onde.push("NOT EXISTS (SELECT 1 FROM nota_lotes nl WHERE nl.lote_id = l.id)");
+    }
 
     /* Os totais saem das FICHAS, por subconsulta — o lote não guarda soma.
        Guardar criaria duas verdades, e a errada seria justamente a que alguém
@@ -2965,6 +3769,44 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   /* O RECIBO DO LOTE — página feita para sair na impressora e ser assinada.
      Abre em aba própria justamente para o "imprimir" do navegador pegar o
      recibo, e não o sistema inteiro em volta dele. */
+  /* O RECIBO DE PAGAMENTO — o papel que o cliente leva embora.
+
+     Ele é por LANÇAMENTO, e não por nota: o cliente que pagou três vezes tem
+     três recibos, cada um com o que pagou naquele dia e quanto ficou faltando
+     DEPOIS daquele pagamento. Um recibo por nota diria só o total, e o cliente
+     que pagou R$ 1.000 de R$ 8.000 sairia com um papel de R$ 8.000 na mão. */
+  const mReciboPg = /^\/restrito\/lancamentos\/(\d+)\/recibo$/.exec(caminho);
+  if (mReciboPg && req.method === "GET") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador imprime recibo" });
+    const l = await Q.get(
+      `SELECT la.*, u.nome AS quem, n.codigo AS nota_codigo, n.numero_nf,
+              c.nome AS cliente_nome, c.documento, c.telefone, c.cidade
+         FROM lancamentos la
+         LEFT JOIN usuarios u ON u.id = la.criado_por
+         LEFT JOIN notas n ON n.id = la.nota_id
+         LEFT JOIN clientes c ON c.id = la.cliente_id
+        WHERE la.id = ?`, Number(mReciboPg[1]));
+    if (!l || !l.nota_id) return responder(res, 404, { error: "recibo não encontrado" });
+
+    const nota = await Q.get("SELECT * FROM notas WHERE id = ?", l.nota_id);
+    const conta = await contaDaNota(nota);
+
+    /* O SALDO DO RECIBO É O DAQUELE MOMENTO, não o de agora.
+       Um recibo impresso hoje e reimpresso mês que vem tem de dizer a mesma
+       coisa — senão o papel que o cliente guardou deixa de bater com o papel
+       que a fábrica reimprime, e não há como saber qual dos dois vale. Por
+       isso a conta considera só os lançamentos ATÉ ESTE, pelo id. */
+    const ateAqui = conta.lancamentos.filter((x) => !x.cancelado_em && x.id <= l.id);
+    const pagoAte = ateAqui.filter((x) => x.tipo === "entrada").reduce((a, x) => a + Number(x.valor), 0);
+    const devolvidoAte = ateAqui.filter((x) => x.tipo === "saida").reduce((a, x) => a + Number(x.valor), 0);
+    const faltavaDepois = Math.round((conta.valor - pagoAte + devolvidoAte) * 100) / 100;
+
+    return responder(res, 200, reciboDePagamento({
+      lancamento: l, nota, conta, pagoAte, faltavaDepois,
+    }, empresa, { agora: new Date(), porQuem: sessao.nome || sessao.usuario }),
+    { "Content-Type": "text/html; charset=utf-8" });
+  }
+
   const mRecibo = /^\/restrito\/lotes\/(\d+)\/recibo$/.exec(caminho);
   if (mRecibo && req.method === "GET") {
     const lote = await Q.get(

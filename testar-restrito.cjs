@@ -977,14 +977,27 @@ async function limparRestos() {
   const daTela = await admin("/restrito/api/lotes/" + lote);
   const totalNoPapel = new Intl.NumberFormat("pt-BR").format(daTela.dados.pecas);
   ok(recibo.includes(totalNoPapel), `o total do papel é o da tela (${totalNoPapel})`);
-  ok(recibo.includes(new Intl.NumberFormat("pt-BR").format(daTela.dados.pontos)),
-     "e os pontos também");
+  /* O QUE O CLIENTE NÃO VÊ.
+     Ponto, cor e operador medem COMO o serviço foi feito — quanto trabalho
+     deu, quem bordou, em que linha. O cliente confere o que recebeu e o que
+     vai pagar, e nada disso muda o valor de nada. Ficaram inteiros na tela do
+     lote; aqui a checagem é NEGATIVA, porque a forma de isso voltar por
+     engano é alguém reaproveitar a quebra da tela no papel.
+     Antes esta seção cobrava o contrário — mudou por pedido do dono. */
+  ok(!/pontos bordados/i.test(recibo), "o recibo NÃO anuncia pontos bordados");
+  ok(!/Por cor|Por operador/i.test(recibo), "nem traz as quebras por cor e por operador");
+  ok(!/<th class="n">Pontos<\/th>/.test(recibo), "e nem a coluna de pontos por desenho");
   for (const c of daTela.dados.porCor)
-    ok(recibo.includes(c.nome), `a cor ${c.nome} aparece na composição impressa`);
+    ok(!recibo.includes(c.nome), `a cor ${c.nome} fica fora do papel do cliente`);
+  /* Mas continuam na TELA, que é onde a fábrica olha — se sumissem daqui, a
+     remoção teria ido longe demais e ninguém saberia mais quem bordou o quê. */
+  ok(daTela.dados.porCor.length > 0 && daTela.dados.porOperador.length > 0,
+     "e continuam inteiras na tela do lote");
 
-  /* Ficha sem cor entra na composição como "(não informado)", mas NÃO conta
-     como cor no quadro de totais — senão o papel que o cliente assina anuncia
-     uma cor a mais do que a quebra logo abaixo mostra.
+  /* Ficha sem cor: a MERCADORIA em branco entra na composição como
+     "(não informado)". A cor saiu do papel, mas a mercadoria ficou — e uma
+     quebra que engolisse a linha vazia faria a soma dela não bater com o total
+     de peças logo acima.
 
      A ficha entra por SQL, e num lote NOVO: o `lote` da seção 8 já está
      faturado e recusa mudança de composição — que é exatamente o certo, mas
@@ -1004,9 +1017,12 @@ async function limparRestos() {
   eq(r.dados.anexadas, 2, "as duas fichas entraram no lote de teste");
 
   const comSemCor = await admin(`/restrito/lotes/${loteSemCor}/recibo`);
-  ok(comSemCor.texto.includes("(não informado)"), "a ficha sem cor aparece na composição");
-  ok(/<b>1<\/b><span>cor<\/span>/.test(comSemCor.texto),
-     "mas o total diz 1 cor, no singular — não 2 contando o vazio");
+  ok(comSemCor.texto.includes("(não informado)"),
+     "a ficha sem mercadoria aparece na composição, e não some da conta");
+  /* O quadro de totais tem UMA caixa: peças. Se alguém reintroduzir cor ou
+     operador ali, este número de caixas muda e o teste avisa. */
+  eq((comSemCor.texto.match(/class="total /g) || []).length, 1,
+     "e o quadro de totais tem uma caixa só — peças produzidas");
 
   /* A ORIENTAÇÃO é o motivo de o recibo ser gerado no servidor: `@page` não
      existe sem folha de estilo, e sem ele o navegador sempre imprimiria em pé. */

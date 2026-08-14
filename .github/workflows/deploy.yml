@@ -134,15 +134,15 @@ jobs:
       - name: Gerar a chave de cifra da prova
         run: echo "DADOS_CHAVE=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
 
-      # As duas suítes SOBEM O PRÓPRIO SERVIDOR, cada uma na sua porta (5199 e
-      # 5198), e conferem antes se a porta está livre. Não há processo para eu
-      # levantar nem para matar aqui — e por isso também não há risco de um
-      # pkill pegar o vizinho.
+      # As três suítes SOBEM O PRÓPRIO SERVIDOR, cada uma na sua porta (5199,
+      # 5197 e 5198), e conferem antes se a porta está livre. Não há processo
+      # para eu levantar nem para matar aqui — e por isso também não há risco
+      # de um pkill pegar o vizinho.
       #
-      # 439 + 47 checagens. A do /restrito cria os próprios registros e os
-      # apaga: provado aqui contra um Postgres de verdade, com as dez tabelas
-      # contadas antes e depois — nenhuma mudou.
-      - name: Suíte do /restrito (439) e do site (47)
+      # 442 + 84 + 47 checagens. As que tocam o banco criam os próprios
+      # registros e os apagam POR ID: provado aqui contra um Postgres de
+      # verdade, com as tabelas contadas antes e depois — nenhuma mudou.
+      - name: Suítes do /restrito (442), do dinheiro (84) e do site (47)
         run: npm test
 
   entregar:
