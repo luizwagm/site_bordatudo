@@ -994,10 +994,15 @@ async function limparRestos() {
   ok(daTela.dados.porCor.length > 0 && daTela.dados.porOperador.length > 0,
      "e continuam inteiras na tela do lote");
 
-  /* Ficha sem cor: a MERCADORIA em branco entra na composição como
-     "(não informado)". A cor saiu do papel, mas a mercadoria ficou — e uma
-     quebra que engolisse a linha vazia faria a soma dela não bater com o total
-     de peças logo acima.
+  /* A COMPOSIÇÃO DO RECIBO É SÓ POR DESENHO — a quebra por mercadoria saiu
+     em 17/08/2026, por pedido do dono. O motivo: a mercadoria já aparece
+     linha a linha na tabela acima, e repeti-la agrupada não responde nenhuma
+     pergunta que o cliente faça com o papel na mão. É por DESENHO que o preço
+     muda, e é isso que ele confere.
+
+     A checagem abaixo é NEGATIVA porque a forma de o card voltar por engano é
+     alguém reaproveitar a quebra da tela do lote no papel — foi assim que
+     cor e operador quase voltaram.
 
      A ficha entra por SQL, e num lote NOVO: o `lote` da seção 8 já está
      faturado e recusa mudança de composição — que é exatamente o certo, mas
@@ -1017,8 +1022,26 @@ async function limparRestos() {
   eq(r.dados.anexadas, 2, "as duas fichas entraram no lote de teste");
 
   const comSemCor = await admin(`/restrito/lotes/${loteSemCor}/recibo`);
-  ok(comSemCor.texto.includes("(não informado)"),
-     "a ficha sem mercadoria aparece na composição, e não some da conta");
+  /* Procura o TÍTULO DO CARD (`<h3>`), não o texto solto: o comentário que
+     explica a remoção, dentro do próprio gerador do recibo, contém a
+     expressão — e um teste que casasse com ele acusaria a explicação da
+     ausência como se fosse a presença. */
+  ok(!/<h3>Por mercadoria<\/h3>/.test(comSemCor.texto),
+     "o recibo NÃO traz mais o card por mercadoria");
+  ok(/<h3>Peças por desenho<\/h3>/.test(comSemCor.texto),
+     "mas continua trazendo o card por desenho — é por ele que o preço muda");
+
+  /* A SOMA DA QUEBRA TEM DE BATER COM O TOTAL DE PEÇAS logo acima dela. Era o
+     que o teste da mercadoria protegia: uma quebra que engolisse uma linha
+     deixaria dois números diferentes no MESMO papel, e o cliente confere os
+     dois. Por desenho o risco é menor (`desenho_id` é NOT NULL), mas o papel
+     é assinado — a conferência continua. */
+  const doLoteSemCor = await admin("/restrito/api/lotes/" + loteSemCor);
+  const somaDesenhos = doLoteSemCor.dados.porDesenho.reduce((a, d) => a + Number(d.pecas), 0);
+  eq(somaDesenhos, Number(doLoteSemCor.dados.pecas),
+     "a quebra por desenho soma o mesmo que o total de peças do lote");
+  ok(comSemCor.texto.includes(new Intl.NumberFormat("pt-BR").format(doLoteSemCor.dados.pecas)),
+     "e esse total está impresso no papel");
   /* O quadro de totais tem UMA caixa: peças. Se alguém reintroduzir cor ou
      operador ali, este número de caixas muda e o teste avisa. */
   eq((comSemCor.texto.match(/class="total /g) || []).length, 1,
@@ -1391,6 +1414,84 @@ async function limparRestos() {
   r = await admin("/restrito/api/producao?de=2099-01-01");
   eq(Number(r.dados.total), 0, "filtro de data que não pega nada devolve zero");
   eq(Number(r.dados.soma.pecas), 0, "com os totais zerados, e não os da consulta anterior");
+
+  /* ============ 12k-quinquies. o que está NA MÁQUINA agora ============== */
+  console.log("  12k-quinquies. fichas em produção na tela de Produção");
+
+  /* A tela mostrava só o que já saiu da máquina. Faltava o que está nela —
+     e sem isso o escritório não tinha como saber, olhando a tela, se alguém
+     está produzindo agora ou se a fábrica parou.
+
+     As três garantias abaixo são o contrato dessa lista, e cada uma existe
+     porque a alternativa produz um número errado que não se apresenta como
+     errado. */
+  const antesDeAbrir = await admin("/restrito/api/producao");
+  const pecasAntes = Number(antesDeAbrir.dados.soma.pecas);
+  const fichasAntes = Number(antesDeAbrir.dados.total);
+  ok(Array.isArray(antesDeAbrir.dados.abertas), "a resposta traz a lista de abertas");
+
+  /* Abre uma ficha de verdade, pelo caminho do operador.
+
+     O TOKEN É RELIDO DO BANCO AQUI. O da seção 5 já não vale: desativar uma
+     máquina ROTACIONA o token do QR — é o que mata o adesivo antigo —, e o
+     teste 12h faz exatamente isso. Reaproveitar a variável antiga devolvia
+     "QR de máquina não reconhecido", e o erro parecia ser da ficha. */
+  const tokenAgora = (await Q.get("SELECT token FROM maquinas WHERE id = ?", maq)).token;
+  const abertaProva = await oper("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, maquina_token: tokenAgora });
+  ok(abertaProva.status === 201, "o operador abre uma ficha", JSON.stringify(abertaProva.dados));
+  const idAberta = abertaProva.dados.id;
+  /* NA LISTA DE LIMPEZA NA MESMA LINHA em que nasce. Sem isto a ficha fica no
+     banco e a faxina final estoura no RESTRICT do desenho — o erro aparece
+     depois de tudo ter passado, e parece defeito da limpeza, não deste teste. */
+  CRIADO.fichas.push(idAberta);
+
+  r = await admin("/restrito/api/producao");
+  const naLista = (r.dados.abertas || []).filter((f) => String(f.id) === String(idAberta));
+  eq(naLista.length, 1, "a ficha aberta aparece em `abertas`");
+  ok(naLista[0].cliente_nome && naLista[0].desenho_nome && naLista[0].operador_nome,
+     "com cliente, desenho e operador — a linha da tela é montada com isso");
+  ok(naLista[0].aberta_em, "e com a hora da abertura, para a tela contar o tempo");
+
+  /* NÃO ENTRA NA LISTA DAS FECHADAS. Se entrasse, a linha apareceria duas
+     vezes na tabela — e o rodapé somaria uma quantidade que não existe. */
+  ok(!r.dados.fichas.some((f) => String(f.id) === String(idAberta)),
+     "e NÃO aparece entre as fechadas");
+
+  /* NÃO MEXE NOS TOTAIS. É a garantia que protege a nota: ficha aberta não
+     tem quantidade, e contá-la faria o indicador de peças do período
+     discordar do que a fábrica entregou. */
+  eq(Number(r.dados.soma.pecas), pecasAntes, "o total de peças NÃO muda com a ficha aberta");
+  eq(Number(r.dados.total), fichasAntes, "nem a contagem de fichas do período");
+
+  /* IGNORA O FILTRO DE PERÍODO. O período pergunta sobre o passado; a ficha
+     aberta é o presente. Um recorte no ano que vem não pode esconder o que
+     está na máquina agora — é justamente assim que a ficha esquecida some. */
+  const noFuturo = await admin("/restrito/api/producao?de=2099-01-01");
+  ok((noFuturo.dados.abertas || []).some((f) => String(f.id) === String(idAberta)),
+     "a ficha aberta aparece mesmo com filtro de período que não pega nada");
+  eq(Number(noFuturo.dados.total), 0, "e o total do período continua zero");
+
+  /* MAS RESPEITA QUEM/O QUÊ. Filtrar por outro cliente tem de escondê-la:
+     esses filtros recortam o assunto, não o tempo. */
+  const outroCliente = await admin("/restrito/api/producao?cliente=" + cliB);
+  ok(!(outroCliente.dados.abertas || []).some((f) => String(f.id) === String(idAberta)),
+     "filtrando por outro cliente, a ficha aberta some");
+
+  /* DA MAIS ANTIGA PARA A MAIS NOVA: a esquecida ontem fica no topo, que é o
+     problema que esta lista existe para mostrar. */
+  const horas = (r.dados.abertas || []).map((f) => String(f.aberta_em));
+  ok(horas.every((h, i) => i === 0 || horas[i - 1] <= h),
+     "as abertas vêm da mais antiga para a mais nova", JSON.stringify(horas));
+
+  /* Fechada, ela sai de `abertas` e entra nos totais — o ciclo fecha. */
+  eq((await oper("/restrito/api/fichas/" + idAberta + "/fechar", "PUT",
+     { quantidade: 3, mercadoria_id: merc, cor_id: corBranca })).status, 200,
+     "o operador fecha a ficha da prova");
+  r = await admin("/restrito/api/producao");
+  ok(!(r.dados.abertas || []).some((f) => String(f.id) === String(idAberta)),
+     "fechada, ela sai de `abertas`");
+  eq(Number(r.dados.soma.pecas), pecasAntes + 3, "e as 3 peças entram no total");
 
   /* ============ 12k-bis. a lista velha do navegador ===================== */
   /* ISTO ACONTECEU EM PRODUÇÃO, seis vezes nos dias 07 e 08/08/2026:

@@ -651,8 +651,13 @@ function reciboDoLote(dados, empresa, opcoes) {
      hoje e podia ter quatro amanhã, e uma grade de 3 com 2 caixas deixa um
      terço da folha em branco no meio do papel. O minmax também impede que uma
      caixa só estique de margem a margem. */
-  .quebras { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 14px; align-items: start; }
+  /* Teto de largura por card. Com "1fr" e um card só — que é o caso desde que
+     a quebra por mercadoria saiu — a caixa esticava pelos 21cm da folha, e a
+     lista de desenhos ficava com o nome à esquerda e o número lá no outro
+     canto, ilegível. O teto mantém a leitura curta e continua acomodando mais
+     de um card lado a lado se um dia voltarem. */
+  .quebras { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 300px));
+    gap: 14px; align-items: start; justify-content: start; }
   .quebra { border: 1px solid #e2e2ea; border-radius: 3px; padding: 8px 10px; break-inside: avoid; }
   table.mini td { padding: 3px 0; border-bottom: 1px dotted #e2e2ea; font-size: 11.5px; }
   table.mini tr:last-child td { border-bottom: 0; }
@@ -763,21 +768,28 @@ function reciboDoLote(dados, empresa, opcoes) {
          fábrica e está inteira na tela do lote. -->
     <h2>Produção — ${fichas.length} ficha${fichas.length === 1 ? "" : "s"}</h2>
     <table>
+      <!-- A ORDEM DAS TRÊS COLUNAS DE NÚMERO É A DA CONTA:
+           peças × valor unitário = valor total. Lida da esquerda para a
+           direita, a linha se confere sozinha com a calculadora na mão — que é
+           exatamente o que o cliente faz com este papel. Com o unitário na
+           frente, ele precisa pular para trás para achar a quantidade. -->
       <thead><tr>
         <th>Data</th><th>Desenho</th><th>Mercadoria</th>
-        <th class="n">Valor unitário</th><th class="n">Peças</th><th class="n">Valor total</th>
+        <th class="n">Peças</th><th class="n">Valor unitário</th><th class="n">Valor total</th>
       </tr></thead>
       <tbody>${fichas.map((f) => `<tr>
         <td>${soData(f.fechada_em)}</td>
         <td>${escH(f.desenho_nome)}</td>
         <td>${escH(f.mercadoria_nome || "—")}</td>
-        <td class="n">${rsBr(f.preco_unitario)}</td>
         <td class="n">${nBr(f.quantidade)}</td>
+        <td class="n">${rsBr(f.preco_unitario)}</td>
         <td class="n">${rsBr(f.total_valor)}</td>
       </tr>`).join("") || '<tr><td colspan="6">Nenhuma ficha neste lote.</td></tr>'}</tbody>
+      <!-- O rodapé NÃO soma a coluna do unitário: somar preço por peça de
+           desenhos diferentes dá um número que não significa nada. -->
       <tfoot><tr><td colspan="3">Total</td>
-        <td class="n"></td>
         <td class="n">${nBr(pecas)}</td>
+        <td class="n"></td>
         <td class="n">${valor ? rsBr(valor) : "—"}</td></tr></tfoot>
     </table>
 
@@ -790,10 +802,16 @@ function reciboDoLote(dados, empresa, opcoes) {
       <div class="total total--destaque"><b>${nBr(pecas)}</b><span>peças produzidas</span></div>
     </div>
 
+    <!-- SÓ A QUEBRA POR DESENHO.
+         O card por mercadoria saiu: a mercadoria já aparece linha a linha na
+         tabela acima, e repeti-la agrupada não responde nenhuma pergunta que o
+         cliente faça com o papel na mão. Ele quer conferir quanto de cada
+         desenho recebeu — é por desenho que o preço muda. A quebra por
+         mercadoria continua inteira na tela do lote, que é onde a fábrica
+         olha para separar a entrega. -->
     <h2>Composição</h2>
     <div class="quebras">
       ${quebra("Peças por desenho", porDesenho)}
-      ${quebra("Por mercadoria", porMercadoria)}
     </div>
 
     <div class="assinaturas">
@@ -2760,9 +2778,53 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       };
     }
 
+    /* ------------------------------------------------------------------
+       O QUE ESTÁ NA MÁQUINA AGORA
+
+       As fichas ABERTAS vêm à parte, e três decisões explicam por quê:
+
+       1. FORA DA PAGINAÇÃO. "O que está rodando agora" não pode cair na
+          página 3. Vêm todas, sempre — e cabem, porque o índice único
+          parcial garante UMA ficha aberta por operador: o teto é o tamanho
+          da equipe, não o do histórico.
+
+       2. FORA DOS TOTAIS. Ficha aberta não tem quantidade — ela só é
+          informada no fechamento. Somá-la como produção seria contar peça
+          que ainda não existe, e o indicador de peças do período passaria a
+          discordar do que a fábrica entregou.
+
+       3. FORA DO FILTRO DE PERÍODO. O período é uma pergunta sobre o
+          passado; ficha aberta é o presente. Escondê-la porque foi aberta
+          fora do recorte esconderia justamente a mais importante: a que
+          alguém abriu há três dias e esqueceu de fechar. Os filtros de
+          operador, cliente e "fora de lote" continuam valendo, porque esses
+          recortam QUEM/O QUÊ, não QUANDO.
+       ------------------------------------------------------------------ */
+    const ondeAbertas = ["f.situacao = 'aberta'"];
+    const argsAbertas = [];
+    if (usuarioId) { ondeAbertas.push("f.usuario_id = ?"); argsAbertas.push(usuarioId); }
+    if (clienteId) { ondeAbertas.push("f.cliente_id = ?"); argsAbertas.push(clienteId); }
+    if (soltas) ondeAbertas.push("f.lote_id IS NULL");
+
+    const abertas = await Q.all(
+      `SELECT f.*, u.nome AS operador_nome, c.nome AS cliente_nome, d.nome AS desenho_nome,
+              me.nome AS mercadoria_nome, co.nome AS cor_nome, ma.nome AS maquina_nome,
+              l.codigo AS lote_codigo
+         FROM fichas f
+         JOIN usuarios u ON u.id = f.usuario_id
+         JOIN clientes c ON c.id = f.cliente_id
+         JOIN desenhos d ON d.id = f.desenho_id
+         LEFT JOIN mercadorias me ON me.id = f.mercadoria_id
+         LEFT JOIN cores co ON co.id = f.cor_id
+         LEFT JOIN maquinas ma ON ma.id = f.maquina_id
+         LEFT JOIN lotes l ON l.id = f.lote_id
+        WHERE ${ondeAbertas.join(" AND ")}
+        ORDER BY f.aberta_em ASC LIMIT 200`, ...argsAbertas);
+
     /* `total` sai da contagem do BANCO, não do tamanho da página — é ele que
        alimenta tanto os indicadores quanto a barra de paginação. */
-    return responder(res, 200, Object.assign({ fichas, soma, porOperador }, envelope(total, rec)));
+    return responder(res, 200,
+      Object.assign({ fichas, abertas, soma, porOperador }, envelope(total, rec)));
   }
 
   /* ---------------------------------------------------------- lotes ----- */

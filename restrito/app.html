@@ -435,6 +435,21 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
 .etiqueta--cinza { background: var(--prata-fundo); color: #5c5c70; }
 .etiqueta--vermelha { background: var(--vermelho-fundo); color: var(--vermelho); }
 
+/* ------------------------------------------- a ficha que está na máquina ---
+   Fundo âmbar de baixa saturação e uma faixa da MESMA cor à esquerda. A faixa
+   é o que separa as linhas em produção das fechadas quando alguém rola a
+   tabela — só o fundo claro se perde de vista na primeira página cheia.
+
+   Fica ACIMA do rodapé que soma, e não entra na soma. Por isso as células sem
+   valor levam traço em cinza-claro: um "0" ali seria lido como "produziu
+   zero", quando o certo é "ainda não há o que contar". */
+tr.linha-aberta > td { background: #fdf9ef; }
+tr.linha-aberta:hover > td { background: #fbf4e2; }
+tr.linha-aberta > td:first-child { box-shadow: inset 3px 0 0 var(--ambar); }
+tr.linha-aberta .desde { display: block; margin-top: 2px; font-size: 11.5px;
+  color: var(--ambar); font-family: var(--mono); }
+td.vazia { color: #b6b6c4; }
+
 /* ------------------------------------------------- abas de período -------
    As abas resolvem a maioria das perguntas com um clique; os campos de data
    ficam para o recorte que elas não cobrem. Vêm ANTES dos campos na tela pela
@@ -1764,10 +1779,11 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
 
     const porOp = Object.keys(r.porOperador).map((k) =>
       Object.assign({ nome: k }, r.porOperador[k])).sort((a, b) => b.pontos - a.pontos);
+    const abertas = r.abertas || [];
 
     alvo.innerHTML =
       '<h1 class="titulo-tela">Produção</h1>' +
-      '<p class="subtitulo-tela">O que saiu das máquinas, ficha por ficha.</p>' +
+      '<p class="subtitulo-tela">O que saiu das máquinas e o que está nelas agora.</p>' +
 
       '<div class="bloco"><div class="bloco__corpo">' +
         /* As abas primeiro: é por elas que se resolve a maioria das perguntas,
@@ -1808,6 +1824,13 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         "<div><b>" + num(r.soma.pecas) + "</b><span>peças</span></div>" +
         "<div><b>" + num(r.soma.pontos) + "</b><span>pontos</span></div>" +
         (r.soma.valor ? "<div><b>" + dinheiro(r.soma.valor) + "</b><span>valor</span></div>" : "") +
+        /* O que está na máquina AGORA fica ao lado dos totais, mas com a cor
+           de "em curso" — não com a dos números fechados. É contagem de
+           fichas, nunca de peças: ficha aberta ainda não tem quantidade, e
+           misturá-la ao total de peças seria contar o que não foi produzido. */
+        (abertas.length
+          ? '<div><b class="saldo-aberto">' + num(abertas.length) + "</b>" +
+            "<span>em produção</span></div>" : "") +
       "</div>" +
       (porOp.length > 1
         ? '<div class="quebra" style="margin-top:16px">' + barras(porOp.map((o) =>
@@ -1827,11 +1850,45 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
             " mais recentes de " + num(r.total) + " — estreite o período para ver o resto</span>"
           : "") +
         "</div>" +
-        (r.fichas.length ? '<div class="rolagem"><table><thead><tr>' +
+        ((r.fichas.length || abertas.length) ? '<div class="rolagem"><table><thead><tr>' +
           "<th>Fechada</th><th>Operador</th><th>Cliente</th><th>Desenho</th>" +
           "<th>Mercadoria</th><th>Cor</th><th>Máquina</th>" +
           '<th class="num">Peças</th><th class="num">Pontos</th><th>Lote</th><th></th>' +
         "</tr></thead><tbody>" +
+
+        /* ================================================================
+           AS FICHAS ABERTAS VÊM PRIMEIRO, E NA MESMA TABELA
+
+           Mesma tabela porque a pergunta é uma só: "o que essa gente está
+           produzindo". Separar em dois blocos obrigaria a olhar dois lugares
+           para responder — e é justamente o trabalho que o papel dava.
+
+           Primeiro porque é o que está acontecendo agora, e porque vêm
+           ordenadas da mais ANTIGA para a mais nova: a ficha que alguém abriu
+           ontem e esqueceu de fechar aparece no topo de tudo, com as horas
+           correndo ao lado. Ela é o problema que esta tela existe para
+           mostrar.
+
+           Não têm peça nem ponto — traço, não zero: zero é um valor medido,
+           traço é "ainda não há". E não têm "corrigir": não existe quantidade,
+           mercadoria nem cor para corrigir antes do fechamento.
+           ================================================================ */
+        abertas.map((f) =>
+          '<tr class="linha-aberta">' +
+          '<td><span class="etiqueta etiqueta--ambar">em produção</span>' +
+            '<small class="desde">há ' + decorrido(f.aberta_em) + "</small></td>" +
+          "<td>" + esc(f.operador_nome) + "</td>" +
+          "<td><b>" + esc(f.cliente_nome) + "</b></td>" +
+          "<td>" + esc(f.desenho_nome) + "</td>" +
+          '<td class="vazia">—</td>' +
+          '<td class="vazia">—</td>' +
+          "<td>" + esc(f.maquina_nome || "—") + "</td>" +
+          '<td class="num vazia">—</td>' +
+          '<td class="num vazia">—</td>' +
+          '<td class="vazia">—</td>' +
+          "<td></td>" +
+          "</tr>").join("") +
+
         r.fichas.map((f) =>
           "<tr>" +
           "<td>" + dataHora(f.fechada_em) + "</td>" +
@@ -1852,11 +1909,32 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
            diz "total do período" e não "total". Uma linha "Total" embaixo de
            vinte fichas, valendo por quatrocentas, é a leitura errada mais
            fácil de fazer numa tabela paginada. */
-        '</tbody><tfoot><tr><td colspan="7">Total do período</td>' +
+        /* O rodapé soma só o que FECHOU. As linhas abertas estão acima dele e
+           não entram — por isso o rótulo diz "fechadas no período", e não
+           "total": a diferença entre o que a tabela mostra e o que ela soma
+           precisa estar escrita, senão parece erro de conta. */
+        '</tbody><tfoot><tr><td colspan="7">Total das fechadas no período</td>' +
         '<td class="num">' + num(r.soma.pecas) + "</td>" +
         '<td class="num">' + num(r.soma.pontos) + '</td><td colspan="2"></td></tr></tfoot></table></div>' +
+        /* As abertas ignoram o filtro de período de propósito — o período é
+           pergunta sobre o passado, e elas são o presente. Sem esta linha,
+           quem filtrasse "últimos 7 dias" veria uma ficha de três semanas
+           atrás na tela e acharia que o filtro está quebrado. */
+        /* Concordância inteira, não só o "s" do substantivo: artigo e verbo
+           também mudam. "As 1 ficha aparecem" é o tipo de frase que faz o
+           sistema parecer descuidado justo na explicação que existe para dar
+           confiança no número. */
+        (abertas.length
+          ? '<p class="ajuda" style="margin:10px 2px 0">' +
+            (abertas.length === 1
+              ? "A ficha em produção aparece sempre"
+              : "As " + num(abertas.length) + " fichas em produção aparecem sempre") +
+            ", independentemente do período — e não " +
+            (abertas.length === 1 ? "entra" : "entram") + " nos totais, porque a " +
+            "quantidade só é informada no fechamento.</p>"
+          : "") +
         paginacao(r, "producao")
-        : '<div class="vazio">Nenhuma ficha fechada no período.</div>') +
+        : '<div class="vazio">Nenhuma ficha no período, e nenhuma na máquina agora.</div>') +
       "</div>";
   }
 
