@@ -773,6 +773,16 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
       "-" + String(d.getDate()).padStart(2, "0");
   };
 
+  /* AGORA em `AAAA-MM-DDTHH:MM`, hora LOCAL — é o formato que o
+     <input type="datetime-local"> entende, e é o que o `max` precisa ter para
+     travar o campo no presente. Pelo mesmo motivo do `hoje()`: `toISOString()`
+     devolveria UTC, e às 22h de Caruaru o teto do campo seria o dia seguinte. */
+  const agoraLocal = () => {
+    const d = new Date();
+    return hoje() + "T" + String(d.getHours()).padStart(2, "0") +
+      ":" + String(d.getMinutes()).padStart(2, "0");
+  };
+
   /* Dinheiro. `dinheiro(null)` devolve travessão e não "R$ 0,00": o desenho
      ainda não precificado é diferente do que custa zero, e essa diferença é a
      que o escritório procura na lista. */
@@ -1216,11 +1226,17 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     const clientes = await lista("clientes");
     const desenhos = await lista("desenhos");
     const maquinas = await lista("maquinas");
+    const admin = !!(EU && EU.admin);
+    /* Cliente travado: veio da tela de um lote, e o lote já diz de quem é o
+       serviço. Deixar o campo solto ali seria oferecer a escolha errada — a
+       ficha de outro cliente nunca entraria naquele lote. */
+    const clientePreso = escolha.cliente_fixo ? String(escolha.cliente_id || "") : "";
 
     abrirModal({
       titulo: "Abrir ficha",
       corpo:
-        '<label class="campo"><span>Cliente</span><select id="ff-cliente">' +
+        '<label class="campo"><span>Cliente</span><select id="ff-cliente"' +
+          (clientePreso ? " disabled" : "") + ">" +
           opcoes(clientes, escolha.cliente_id || "", "— escolha —") + "</select></label>" +
         '<label class="campo"><span>Desenho</span><select id="ff-desenho" disabled>' +
           '<option value="">— escolha o cliente antes —</option></select></label>' +
@@ -1242,7 +1258,28 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         '<div id="ff-pontos"></div>' +
         (MAQUINA_TOKEN ? "" :
           '<label class="campo"><span>Máquina <small style="font-weight:600;text-transform:none;color:#8a8a99">(ou leia o QR colado nela)</small></span>' +
-          '<select id="ff-maquina">' + opcoes(maquinas, "", "— não informar —") + "</select></label>"),
+          '<select id="ff-maquina">' + opcoes(maquinas, "", "— não informar —") + "</select></label>") +
+        /* ------------------------------------------------------------
+           A DATA DO BORDADO — só o administrador vê este campo
+
+           Serve para o que já foi feito: a nota antiga que ninguém lançou, o
+           serviço avulso que veio por fora. Em branco, que é como ele nasce,
+           nada muda — a ficha continua marcando a hora do relógio, e é assim
+           que ela mede quem está na máquina agora.
+
+           NÃO É ESCONDIDO POR CSS. Para o operador o campo não é escrito na
+           página, e o servidor recusa a data de quem não é administrador. Um
+           campo `hidden` continuaria no HTML, e "ver código-fonte" é uma
+           tecla.
+           ------------------------------------------------------------ */
+        (admin
+          ? '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:13.5px;' +
+              'color:#55555f;font-weight:700">Lançar bordado de outra data</summary>' +
+            '<label class="campo" style="margin-top:10px"><span>Data e hora do bordado</span>' +
+              '<input type="datetime-local" id="ff-data" max="' + agoraLocal() + '">' +
+              "<small>Em branco, usa agora. Serve para nota antiga ou serviço avulso — " +
+              "a ficha conta no dia que você escolher, e não no de hoje.</small></label></details>"
+          : ""),
       confirmar: "Abrir ficha",
       classe: "btn--laranja",
       aoAbrir: function (caixa) {
@@ -1292,7 +1329,16 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           var novoId = "";
           await modalDesenho(null, cliente,
             function (id) { novoId = id || ""; esquecer("desenhos"); },
-            function () { modalAbrirFicha({ cliente_id: cliente, desenho_id: novoId }); });
+            /* A REABERTURA LEVA TUDO QUE ESTAVA VALENDO. Sem `cliente_fixo` e
+               `aoTerminar`, quem entrou pela tela do lote voltaria com o
+               cliente destravado e, ao abrir a ficha, cairia na tela do
+               operador — perdendo o lote que estava fechando. */
+            function () {
+              modalAbrirFicha({
+                cliente_id: cliente, desenho_id: novoId,
+                cliente_fixo: escolha.cliente_fixo, aoTerminar: escolha.aoTerminar,
+              });
+            });
         });
       },
       aoConfirmar: async function (caixa) {
@@ -1301,13 +1347,24 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         if (!cliente) throw new Error("Escolha o cliente.");
         if (!desenho) throw new Error("Escolha o desenho.");
         const corpo = { cliente_id: cliente, desenho_id: desenho };
+        /* Só vai no corpo quando foi PREENCHIDO. Mandar string vazia faria a
+           rota entrar no ramo da data e recusar o operador — que nem viu o
+           campo — por "só o administrador escolhe a data do bordado". */
+        const campoData = caixa.querySelector("#ff-data");
+        if (campoData && campoData.value) corpo.aberta_em = campoData.value;
         if (MAQUINA_TOKEN) corpo.maquina_token = MAQUINA_TOKEN;
         else {
           const m = caixa.querySelector("#ff-maquina");
           if (m && m.value) corpo.maquina_id = m.value;
         }
         await enviar("/restrito/api/fichas", "POST", corpo);
-        await carregarDia(); pintarOperar();
+        await carregarDia();
+        /* `aoTerminar` é de quem chamou. Da tela do lote, cair na tela do
+           operador seria perder o lugar no meio do fechamento de uma nota —
+           que é justamente o trabalho em curso quando se abre uma ficha por
+           ali. Sem ele, o caminho de sempre. */
+        if (escolha.aoTerminar) await escolha.aoTerminar();
+        else pintarOperar();
         recado("Ficha aberta.");
       },
     });
@@ -2227,8 +2284,14 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     const l = r.lote;
     LOTE_ABERTO = id;
 
+    const admin = !!(EU && EU.admin);
     const prev = l.quantidade_prevista == null ? null : Number(l.quantidade_prevista);
     const falta = prev == null ? null : prev - r.pecas;
+    /* Nulo, e não "zero ou vazio": `preco_unitario` zero é decisão — bordado
+       de cortesia, amostra, retrabalho que não se cobra. Confundir os dois
+       faria a tela cobrar explicação por uma escolha que já foi feita. */
+    const fichasSemValor = r.fichas.filter((f) =>
+      f.preco_unitario === null || f.preco_unitario === undefined);
     /* A composição de um lote grande passa das cem fichas, e ela é conferida
        linha a linha antes de faturar — é a tabela que mais precisa de página. */
     const fatiaLote = fatiar("lote", r.fichas);
@@ -2263,6 +2326,20 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           'target="_blank" rel="noopener">Recibo em pé</a>' +
         '<a class="btn btn--fantasma" href="/restrito/lotes/' + id + '/recibo?orientacao=paisagem" ' +
           'target="_blank" rel="noopener">Recibo deitado</a>' +
+        /* ABRIR NOTA daqui, e não do financeiro.
+
+           O fechamento acontece OLHANDO a composição: confere-se a peça, o
+           valor, e só então se emite. Mandar a pessoa ao menu Financeiro para
+           escolher de novo o cliente e achar este mesmo lote numa lista é
+           refazer à mão o que a tela já sabe — e é onde se marca o lote
+           errado, porque na lista eles só se distinguem pelo código. */
+        '<button class="btn btn--verde" data-acao="nota-do-lote" data-id="' + id + '">Abrir nota</button>' +
+        /* ABRIR FICHA na composição. O caso é o lançamento retroativo: o
+           serviço foi bordado, ninguém registrou, e a nota está sendo montada
+           agora. Sem este botão o caminho é sair do lote, ir à tela do
+           operador, abrir, fechar e voltar — e é no voltar que se perde de
+           vista qual lote estava sendo fechado. */
+        '<button class="btn btn--fantasma" data-acao="ficha-no-lote" data-id="' + id + '">Abrir ficha</button>' +
         '<button class="btn btn--laranja" data-acao="amalgamar" data-id="' + id + '">Juntar fichas</button>' +
         '<button class="btn btn--fantasma" data-acao="editar-lote" data-id="' + id + '">Editar lote</button>' +
       "</div><div class=\"bloco__corpo\">" +
@@ -2277,11 +2354,36 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
       /* A BARRA DE SOMAR APARECE ACIMA E ABAIXO, e as duas são a mesma coisa.
          Numa tabela de trinta linhas, o botão só no topo obriga a rolar de
          volta depois de marcar a última — e é aí que se desmarca sem querer. */
+      /* ------------------------------------------------------------------
+         O AVISO DA FICHA SEM VALOR
+
+         `preco_unitario` é nulo quando o desenho ainda não tinha preço no
+         momento da abertura — tipicamente o que o operador cadastrou no
+         turno da noite. `total_valor` dessa ficha é ZERO, e zero soma sem
+         reclamar: a nota sai por um número menor que o serviço, e nada na
+         tela denuncia isso.
+
+         Por isso o aviso conta as fichas e vem ANTES da tabela, em laranja.
+         O que estava acontecendo era o contrário — descobrir depois de a nota
+         estar emitida, quando o cliente já levou o papel. */
+      (fichasSemValor.length
+        ? '<div class="aviso aviso--erro" style="margin:0 0 12px">' +
+          "<b>" + fichasSemValor.length + " ficha(s) sem valor.</b> " +
+          "Elas contam peça e ponto, mas entram por R$ 0,00 na nota — o total do lote sai menor " +
+          "que o serviço. Clique em <b>a definir</b> na coluna Valor para preencher." +
+          "</div>"
+        : "") +
       (r.fichas.length ? barraSomar("cima") +
         '<div class="rolagem"><table><thead><tr>' +
         '<th class="sel"><input type="checkbox" data-sel-todas title="Marcar todas desta página"></th>' +
         "<th>Fechada</th><th>Operador</th><th>Desenho</th><th>Mercadoria</th><th>Cor</th>" +
-        '<th class="num">Peças</th><th class="num">Pontos</th></tr></thead><tbody>' +
+        '<th class="num">Peças</th><th class="num">Pontos</th>' +
+        /* A COLUNA DE VALOR SÓ EXISTE AQUI, e a tela do lote é área do
+           administrador inteira (o servidor recusa as rotas de lote para o
+           operador). Ainda assim a guarda por `EU.admin` fica escrita: é ela
+           que impede a coluna de nascer se algum dia esta tela for
+           reaproveitada em outro lugar. */
+        (admin ? '<th class="num">Valor</th>' : "") + "</tr></thead><tbody>" +
         fatiaLote.itens.map((f) =>
           '<tr><td class="sel"><input type="checkbox" data-ficha="' + f.id + '"></td>' +
           "<td>" + dataHora(f.fechada_em) + "</td>" +
@@ -2293,11 +2395,25 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           "<td>" + esc(f.desenho_nome) + "</td><td>" + esc(f.mercadoria_nome || "—") + "</td>" +
           "<td>" + esc(f.cor_nome || "—") + "</td>" +
           '<td class="num">' + num(f.quantidade) + "</td>" +
-          '<td class="num">' + num(f.total_pontos) + "</td></tr>").join("") +
+          '<td class="num">' + num(f.total_pontos) + "</td>" +
+          (admin
+            ? '<td class="num">' + (f.preco_unitario === null || f.preco_unitario === undefined
+                /* "a definir" é BOTÃO, e não texto: a pendência e o conserto
+                   dela ficam no mesmo lugar, que é onde a pessoa está olhando
+                   quando descobre o problema. */
+                ? '<button class="btn btn--fantasma btn--mini" data-acao="valor-ficha" data-id="' + f.id +
+                  '" style="color:var(--laranja);font-weight:700">a definir</button>'
+                : '<button class="btn btn--fantasma btn--mini" data-acao="valor-ficha" data-id="' + f.id +
+                  '" title="' + dinheiro(f.preco_unitario) + ' por peça">' +
+                  dinheiro(f.total_valor) + "</button>") + "</td>"
+            : "") +
+          "</tr>").join("") +
         /* O rodapé é do LOTE INTEIRO — é ele que sustenta a nota. Diz isso no
            rótulo para ninguém ler "Total" como o total da página. */
         '</tbody><tfoot><tr><td colspan="6">Total do lote</td><td class="num">' + num(r.pecas) +
-        '</td><td class="num">' + num(r.pontos) + "</td></tr></tfoot></table></div>" +
+        '</td><td class="num">' + num(r.pontos) + "</td>" +
+        (admin ? '<td class="num">' + dinheiro(r.valor) + "</td>" : "") +
+        "</tr></tfoot></table></div>" +
         barraSomar("baixo") +
         paginacao(fatiaLote, "lote") : "") +
       "</div>" +
@@ -2839,14 +2955,118 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     });
   }
 
+  /* ========================================================================
+     O VALOR DA FICHA, PREENCHIDO NA HORA DE FAZER A NOTA — só administrador
+
+     O operador cadastra o desenho no meio do turno e a ficha nasce SEM PREÇO
+     — nulo, não zero. Isso é de propósito: ele não vê nem manda preço em
+     momento nenhum, e o escritório precifica depois.
+
+     "Depois" é aqui: montando a nota, olhando a composição do lote. É o último
+     instante em que o número ainda pode ser corrigido de graça — emitida a
+     nota, o cliente já levou o papel com o total errado.
+
+     Grava pela rota de CORREÇÃO da ficha, a mesma do administrativo. Uma rota
+     própria "só para o preço" seria um segundo lugar com a regra de quem pode
+     mexer em dinheiro de ficha, e dois lugares é como eles passam a divergir.
+     ======================================================================== */
+  async function modalValorDaFicha(fichaId, aoTerminar) {
+    /* Amarrado num `const` antes de ser chamado, como `depois` na modal do
+       desenho. Não é só estilo: a suíte conhece as funções DECLARADAS e
+       reclama de uma chamada solta a um parâmetro, porque é assim que um nome
+       digitado errado passaria — falhando calado só quando alguém clicasse. */
+    const depois = aoTerminar || function () { };
+    const f = await api("/restrito/api/fichas/" + fichaId);
+    /* O cadastro do desenho vem junto para responder a pergunta que a pessoa
+       faz aqui: "quanto é esse desenho mesmo?". Sem isso ela abre outra tela
+       para conferir e volta — e é na volta que se digita no lugar errado. */
+    const d = await api("/restrito/api/desenhos/" + f.desenho_id);
+    const qtd = Number(f.quantidade || 0);
+    const semPrecoNoCadastro = d.preco === null || d.preco === undefined;
+
+    abrirModal({
+      titulo: "Valor da ficha — " + esc(d.nome),
+      corpo:
+        '<div class="aviso aviso--info" style="margin-bottom:14px">' +
+          "<b>" + num(qtd) + " peça(s)</b> de <b>" + esc(d.nome) + "</b>" +
+          (f.fechada_em ? " · fechada em " + dataHora(f.fechada_em) : "") + ".<br>" +
+          "Preço no cadastro do desenho: <b>" +
+          (semPrecoNoCadastro ? "a definir" : dinheiro(d.preco)) + "</b>." +
+        "</div>" +
+        '<label class="campo"><span>Valor por peça (R$)</span>' +
+          '<input id="vf-preco" data-moeda inputmode="decimal" class="numerao" value="' +
+          esc(dinheiroCampo(f.preco_unitario)) + '" autofocus>' +
+          "<small>Em branco, a ficha volta a ficar <b>a definir</b> e entra por R$ 0,00 na nota.</small>" +
+        "</label>" +
+        '<div id="vf-conta"></div>' +
+        /* Marcar o cadastro TAMBÉM é o gesto certo quando o desenho nunca foi
+           precificado: sem isso a próxima ficha do mesmo desenho nasce sem
+           valor de novo, e o escritório repete este mesmo conserto todo mês.
+           Não vem marcado quando o desenho JÁ tem preço: ali, mudar o cadastro
+           é reajuste, que é outra decisão e não cabe de carona. */
+        '<label class="escolha-linha" style="display:flex;gap:9px;align-items:flex-start;margin-top:6px">' +
+          '<input type="checkbox" id="vf-cadastro"' + (semPrecoNoCadastro ? " checked" : "") + ">" +
+          '<span style="font-size:13.5px;color:#55555f">Gravar também no cadastro do desenho' +
+          "<br><small style=\"color:#8a8a99\">" +
+          (semPrecoNoCadastro
+            ? "Ele ainda não tem preço — assim as próximas fichas já nascem com valor."
+            : "Isso é um reajuste: passa a valer para as fichas NOVAS. As já abertas não mudam.") +
+          "</small></span></label>",
+      confirmar: "Salvar valor",
+      classe: "btn--verde",
+      aoAbrir: function (caixa) {
+        const campo = caixa.querySelector("#vf-preco");
+        const conta = caixa.querySelector("#vf-conta");
+        /* O total aparece enquanto se digita. É ele que vai para a nota, e ver
+           o número grande antes de salvar é o que pega a vírgula no lugar
+           errado — R$ 250,00 por peça em vez de R$ 2,50. */
+        function pintar() {
+          const v = Number(String(campo.value).replace(/\./g, "").replace(",", ".")) || 0;
+          conta.innerHTML = v
+            ? '<div class="conta"><div class="conta__rotulo">Total desta ficha</div>' +
+              '<div class="conta__valor">' + dinheiro(qtd * v) + "</div>" +
+              '<div class="conta__formula">' + num(qtd) + " × " + dinheiro(v) + "</div></div>"
+            : "";
+        }
+        campo.addEventListener("input", pintar);
+        pintar();
+        setTimeout(() => campo.select(), 60);
+      },
+      aoConfirmar: async function (caixa) {
+        const valor = caixa.querySelector("#vf-preco").value;
+        await enviar("/restrito/api/fichas/" + fichaId, "PUT", { preco_unitario: valor });
+        if (caixa.querySelector("#vf-cadastro").checked) {
+          /* Se o cadastro recusar, a ficha JÁ foi corrigida — e é ela que
+             sustenta a nota. Avisa e segue: desfazer a correção boa por causa
+             da secundária deixaria a nota errada para consertar o cadastro. */
+          try {
+            await enviar("/restrito/api/desenhos/" + f.desenho_id, "PUT", { preco: valor });
+            esquecer("desenhos");
+          } catch (e) { recado("Valor gravado na ficha, mas o cadastro do desenho recusou: " + e.message, true); }
+        }
+        recado("Valor da ficha atualizado.");
+        await depois();
+      },
+    });
+  }
+
   /* ---------------------------------------------------------- nova nota */
-  async function modalNovaNota() {
+  /* `pre` = { cliente_id, lote_id, aoTerminar } — vem do botão "Abrir nota" da
+     tela do lote. É a MESMA modal do menu Financeiro, e é de propósito: uma
+     segunda tela de emitir nota seria uma segunda regra de "quais lotes podem
+     entrar" para alguém esquecer de repetir.
+
+     Sem `pre`, tudo funciona exatamente como antes. */
+  async function modalNovaNota(pre) {
+    pre = pre || {};
     const clientes = await lista("clientes");
+    const clientePreso = pre.cliente_id ? String(pre.cliente_id) : "";
     abrirModal({
       titulo: "Nova nota",
       corpo:
-        '<label class="campo"><span>Cliente</span><select id="nn-cliente">' +
-          opcoes(clientes, "", "— escolha —") + "</select></label>" +
+        '<label class="campo"><span>Cliente</span><select id="nn-cliente"' +
+          (clientePreso ? " disabled" : "") + ">" +
+          opcoes(clientes, clientePreso, "— escolha —") + "</select></label>" +
         '<div class="grade-form">' +
           '<label class="campo"><span>Número da nota fiscal (opcional)</span><input id="nn-nf"></label>' +
           '<label class="campo"><span>Vencimento</span><input type="date" id="nn-venc"></label>' +
@@ -2857,7 +3077,13 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
       aoAbrir: function (caixa) {
         const sel = caixa.querySelector("#nn-cliente");
         const area = caixa.querySelector("#nn-lotes");
-        sel.addEventListener("change", async function () {
+
+        /* Extraída do ouvinte de `change` para poder rodar TAMBÉM na abertura,
+           quando o cliente já vem escolhido. Um `dispatchEvent` à mão faria o
+           mesmo por um caminho mais torto — e disparar evento falso numa tela
+           que também reage a evento de verdade é como se acaba com dois
+           carregamentos concorrentes pintando a mesma área. */
+        async function carregarLotes(marcarId) {
           if (!sel.value) { area.innerHTML = ""; return; }
           area.innerHTML = '<p style="color:#77778a">carregando lotes…</p>';
           /* SÓ LOTES SEM NOTA. Um lote já faturado noutra nota apareceria como
@@ -2866,29 +3092,47 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           const r = await api("/restrito/api/lotes?cliente=" + sel.value + "&semNota=1&por=200");
           const livres = r.lotes || [];
           if (!livres.length) {
-            area.innerHTML = '<div class="aviso aviso--erro">Este cliente não tem lote fora de nota. ' +
-              "Crie o lote e junte as fichas antes de emitir a nota.</div>";
+            area.innerHTML = '<div class="aviso aviso--erro">' +
+              (marcarId
+                /* Veio da tela de um lote que NÃO está na lista: ou ele já
+                   está em outra nota, ou ainda não tem ficha dentro. Dizer isso
+                   é melhor que a frase genérica — a pessoa está olhando o lote
+                   neste instante, e a mensagem precisa explicar o que ela vê. */
+                ? "Este lote não pode entrar numa nota agora: ou já está em outra nota, " +
+                  "ou ainda não tem ficha dentro."
+                : "Este cliente não tem lote fora de nota. " +
+                  "Crie o lote e junte as fichas antes de emitir a nota.") + "</div>";
             return;
           }
           area.innerHTML =
             '<div style="font-size:11.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;' +
               'color:#8a8a99;margin:14px 0 8px">Lotes deste cliente ainda sem nota</div>' +
             '<div class="escolha">' + livres.map((l) =>
-              '<label><input type="checkbox" data-lote value="' + l.id + '">' +
+              '<label><input type="checkbox" data-lote value="' + l.id + '"' +
+              (marcarId && String(l.id) === String(marcarId) ? " checked" : "") + ">" +
               "<span><b>" + esc(l.codigo) + "</b> — " + dinheiro(l.valor) +
               (l.descricao ? " · " + esc(l.descricao) : "") +
               "<small>" + num(l.pecas || 0) + " peças · " + esc(l.situacao) + "</small></span></label>").join("") +
             "</div>" +
             '<p style="margin:10px 0 0;font-size:13px;color:#77778a" id="nn-soma">Nada selecionado.</p>';
-          area.addEventListener("change", function () {
+
+          function somar() {
             const marcados = [...area.querySelectorAll("[data-lote]:checked")];
             const total = marcados.reduce((a, c) =>
               a + Number(livres.find((l) => String(l.id) === c.value).valor || 0), 0);
             area.querySelector("#nn-soma").innerHTML = marcados.length
               ? "<b>" + marcados.length + " lote(s)</b> · a nota fica em <b>" + dinheiro(total) + "</b>"
               : "Nada selecionado.";
-          });
-        });
+          }
+          area.addEventListener("change", somar);
+          /* O lote que já veio marcado tem de aparecer na soma sem ninguém
+             clicar: "Nada selecionado" embaixo de uma caixa marcada faz a
+             pessoa desmarcar e marcar de novo só para conferir o total. */
+          if (marcarId) somar();
+        }
+
+        sel.addEventListener("change", function () { carregarLotes(null); });
+        if (clientePreso) carregarLotes(pre.lote_id || null);
       },
       aoConfirmar: async function (caixa) {
         const cliente = caixa.querySelector("#nn-cliente").value;
@@ -2901,6 +3145,10 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           vencimento: caixa.querySelector("#nn-venc").value || null,
         });
         recado("Nota " + r.codigo + " criada.");
+        /* Quem chamou da tela do lote FICA na tela do lote — o pedido era
+           emitir sem sair dali. O caminho do menu Financeiro continua abrindo
+           a nota, que é o gesto seguinte de quem veio de lá. */
+        if (pre.aoTerminar) { await pre.aoTerminar(r); return; }
         NOTA_ABERTA = r.id;
         await pintarNota(r.id);
       },
@@ -3887,6 +4135,10 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     const clientes = await lista("clientes", true);
     const admin = !!(EU && EU.admin);
     const depois = aoTerminar || function () { pintarDesenhos(); };
+    /* A fila de imagens do desenho que ainda não existe. Vive aqui, e não
+       dentro do `aoAbrir`, porque quem a esvazia é o `aoConfirmar` — depois
+       de o cadastro devolver o id. */
+    const fila = [];
 
     abrirModal({
       titulo: id ? esc(d.nome) : "Novo desenho",
@@ -3920,21 +4172,33 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           esc(d.observacao || "") + "</textarea></label>" +
         '<div style="margin-top:6px"><span style="display:block;font-size:12.5px;font-weight:700;' +
           'color:#55555f;text-transform:uppercase;letter-spacing:.05em;margin-bottom:7px">Fotos</span>' +
-        (id
-          ? '<div id="dz-fotos" class="fotos" style="margin-bottom:10px"></div>' +
-            '<div class="solta-foto" id="dz-solta">Clique, arraste, ou cole com Ctrl+V' +
-            "<br><small>jpg, png, webp ou avif — até 9 MB cada</small></div>" +
-            '<input type="file" id="dz-arquivo" accept="image/jpeg,image/png,image/webp,image/avif" multiple hidden>'
-          /* Sem id ainda não há onde pendurar a foto. Cadastrar primeiro e
-             reabrir é mais honesto que guardar a imagem em memória e perdê-la
-             se o cadastro for recusado. */
-          : '<p style="margin:0;color:#77778a;font-size:14px">Cadastre o desenho primeiro — ' +
-            "a tela reabre em seguida para você anexar ou colar as imagens.</p>") +
+        /* A ÁREA DE FOTOS EXISTE NOS DOIS ESTADOS, e a diferença é só onde a
+           imagem espera.
+
+           Antes, cadastrar era pré-requisito para anexar: a arte chega junto
+           com o serviço — quase sempre colada de uma conversa —, e obrigar a
+           gravar primeiro partia em dois o gesto que na cabeça de quem usa é
+           um só. Pior no chão de fábrica: o operador cadastrava, a tela
+           reabria, e ele achava que já tinha terminado.
+
+           No desenho NOVO as imagens ficam numa FILA em memória e sobem logo
+           depois do cadastro, quando já existe id para pendurá-las. O risco
+           que o comentário antigo apontava — perder a imagem se o cadastro for
+           recusado — não se realiza: a modal não fecha quando o servidor
+           recusa, e a fila continua na tela com as miniaturas. */
+        '<div id="dz-fotos" class="fotos" style="margin-bottom:10px"></div>' +
+        '<div class="solta-foto" id="dz-solta">Clique, arraste, ou cole com Ctrl+V' +
+        "<br><small>jpg, png, webp ou avif — até 9 MB cada</small></div>" +
+        '<input type="file" id="dz-arquivo" accept="image/jpeg,image/png,image/webp,image/avif" multiple hidden>' +
+        (id ? "" :
+          '<p style="margin:8px 0 0;color:#77778a;font-size:13.5px">' +
+          "As imagens sobem junto quando você clicar em <b>Cadastrar</b>.</p>") +
         "</div>",
       confirmar: id ? "Salvar" : "Cadastrar",
       classe: "btn--laranja",
       aoAbrir: function (caixa) {
         if (id) montarFotos(caixa, id, d.fotos || []);
+        else montarFotosPendentes(caixa, fila);
         setTimeout(() => caixa.querySelector("#dz-nome").focus(), 60);
       },
       aoConfirmar: async function (caixa) {
@@ -3959,13 +4223,137 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           esquecer("desenhos"); recado("Salvo."); depois(id);
         } else {
           const r = await enviar("/restrito/api/desenhos", "POST", dados);
+
+          /* AS IMAGENS SOBEM AGORA, uma a uma, já com o id na mão.
+
+             Uma que falhe não derruba as outras nem desfaz o cadastro: o
+             desenho existe, e a imagem que ficou de fora é dita por nome. O
+             contrário — abortar tudo por causa de um arquivo corrompido —
+             faria a pessoa perder o cadastro inteiro por causa de um anexo. */
+          let subiram = 0;
+          const falharam = [];
+          for (const f of fila) {
+            try {
+              await enviar("/restrito/api/desenhos/" + r.id + "/fotos", "POST",
+                { nome: f.nome, dados: f.dados });
+              subiram++;
+            } catch (e) { falharam.push(f.rotulo + " (" + e.message + ")"); }
+          }
+
           esquecer("desenhos"); depois(r.id);
-          recado(r.semPreco
-            ? "Desenho cadastrado. O escritório define o preço."
-            : "Desenho cadastrado — agora as imagens.");
+          recado(falharam.length
+            ? "Desenho cadastrado, mas " + falharam.length + " imagem(ns) não subiram: " + falharam.join("; ")
+            : r.semPreco
+              ? "Desenho cadastrado" + (subiram ? " com " + subiram + " imagem(ns)" : "") +
+                ". O escritório define o preço."
+              : subiram
+                ? "Desenho cadastrado com " + subiram + " imagem(ns)."
+                : "Desenho cadastrado — agora as imagens.",
+            falharam.length > 0);
           setTimeout(() => modalDesenho(r.id, clientePreso, depois, aoFechar), 250);
         }
       },
+    });
+  }
+
+  /* ========================================================================
+     A GALERIA DO DESENHO QUE AINDA NÃO EXISTE
+
+     Mesma área de soltar, mesmo Ctrl+V, mesma miniatura — só que sem servidor
+     do outro lado. As imagens ficam numa fila em memória e sobem no
+     `aoConfirmar`, quando o cadastro devolve o id.
+
+     Guardar o `dataURL` e não o `File`: é exatamente o que a rota espera
+     receber, então a leitura acontece uma vez só, aqui, enquanto a pessoa
+     ainda está escolhendo. No envio não sobra nenhum passo que possa falhar
+     por arquivo que o navegador já não consegue reler — o que acontece quando
+     alguém move ou renomeia a imagem entre escolher e cadastrar.
+     ======================================================================== */
+  function montarFotosPendentes(caixa, fila) {
+    const grade = caixa.querySelector("#dz-fotos");
+    const solta = caixa.querySelector("#dz-solta");
+    const arquivo = caixa.querySelector("#dz-arquivo");
+    const CONVITE = "Clique, arraste, ou cole com Ctrl+V" +
+      "<br><small>jpg, png, webp ou avif — até 9 MB cada</small>";
+
+    function desenhar() {
+      grade.innerHTML = fila.length ? fila.map((f, i) =>
+        '<div class="foto" data-fila="' + i + '">' +
+          '<img src="' + f.dados + '" alt="">' +
+          '<div class="foto__pe">' +
+            /* Sem campo de legenda aqui de propósito: a legenda é gravada por
+               foto JÁ EXISTENTE, e um campo que só valesse depois do cadastro
+               prometeria uma coisa que o botão Cancelar levaria embora. */
+            '<span style="font-size:12px;color:#77778a;overflow:hidden;text-overflow:ellipsis">' +
+              esc(f.rotulo) + "</span>" +
+            '<button type="button" class="foto__x" title="tirar da lista">&times;</button>' +
+          "</div></div>").join("")
+        : '<p style="margin:0;color:#8a8a99;font-size:14px">Nenhuma foto ainda.</p>';
+    }
+    desenhar();
+
+    async function guardar(arquivos) {
+      for (const a of arquivos) {
+        const comoChamar = a.name || "imagem colada";
+        if (a.size > 9e6) { recado(comoChamar + " passa de 9 MB.", true); continue; }
+        solta.textContent = "lendo " + comoChamar + "…";
+        try {
+          const dados = await new Promise((ok, falha) => {
+            const l = new FileReader();
+            l.onload = () => ok(l.result);
+            l.onerror = () => falha(new Error("não deu para ler " + comoChamar));
+            l.readAsDataURL(a);
+          });
+          /* `nome` vai vazio quando a imagem foi colada — é o que faz o
+             servidor batizá-la pela assinatura, como na galeria de verdade. */
+          fila.push({ nome: a.name || "", rotulo: comoChamar, dados });
+        } catch (e) { recado(e.message, true); }
+      }
+      solta.innerHTML = CONVITE;
+      desenhar();
+    }
+
+    /* Mesma trava da galeria de verdade: o ouvinte é do DOCUMENTO (uma `div`
+       não recebe foco, então colar nela nunca chegaria) e se remove sozinho
+       quando este bloco sai da tela — senão a modal seguinte receberia as
+       imagens numa fila que já não é mostrada em lugar nenhum. */
+    function aoColar(ev) {
+      if (!grade.isConnected) { document.removeEventListener("paste", aoColar); return; }
+      const itens = (ev.clipboardData && ev.clipboardData.items) || [];
+      const imagens = [];
+      for (const it of itens) {
+        if (it.kind !== "file" || !/^image\//.test(it.type)) continue;
+        const f = it.getAsFile();
+        if (f) imagens.push(f);
+      }
+      if (!imagens.length) return;
+      ev.preventDefault();
+      guardar(imagens);
+    }
+    document.addEventListener("paste", aoColar);
+
+    solta.addEventListener("click", () => arquivo.click());
+    arquivo.addEventListener("change", () => {
+      guardar(Array.from(arquivo.files || []));
+      arquivo.value = "";
+    });
+    ["dragenter", "dragover"].forEach((n) => solta.addEventListener(n, (ev) => {
+      ev.preventDefault(); solta.classList.add("sobre");
+    }));
+    ["dragleave", "drop"].forEach((n) => solta.addEventListener(n, (ev) => {
+      ev.preventDefault(); solta.classList.remove("sobre");
+    }));
+    solta.addEventListener("drop", (ev) => {
+      guardar(Array.from((ev.dataTransfer && ev.dataTransfer.files) || []));
+    });
+
+    grade.addEventListener("click", function (ev) {
+      const x = ev.target.closest(".foto__x");
+      if (!x) return;
+      /* Sem confirmação: nada foi gravado ainda, e perguntar "tem certeza?"
+         para desfazer um clique que ainda não saiu do navegador é atrito. */
+      fila.splice(Number(x.closest("[data-fila]").getAttribute("data-fila")), 1);
+      desenhar();
     });
   }
 
@@ -4839,6 +5227,50 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         const r = await api("/restrito/api/lotes/" + id);
         await modalNovoLote(r.lote);
       }
+      /* ---- os três atalhos da tela do lote ---- */
+      else if (acao === "ficha-no-lote") {
+        /* O cliente vem do LOTE, e por isso o campo fica travado na modal: a
+           ficha de outro cliente jamais entraria neste lote, e oferecer a
+           escolha seria oferecer um caminho que termina em recusa.
+
+           Depois de abrir, a tela volta para o lote — e não para a do
+           operador, que é o destino de sempre. O aviso diz o passo seguinte:
+           a ficha só entra no lote depois de FECHADA, pela amálgama. */
+        const det = await api("/restrito/api/lotes/" + id);
+        if (det.lote.situacao === "faturado") {
+          alert("Este lote já foi faturado — ele não aceita mais ficha.\n\n" +
+                "O que está na nota tem de continuar sendo o que estava no sistema.");
+          return;
+        }
+        await modalAbrirFicha({
+          cliente_id: det.lote.cliente_id,
+          cliente_fixo: true,
+          aoTerminar: async function () {
+            await pintarLote(id);
+            recado("Ficha aberta para " + det.lote.cliente_nome +
+                   ". Feche-a e use “Juntar fichas” para trazer ao lote.");
+          },
+        });
+      }
+      else if (acao === "nota-do-lote") {
+        const det = await api("/restrito/api/lotes/" + id);
+        await modalNovaNota({
+          cliente_id: det.lote.cliente_id,
+          lote_id: Number(id),
+          /* Fica na tela do lote, repintada: ela passa a mostrar a nota no
+             cabeçalho, e é essa a confirmação de que deu certo. */
+          aoTerminar: async function (r) {
+            await pintarLote(id);
+            recado("Nota " + r.codigo + " criada com este lote.");
+          },
+        });
+      }
+      else if (acao === "valor-ficha") {
+        await modalValorDaFicha(Number(id), function () {
+          return LOTE_ABERTO ? pintarLote(LOTE_ABERTO) : null;
+        });
+      }
+
       else if (acao === "salvar-fechamento") {
         await enviar("/restrito/api/lotes/" + id, "PUT", {
           nota: document.getElementById("lt-nota").value,

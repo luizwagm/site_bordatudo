@@ -2231,6 +2231,40 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     const desenho = await Q.get("SELECT id, pontuacao, preco, cliente_id FROM desenhos WHERE id = ? AND ativo", desenhoId);
     if (!desenho) return responder(res, 400, { error: "desenho não encontrado" });
 
+    /* ------------------------------------------------------------------
+       A DATA DO BORDADO — só o administrador, e só para trás
+
+       A ficha nasce com a hora do relógio, e é assim que ela mede a produção
+       de quem está na máquina agora. Mas o escritório também lança bordado
+       que JÁ FOI FEITO: a nota antiga que ninguém registrou, o serviço avulso
+       que veio por fora. Sem escolher a data, essa peça entra no relatório de
+       HOJE — e o mês fechado passa a divergir do que foi produzido nele.
+
+       SÓ PARA TRÁS, e a razão é de contabilidade: ficha no futuro apareceria
+       num relatório antes de a peça existir, e não há caso legítimo para isso
+       — só engano de digitação (2027 no lugar de 2026).
+
+       O OPERADOR NÃO MANDA ESTE CAMPO. Se pudesse, a data da produção dele
+       passaria a ser escolha dele, e a hora por peça — que é o indicador do
+       chão de fábrica — mediria o que a pessoa digitou, não o que trabalhou.
+       ------------------------------------------------------------------ */
+    let abertaEm = null;
+    let retroativa = false;
+    if (corpo.aberta_em !== undefined && corpo.aberta_em !== null && String(corpo.aberta_em).trim() !== "") {
+      if (!ehAdmin(sessao))
+        return responder(res, 403, { error: "só o administrador escolhe a data do bordado" });
+      const d = new Date(String(corpo.aberta_em));
+      if (Number.isNaN(d.getTime()))
+        return responder(res, 400, { error: "a data do bordado não é válida" });
+      /* Uma folga de um dia porque a tela manda a hora local e o servidor
+         compara em UTC: sem ela, lançar às 22h de hoje em Caruaru seria
+         recusado como "futuro" por causa das três horas de diferença. */
+      if (d.getTime() > Date.now() + 864e5)
+        return responder(res, 400, { error: "a data do bordado não pode ser no futuro" });
+      abertaEm = d.toISOString();
+      retroativa = d.toISOString().slice(0, 10) < new Date().toISOString().slice(0, 10);
+    }
+
     /* A PONTUAÇÃO É COPIADA DO DESENHO, e nunca vem do corpo da requisição.
        Se viesse, a tela poderia mandar qualquer número — e o valor da nota
        passaria a depender do que estava aberto no navegador. */
@@ -2262,16 +2296,31 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     /* Sem jornada aberta, abre uma. O operador que esquece de bater o início e
        vai direto trabalhar não pode ficar sem registro de hora — e a jornada
        começa quando ele de fato começou, que é agora. */
-    let jornada = await Q.get("SELECT id FROM jornadas WHERE usuario_id = ? AND fim IS NULL", sessao.usuarioId);
-    if (!jornada) {
-      const jid = await Q.inserir("INSERT INTO jornadas (usuario_id) VALUES (?) RETURNING id", sessao.usuarioId);
-      jornada = { id: jid };
+    /* FICHA RETROATIVA NÃO ABRE JORNADA e não entra em nenhuma.
+
+       Jornada é hora de trabalho medida por relógio. Pendurar o lançamento de
+       um bordado de três semanas atrás na jornada de hoje somaria ao dia do
+       administrador um trabalho que não aconteceu agora — e o saldo de horas
+       dele, que é o que se olha para pagar, passaria a contar digitação. */
+    let jornada = null;
+    if (!retroativa) {
+      jornada = await Q.get("SELECT id FROM jornadas WHERE usuario_id = ? AND fim IS NULL", sessao.usuarioId);
+      if (!jornada) {
+        const jid = await Q.inserir("INSERT INTO jornadas (usuario_id) VALUES (?) RETURNING id", sessao.usuarioId);
+        jornada = { id: jid };
+      }
     }
 
+    /* `COALESCE(?, now())` em vez de dois INSERT: sem a data escolhida o valor
+       continua saindo do relógio do BANCO, que é o mesmo de sempre. Mandar
+       `new Date()` do Node aqui trocaria calado a fonte da hora de todas as
+       fichas do sistema. */
     const id = await Q.inserir(
-      `INSERT INTO fichas (usuario_id, jornada_id, maquina_id, cliente_id, desenho_id, pontuacao, preco_unitario)
-       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-      sessao.usuarioId, jornada.id, maquinaId, clienteId, desenhoId, pontuacao, precoUnitario);
+      `INSERT INTO fichas (usuario_id, jornada_id, maquina_id, cliente_id, desenho_id,
+                           pontuacao, preco_unitario, aberta_em)
+       VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?::timestamptz, now())) RETURNING id`,
+      sessao.usuarioId, jornada ? jornada.id : null, maquinaId, clienteId, desenhoId,
+      pontuacao, precoUnitario, abertaEm);
     /* A produção do dia mudou — a tela do escritório se atualiza sozinha. */
     avisar("fichas");
     return responder(res, 201, { ok: true, id, pontuacao });
@@ -2446,9 +2495,24 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       const problemaRef = await conferirReferencias(refs);
       if (problemaRef) return responder(res, 409, { error: problemaRef, recarregar: true });
 
+      /* ------------------------------------------------------------------
+         A FICHA RETROATIVA FECHA NO DIA DELA, e não hoje.
+
+         Toda a contagem de produção — o relatório, a quebra por período, a
+         composição do lote — sai de `fechada_em` (ver `GET /api/producao`).
+         Fechar com `now()` uma ficha que o administrador abriu com a data do
+         mês passado jogaria a peça para o relatório de HOJE: exatamente o que
+         escolher a data existe para evitar, e de um jeito silencioso, porque
+         a ficha em si ficaria com a data certa no início.
+
+         Só vale para quem começou em DIA ANTERIOR. A ficha normal, aberta e
+         fechada no mesmo dia, continua fechando na hora do relógio — e é dela
+         que sai o tempo por peça do chão de fábrica.
+         ------------------------------------------------------------------ */
       await Q.run(
         `UPDATE fichas SET quantidade = ?, mercadoria_id = ?, cor_id = ?, observacao = ?,
-                situacao = 'fechada', fechada_em = now()
+                situacao = 'fechada',
+                fechada_em = CASE WHEN aberta_em::date < now()::date THEN aberta_em ELSE now() END
           WHERE id = ?`,
         qtd,
         refs.mercadoria_id,

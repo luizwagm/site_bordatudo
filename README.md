@@ -83,7 +83,22 @@ aberta.
   feitas por várias pessoas em vários dias. A tela mostra a quebra por cor, por
   mercadoria e por operador, e quanto falta.
 - **Nota** — marcar como faturado exige o número da nota. Depois disso o lote
-  não aceita mais mexer nas fichas.
+  não aceita mais mexer nas fichas. Da própria tela do lote, **Abrir nota**
+  emite a nota do financeiro com o cliente e o lote já escolhidos, sem sair
+  dali — é a mesma rota do menu Financeiro, só que sem ter de reencontrar o
+  lote numa lista onde eles se distinguem apenas pelo código.
+- **Serviço que já foi feito** — nota antiga, ou avulsa. Em **Abrir ficha**, e
+  só para o administrador, há *Lançar bordado de outra data*: a ficha nasce com
+  a data escolhida, **fecha no dia dela** (e não no de hoje, que é de onde sai
+  todo o relatório) e **não entra em jornada nenhuma** — não é hora trabalhada
+  agora. A data só anda para trás. O mesmo botão existe dentro do lote, já com
+  o cliente travado no dele.
+- **Valor que falta** — o desenho que o operador cadastra nasce **sem preço**, e
+  a ficha herda o nulo. Isso vale **zero** na soma da nota, e zero soma sem
+  reclamar. A composição do lote tem uma coluna **Valor**, um aviso em laranja
+  contando quantas fichas estão *a definir*, e o botão que preenche na hora —
+  com a opção de gravar o preço também no cadastro do desenho, para a próxima
+  ficha já nascer com valor. **Só o administrador** vê e preenche isso.
 - **Recibo** — cada lote imprime um recibo com marca d'água, cabeçalho da
   empresa, dados do cliente, a produção ficha por ficha, a composição por cor,
   mercadoria e operador, e **duas linhas de assinatura**. Abre em aba própria,
@@ -98,7 +113,7 @@ Um item do menu que abre quatro telas:
 | Tela | O que tem |
 |---|---|
 | **Clientes** | lista paginada com busca por nome, documento, telefone, e-mail ou cidade; cadastro com CNPJ/CPF (o que vai para a nota) e o resumo de quanto o cliente já rendeu |
-| **Desenhos** | lista paginada com busca e **miniatura**; cadastro com cliente, pontuação e **uma ou mais fotos** |
+| **Desenhos** | lista paginada com busca e **miniatura**; cadastro com cliente, pontuação e **uma ou mais fotos — anexadas já na criação**, sem ter de gravar e reabrir |
 | **Mercadorias, cores e máquinas** | três abas — listas de palavras que nascem uma vez e quase não mudam. A cor tem um campo de **tom**, que vira a bolinha da lista: "Bege" escrito não distingue dois beges na mesma remessa |
 | **Usuários** | criar, editar e redefinir senha, tudo pela tela |
 
@@ -107,6 +122,13 @@ telefone e digitar no teclado do celular preso à máquina — e ela serve para
 abrir a porta **uma vez**: no primeiro acesso a pessoa é obrigada a trocar, e o
 servidor recusa qualquer outra rota até lá. A senha passou pelas mãos de quem
 cadastrou; ela não pode valer como senha de verdade nem por um turno.
+
+**A imagem entra junto com o cadastro.** No desenho novo ela fica numa fila em
+memória, com miniatura na tela, e sobe assim que o cadastro devolve o id — é
+como a arte chega de verdade: colada de uma conversa, junto com o serviço. Se o
+cadastro for recusado a modal não fecha e a fila continua ali; se uma imagem
+falhar, o desenho não se perde por causa dela, e a que ficou de fora é dita
+pelo nome.
 
 **As fotos do desenho** ficam em `data/desenhos/`, **fora** de `assets/`, e só
 saem por uma rota que exige sessão. O desenho é propriedade do cliente: em

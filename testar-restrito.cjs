@@ -28,7 +28,11 @@ const ARQ_LIMITES = path.join(__dirname, "data", "limites-teste.json");
 
 /* Registro do que esta suíte criou. É a lista de tudo que ela pode apagar. */
 const CRIADO = { usuarios: [], clientes: [], desenhos: [], mercadorias: [], cores: [], maquinas: [],
-                 lotes: [], fichas: [], jornadas: [], desenho_fotos: [], arquivos: [] };
+                 lotes: [], fichas: [], jornadas: [], desenho_fotos: [], arquivos: [],
+                 /* `notas` entra aqui porque `notas.cliente_id` é RESTRICT: uma
+                    nota deixada para trás impede apagar o cliente de teste, e a
+                    suíte termina com "violates RESTRICT" longe da causa. */
+                 notas: [] };
 
 let passou = 0, falhou = 0;
 const falhas = [];
@@ -178,7 +182,10 @@ function ouvirEventos(cookie, gatilho, ms) {
    Faxina — só por id, só o que está em CRIADO.
    ========================================================================== */
 async function limpar() {
-  const ordem = ["desenho_fotos", "fichas", "lotes", "jornadas", "desenhos", "clientes",
+  /* `notas` sai ANTES de `lotes` e de `clientes`. A ligação nota↔lote é
+     CASCADE (some sozinha), mas `notas.cliente_id` é RESTRICT — e apagar na
+     ordem errada trava no cliente, que é o último passo de todos. */
+  const ordem = ["desenho_fotos", "fichas", "notas", "lotes", "jornadas", "desenhos", "clientes",
                  "mercadorias", "cores", "maquinas", "usuarios"];
   for (const tabela of ordem) {
     const ids = CRIADO[tabela].filter(Boolean);
@@ -231,6 +238,14 @@ async function limparRestos() {
   const clientes = await Q.all("SELECT id FROM clientes WHERE nome LIKE ?", P);
   if (clientes.length) {
     const cids = clientes.map((c) => c.id);
+    /* A nota do cliente de teste sai primeiro: ela segura o cliente por
+       RESTRICT, e os lançamentos dela seguram a nota pelo mesmo motivo. */
+    const notas = await Q.all("SELECT id FROM notas WHERE cliente_id = ANY(?)", cids);
+    if (notas.length) {
+      const nids = notas.map((n) => n.id);
+      await Q.run("DELETE FROM lancamentos WHERE nota_id = ANY(?)", nids);
+      await Q.run("DELETE FROM notas WHERE id = ANY(?)", nids);
+    }
     await Q.run("DELETE FROM lotes WHERE cliente_id = ANY(?)", cids);
     await Q.run("DELETE FROM desenhos WHERE cliente_id = ANY(?)", cids);
     await Q.run("DELETE FROM clientes WHERE id = ANY(?)", cids);
@@ -1492,6 +1507,161 @@ async function limparRestos() {
   ok(!(r.dados.abertas || []).some((f) => String(f.id) === String(idAberta)),
      "fechada, ela sai de `abertas`");
   eq(Number(r.dados.soma.pecas), pecasAntes + 3, "e as 3 peças entram no total");
+
+  /* ====== 12k-sexies. a nota antiga: data do bordado, valor e atalhos ==== */
+  console.log("  12k-sexies. data do bordado, valor da ficha e a nota do lote");
+
+  /* O PEDIDO ATRÁS DESTA SEÇÃO
+
+     O escritório precisa lançar serviço que JÁ FOI FEITO — nota antiga, ou
+     avulsa — e emitir a nota sem sair da tela do lote. As garantias abaixo são
+     o contrato disso, e cada uma existe porque a alternativa produz um número
+     errado que não se apresenta como errado. */
+
+  /* --- 1. a data do bordado é do ADMINISTRADOR ------------------------- */
+  /* Se o operador pudesse mandar a data, a produção dele passaria a ser
+     escolha dele: a hora por peça mediria o que a pessoa digitou. */
+  const tokenSexies = (await Q.get("SELECT token FROM maquinas WHERE id = ?", maq)).token;
+  r = await oper("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, maquina_token: tokenSexies, aberta_em: "2026-01-05T09:00" });
+  eq(r.status, 403, "o operador NÃO escolhe a data do bordado");
+
+  /* Vazio não é escolha. O campo nem é escrito na tela dele, mas um cliente
+     que mande `aberta_em: ""` não pode ser barrado por isso — seria recusar
+     quem não pediu nada. */
+  r = await oper("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, maquina_token: tokenSexies, aberta_em: "" });
+  eq(r.status, 201, "mas string vazia passa — vazio não é escolha de data");
+  const fichaVazia = r.dados.id;
+  CRIADO.fichas.push(fichaVazia);
+  eq((await oper("/restrito/api/fichas/" + fichaVazia + "/cancelar", "PUT")).status, 200,
+     "e essa ficha sai do caminho");
+
+  /* --- 2. data no futuro é recusada ------------------------------------ */
+  r = await admin("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, aberta_em: "2099-03-01T10:00" });
+  eq(r.status, 400, "data no futuro é recusada");
+  r = await admin("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, aberta_em: "isto não é data" });
+  eq(r.status, 400, "e texto que não é data também");
+
+  /* --- 3. a ficha retroativa CONTA NO DIA DELA ------------------------- */
+  /* É a garantia que sustenta a nota antiga. Todo o relatório sai de
+     `fechada_em`; fechar com `now()` jogaria a peça para o dia de hoje —
+     exatamente o que escolher a data existe para evitar, e em silêncio,
+     porque o início da ficha ficaria com a data certa. */
+  const DIA_ANTIGO = "2026-01-05";
+  r = await admin("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, aberta_em: DIA_ANTIGO + "T09:00" });
+  eq(r.status, 201, "o administrador abre ficha com a data do bordado", JSON.stringify(r.dados));
+  const fichaAntiga = r.dados.id;
+  CRIADO.fichas.push(fichaAntiga);
+
+  let fa = await Q.get("SELECT aberta_em, jornada_id FROM fichas WHERE id = ?", fichaAntiga);
+  eq(String(fa.aberta_em.toISOString ? fa.aberta_em.toISOString() : fa.aberta_em).slice(0, 10),
+     DIA_ANTIGO, "a ficha nasce com a data escolhida");
+  /* Jornada é hora medida por relógio. Pendurar um bordado de meses atrás na
+     jornada de hoje somaria ao dia do administrador um trabalho que não
+     aconteceu agora — e o saldo de horas dele é o que se olha para pagar. */
+  eq(fa.jornada_id, null, "e NÃO entra em jornada nenhuma — não é hora trabalhada hoje");
+
+  eq((await admin("/restrito/api/fichas/" + fichaAntiga + "/fechar", "PUT",
+     { quantidade: 7, mercadoria_id: merc, cor_id: corBranca })).status, 200,
+     "e fecha normalmente");
+  fa = await Q.get("SELECT fechada_em::date::text AS dia FROM fichas WHERE id = ?", fichaAntiga);
+  eq(fa.dia, DIA_ANTIGO,
+     "FECHA NO DIA DELA — e não hoje, que é de onde sai todo o relatório");
+
+  r = await admin("/restrito/api/producao?de=" + DIA_ANTIGO + "&ate=" + DIA_ANTIGO);
+  ok(r.dados.fichas.some((f) => String(f.id) === String(fichaAntiga)),
+     "e aparece no relatório DAQUELE dia");
+
+  /* A ficha do dia de hoje continua fechando na hora do relógio — é dela que
+     sai o tempo por peça do chão de fábrica, e essa conta não pode mudar. */
+  r = await oper("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, maquina_token: tokenSexies });
+  const fichaHoje = r.dados.id;
+  CRIADO.fichas.push(fichaHoje);
+  await oper("/restrito/api/fichas/" + fichaHoje + "/fechar", "PUT",
+    { quantidade: 2, mercadoria_id: merc, cor_id: corBranca });
+  const fh = await Q.get(
+    "SELECT (fechada_em::date = now()::date) AS hoje FROM fichas WHERE id = ?", fichaHoje);
+  ok(fh.hoje === true || fh.hoje === "t", "a ficha normal continua fechando HOJE");
+
+  /* --- 4. o valor que o administrador preenche na hora da nota --------- */
+  /* O desenho que o operador cadastra nasce SEM preço, e a ficha herda o
+     nulo. `total_valor` dessa ficha é zero, e zero soma sem reclamar: a nota
+     sai menor que o serviço e nada denuncia. */
+  r = await oper("/restrito/api/desenhos", "POST",
+    { nome: "ZZ QA Sem Preco Nota", cliente_id: cliA, pontuacao: 800 });
+  eq(r.status, 201, "o operador cadastra desenho novo (sem preço)");
+  const desSemPreco = r.dados.id;
+  CRIADO.desenhos.push(desSemPreco);
+
+  r = await oper("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desSemPreco, maquina_token: tokenSexies });
+  const fichaSemValor = r.dados.id;
+  CRIADO.fichas.push(fichaSemValor);
+  await oper("/restrito/api/fichas/" + fichaSemValor + "/fechar", "PUT",
+    { quantidade: 10, mercadoria_id: merc, cor_id: corBranca });
+
+  let fsv = await Q.get("SELECT preco_unitario, total_valor FROM fichas WHERE id = ?", fichaSemValor);
+  eq(fsv.preco_unitario, null, "a ficha nasce SEM valor — nulo, e não zero");
+  eq(Number(fsv.total_valor), 0, "e por isso vale zero na soma da nota");
+
+  /* O OPERADOR NÃO PÕE VALOR. Nem na ficha dele. */
+  r = await oper("/restrito/api/fichas/" + fichaSemValor, "PUT", { preco_unitario: "3,50" });
+  eq(r.status, 403, "o operador NÃO coloca valor, nem na própria ficha");
+
+  /* O administrador põe — e o total gerado pelo banco acompanha. */
+  eq((await admin("/restrito/api/fichas/" + fichaSemValor, "PUT",
+     { preco_unitario: "3,50" })).status, 200,
+     "o administrador coloca o valor da ficha");
+  fsv = await Q.get("SELECT preco_unitario, total_valor FROM fichas WHERE id = ?", fichaSemValor);
+  eq(Number(fsv.preco_unitario), 3.5, "o valor por peça fica gravado");
+  eq(Number(fsv.total_valor), 35, "e o total é recalculado pelo banco: 10 x 3,50");
+
+  /* Apagar de volta devolve o "a definir" — e não grava zero, que é outra
+     coisa (bordado de cortesia, amostra, retrabalho que não se cobra). */
+  eq((await admin("/restrito/api/fichas/" + fichaSemValor, "PUT",
+     { preco_unitario: "" })).status, 200, "e pode voltar para a definir");
+  fsv = await Q.get("SELECT preco_unitario FROM fichas WHERE id = ?", fichaSemValor);
+  eq(fsv.preco_unitario, null, "que é NULO, e não zero");
+  await admin("/restrito/api/fichas/" + fichaSemValor, "PUT", { preco_unitario: "3,50" });
+
+  /* --- 5. o lote vê o valor de cada ficha e o total ------------------- */
+  r = await admin("/restrito/api/lotes", "POST",
+    { cliente_id: cliA, descricao: "ZZ QA Lote da nota antiga" });
+  const loteNota = r.dados.id;
+  CRIADO.lotes.push(loteNota);
+  eq((await admin("/restrito/api/lotes/" + loteNota + "/fichas", "PUT",
+     { fichas: [fichaAntiga, fichaSemValor] })).status, 200, "as duas fichas entram no lote");
+
+  r = await admin("/restrito/api/lotes/" + loteNota);
+  eq(r.dados.fichas.length, 2, "a composição traz as duas");
+  ok(r.dados.fichas.every((f) => "preco_unitario" in f),
+     "cada linha traz o preço unitário — é o que a coluna Valor mostra");
+  ok(r.dados.fichas.some((f) => Number(f.total_valor) === 35),
+     "com o total da ficha que acabou de ser precificada");
+
+  /* --- 6. a nota emitida a partir do lote ----------------------------- */
+  /* É a MESMA rota do menu Financeiro. O botão novo só chega nela com o
+     cliente e o lote já escolhidos — uma segunda rota seria uma segunda regra
+     de "quais lotes podem entrar" para alguém esquecer de repetir. */
+  r = await admin("/restrito/api/lotes?cliente=" + cliA + "&semNota=1&por=200");
+  ok((r.dados.lotes || []).some((l) => String(l.id) === String(loteNota)),
+     "o lote aparece entre os que ainda podem entrar numa nota");
+
+  r = await admin("/restrito/api/notas", "POST", { cliente_id: cliA, lotes: [loteNota] });
+  eq(r.status, 201, "a nota nasce com o lote dentro", JSON.stringify(r.dados));
+  const notaDoLote = r.dados.id;
+  CRIADO.notas.push(notaDoLote);
+
+  /* O lote sai da lista de disponíveis — é o que impede o mesmo serviço de
+     ser cobrado duas vezes, e o que a tela usa para dizer por que ele sumiu. */
+  r = await admin("/restrito/api/lotes?cliente=" + cliA + "&semNota=1&por=200");
+  ok(!(r.dados.lotes || []).some((l) => String(l.id) === String(loteNota)),
+     "e o lote sai da lista de disponíveis para nota");
 
   /* ============ 12k-bis. a lista velha do navegador ===================== */
   /* ISTO ACONTECEU EM PRODUÇÃO, seis vezes nos dias 07 e 08/08/2026:
