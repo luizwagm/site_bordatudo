@@ -1663,6 +1663,86 @@ async function limparRestos() {
   ok(!(r.dados.lotes || []).some((l) => String(l.id) === String(loteNota)),
      "e o lote sai da lista de disponíveis para nota");
 
+  /* ====== 12k-septies. remover ficha da composição do lote =============== */
+  console.log("  12k-septies. remover ficha — as três cercas e a devolução da soma");
+
+  /* REMOVER apaga de verdade — some da produção do operador, que é por onde
+     se paga. Por isso a rota tem três cercas, e cada uma vira verificação. */
+
+  const tokenSepties = (await Q.get("SELECT token FROM maquinas WHERE id = ?", maq)).token;
+  async function fichaFechada(qtd) {
+    const a = await oper("/restrito/api/fichas", "POST",
+      { cliente_id: cliA, desenho_id: desA1, maquina_token: tokenSepties });
+    await oper("/restrito/api/fichas/" + a.dados.id + "/fechar", "PUT",
+      { quantidade: qtd, mercadoria_id: merc, cor_id: corBranca });
+    CRIADO.fichas.push(a.dados.id);
+    return a.dados.id;
+  }
+
+  /* --- 1. o operador não remove ---------------------------------------- */
+  const fAlvo = await fichaFechada(4);
+  r = await oper("/restrito/api/fichas/" + fAlvo, "DELETE");
+  eq(r.status, 403, "o operador NÃO remove ficha — nem a própria");
+
+  /* --- 2. lote faturado não perde ficha -------------------------------- */
+  r = await admin("/restrito/api/lotes", "POST",
+    { cliente_id: cliA, descricao: "ZZ QA Lote remover" });
+  const loteRem = r.dados.id;
+  CRIADO.lotes.push(loteRem);
+  await admin("/restrito/api/lotes/" + loteRem + "/fichas", "PUT", { fichas: [fAlvo] });
+  await admin("/restrito/api/lotes/" + loteRem, "PUT", { situacao: "faturado", nota: "ZZQA-1" });
+
+  r = await admin("/restrito/api/fichas/" + fAlvo, "DELETE");
+  eq(r.status, 409, "ficha de lote FATURADO não sai — o que está na nota não muda");
+
+  /* Desfaturado, sai. E a composição do lote fica menor NA MESMA hora. */
+  await admin("/restrito/api/lotes/" + loteRem, "PUT", { situacao: "aberto" });
+  r = await admin("/restrito/api/fichas/" + fAlvo, "DELETE");
+  eq(r.status, 200, "com o lote aberto, o administrador remove", JSON.stringify(r.dados));
+  const sumiu = await Q.get("SELECT id FROM fichas WHERE id = ?", fAlvo);
+  eq(sumiu, undefined, "a ficha saiu do banco DE VERDADE — não é cancelamento");
+  r = await admin("/restrito/api/lotes/" + loteRem);
+  eq(r.dados.fichas.length, 0, "e a composição do lote não a mostra mais");
+
+  /* --- 2b. a guarda do SOMAR em lote faturado ---------------------------
+     Descoberta desta rodada: a sabotagem desligou a guarda do somar por
+     engano e a suíte ficou VERDE — a cerca existia sem teste nenhum. Cerca
+     sem teste é a que o próximo refactor apaga sem ninguém ver. */
+  const fs1 = await fichaFechada(2);
+  const fs2 = await fichaFechada(2);
+  await admin("/restrito/api/lotes/" + loteRem + "/fichas", "PUT", { fichas: [fs1, fs2] });
+  await admin("/restrito/api/lotes/" + loteRem, "PUT", { situacao: "faturado", nota: "ZZQA-1" });
+  r = await admin("/restrito/api/fichas/somar", "POST", { ids: [fs1, fs2] });
+  eq(r.status, 409, "somar fichas de lote FATURADO é recusado");
+  await admin("/restrito/api/lotes/" + loteRem, "PUT", { situacao: "aberto" });
+  await admin("/restrito/api/lotes/" + loteRem + "/fichas", "PUT", { fichas: [] });
+
+  /* --- 3. remover uma SOMADA devolve as parcelas ------------------------ */
+  const fp1 = await fichaFechada(3);
+  const fp2 = await fichaFechada(5);
+  r = await admin("/restrito/api/fichas/somar", "POST", { ids: [fp1, fp2] });
+  eq(r.status, 201, "duas fichas viram uma somada", JSON.stringify(r.dados));
+  const fSoma = r.dados.id;
+  CRIADO.fichas.push(fSoma);
+
+  /* A parcela não sai sozinha: tirá-la deixaria a soma dizendo um total que
+     as partes não sustentam. */
+  r = await admin("/restrito/api/fichas/" + fp1, "DELETE");
+  eq(r.status, 409, "parcela de soma não se remove sozinha");
+
+  r = await admin("/restrito/api/fichas/" + fSoma, "DELETE");
+  eq(r.status, 200, "a ficha SOMADA remove");
+  eq(Number(r.dados.devolvidas), 2, "e devolve as DUAS parcelas");
+  const volta1 = await Q.get("SELECT situacao, somada_em_id FROM fichas WHERE id = ?", fp1);
+  eq(volta1.situacao, "fechada", "a parcela volta a ser ficha fechada");
+  eq(volta1.somada_em_id, null, "sem apontar para uma soma que não existe mais");
+
+  /* A produção do operador continua contando as 8 peças (3+5) — remover a
+     soma desfez a soma, não o trabalho. */
+  const pecasDeVolta = await Q.get(
+    "SELECT COALESCE(SUM(quantidade),0) s FROM fichas WHERE id = ANY(?)", [fp1, fp2]);
+  eq(Number(pecasDeVolta.s), 8, "as peças das parcelas continuam no histórico");
+
   /* ============ 12k-bis. a lista velha do navegador ===================== */
   /* ISTO ACONTECEU EM PRODUÇÃO, seis vezes nos dias 07 e 08/08/2026:
 

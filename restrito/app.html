@@ -485,6 +485,26 @@ td.vazia { color: #b6b6c4; }
 .grade-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 14px; }
 .linha-botoes { display: flex; gap: 8px; flex-wrap: wrap; }
 
+/* O menu da linha (3 pontinhos). Vive no BODY com position:fixed, e não
+   dentro da célula: a tabela mora numa .rolagem com overflow, e um menu
+   absoluto ali seria decepado pela borda do contêiner. */
+.acoes-col { width: 44px; text-align: center; }
+.menu-linha__botao { font-size: 17px; line-height: 1; padding: 4px 10px; }
+.menu-linha {
+  position: fixed; z-index: 300; min-width: 150px;
+  background: #fff; border: 1px solid #e3e3ea; border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(20, 24, 60, .16);
+  padding: 6px; display: grid; gap: 2px;
+}
+.menu-linha button {
+  display: block; width: 100%; text-align: left;
+  padding: 9px 12px; border: 0; background: none; border-radius: 7px;
+  font: inherit; font-size: 14px; cursor: pointer; color: #2b2b33;
+}
+.menu-linha button:hover { background: #f2f2f6; }
+.menu-linha button.perigo { color: #b3261e; }
+.menu-linha button.perigo:hover { background: #fdecea; }
+
 /* Barras da quebra por cor: proporção se lê em um relance; número exige
    comparar de dois em dois. Aqui a pergunta é sempre "quanto falta de qual". */
 .quebra { display: grid; gap: 7px; }
@@ -2060,7 +2080,11 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     });
   }
 
-  async function modalEditarFicha(id) {
+  async function modalEditarFicha(id, aoTerminar) {
+    /* Amarrado num `const`, como nas outras modais: quem chama da composição
+       do lote volta para o LOTE — cair na tela de Produção no meio do
+       fechamento de uma nota é perder o lugar do trabalho em curso. */
+    const depois = aoTerminar || function () { return pintarProducao(); };
     const f = await api("/restrito/api/fichas/" + id);
     const mercadorias = await lista("mercadorias");
     const cores = await lista("cores");
@@ -2193,7 +2217,7 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           aberta_em: ini,
           fechada_em: fim,
         });
-        recado("Ficha corrigida."); pintarProducao();
+        recado("Ficha corrigida."); await depois();
       },
     });
   }
@@ -2334,12 +2358,6 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
            refazer à mão o que a tela já sabe — e é onde se marca o lote
            errado, porque na lista eles só se distinguem pelo código. */
         '<button class="btn btn--verde" data-acao="nota-do-lote" data-id="' + id + '">Abrir nota</button>' +
-        /* ABRIR FICHA na composição. O caso é o lançamento retroativo: o
-           serviço foi bordado, ninguém registrou, e a nota está sendo montada
-           agora. Sem este botão o caminho é sair do lote, ir à tela do
-           operador, abrir, fechar e voltar — e é no voltar que se perde de
-           vista qual lote estava sendo fechado. */
-        '<button class="btn btn--fantasma" data-acao="ficha-no-lote" data-id="' + id + '">Abrir ficha</button>' +
         '<button class="btn btn--laranja" data-acao="amalgamar" data-id="' + id + '">Juntar fichas</button>' +
         '<button class="btn btn--fantasma" data-acao="editar-lote" data-id="' + id + '">Editar lote</button>' +
       "</div><div class=\"bloco__corpo\">" +
@@ -2383,7 +2401,7 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
            operador). Ainda assim a guarda por `EU.admin` fica escrita: é ela
            que impede a coluna de nascer se algum dia esta tela for
            reaproveitada em outro lugar. */
-        (admin ? '<th class="num">Valor</th>' : "") + "</tr></thead><tbody>" +
+        (admin ? '<th class="num">Valor</th>' : "") + '<th class="acoes-col"></th>' + "</tr></thead><tbody>" +
         fatiaLote.itens.map((f) =>
           '<tr><td class="sel"><input type="checkbox" data-ficha="' + f.id + '"></td>' +
           "<td>" + dataHora(f.fechada_em) + "</td>" +
@@ -2407,13 +2425,19 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
                   '" title="' + dinheiro(f.preco_unitario) + ' por peça">' +
                   dinheiro(f.total_valor) + "</button>") + "</td>"
             : "") +
+          /* O MENU DA LINHA — três pontinhos, como nos cadastros. O rótulo
+             leva o id da ficha para o leitor de tela não anunciar dez botões
+             idênticos chamados "ações". */
+          '<td class="acoes-col"><button type="button" class="btn btn--fantasma btn--mini menu-linha__botao" ' +
+            'data-menu-ficha="' + f.id + '" aria-haspopup="menu" aria-expanded="false" ' +
+            'aria-label="Ações da ficha ' + f.id + '">⋮</button></td>' +
           "</tr>").join("") +
         /* O rodapé é do LOTE INTEIRO — é ele que sustenta a nota. Diz isso no
            rótulo para ninguém ler "Total" como o total da página. */
         '</tbody><tfoot><tr><td colspan="6">Total do lote</td><td class="num">' + num(r.pecas) +
         '</td><td class="num">' + num(r.pontos) + "</td>" +
         (admin ? '<td class="num">' + dinheiro(r.valor) + "</td>" : "") +
-        "</tr></tfoot></table></div>" +
+        "<td></td></tr></tfoot></table></div>" +
         barraSomar("baixo") +
         paginacao(fatiaLote, "lote") : "") +
       "</div>" +
@@ -5033,6 +5057,53 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     if (REPINTAR[chave]) await REPINTAR[chave]();
   });
 
+  /* ======================================================================
+     O MENU DA LINHA (3 pontinhos)
+
+     Um menu por vez, criado na hora e pendurado no BODY em position:fixed —
+     dentro da célula ele seria decepado pelo overflow da .rolagem. Fecha ao
+     clicar fora, no Esc e ao rolar (fixo, ele NÃO acompanha a rolagem: sem
+     fechar, ficaria pairando sobre a linha errada).
+
+     Os itens carregam data-acao normais: quem executa é o MESMO dispatcher
+     global de sempre — um segundo caminho de clique é onde os dois começam a
+     discordar.
+     ====================================================================== */
+  function fecharMenuLinha() {
+    const m = document.querySelector(".menu-linha");
+    if (m) m.remove();
+    document.querySelectorAll("[data-menu-ficha][aria-expanded=true]")
+      .forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+  }
+  function abrirMenuLinha(botao) {
+    fecharMenuLinha();
+    const idFicha = botao.getAttribute("data-menu-ficha");
+    const m = document.createElement("div");
+    m.className = "menu-linha";
+    m.setAttribute("role", "menu");
+    m.innerHTML =
+      '<button type="button" data-acao="editar-ficha-lote" data-id="' + idFicha + '">Editar</button>' +
+      '<button type="button" class="perigo" data-acao="remover-ficha" data-id="' + idFicha + '">Remover</button>';
+    document.body.appendChild(m);
+
+    /* Alinha pela DIREITA do botão e mede com clientWidth, não innerWidth —
+       o innerWidth conta a barra de rolagem e já empurrou dropdown para fora
+       da tela neste mesmo projeto. Se não couber embaixo, abre para cima. */
+    const r = botao.getBoundingClientRect();
+    const larguraTela = document.documentElement.clientWidth;
+    const alto = m.offsetHeight;
+    m.style.left = Math.max(8, Math.min(r.right - m.offsetWidth, larguraTela - m.offsetWidth - 8)) + "px";
+    m.style.top = (r.bottom + alto + 8 > window.innerHeight ? r.top - alto - 4 : r.bottom + 4) + "px";
+    botao.setAttribute("aria-expanded", "true");
+    m.querySelector("button").focus();
+  }
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") fecharMenuLinha();
+  });
+  /* `true` = fase de captura: o scroll da .rolagem não borbulha até o
+     documento, e o menu ficaria aberto pairando sobre a linha errada. */
+  document.addEventListener("scroll", fecharMenuLinha, true);
+
   document.addEventListener("click", async function (ev) {
     const abrir = ev.target.closest("[data-abrir]");
     if (abrir) {
@@ -5050,6 +5121,16 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
 
     const aba = ev.target.closest("[data-tab-aba]");
     if (aba) { TAB_ABA = aba.getAttribute("data-tab-aba"); pintarTabelas(); return; }
+
+    const gatilhoMenu = ev.target.closest("[data-menu-ficha]");
+    if (gatilhoMenu) {
+      if (gatilhoMenu.getAttribute("aria-expanded") === "true") fecharMenuLinha();
+      else abrirMenuLinha(gatilhoMenu);
+      return;
+    }
+    /* Clique em qualquer outro lugar fecha o menu — inclusive nos próprios
+       itens, que fecham pelo dispatcher antes de agir. */
+    if (!ev.target.closest(".menu-linha")) fecharMenuLinha();
 
     const b = ev.target.closest("[data-acao]");
     if (!b) return;
@@ -5144,7 +5225,11 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
       else if (acao === "cancelar-ficha-admin") {
         if (!confirm("Cancelar esta ficha? Ela sai da produção e de qualquer lote.")) return;
         await enviar("/restrito/api/fichas/" + id + "/cancelar", "PUT");
-        fecharModal(); recado("Ficha cancelada."); await pintarProducao();
+        fecharModal(); recado("Ficha cancelada.");
+        /* Volta para a tela em que a pessoa estava — a modal de correção agora
+           também é aberta de dentro do lote. */
+        if (TELA === "lote" && LOTE_ABERTO) await pintarLote(LOTE_ABERTO);
+        else await pintarProducao();
       }
 
       /* ---- lotes ---- */
@@ -5227,31 +5312,7 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         const r = await api("/restrito/api/lotes/" + id);
         await modalNovoLote(r.lote);
       }
-      /* ---- os três atalhos da tela do lote ---- */
-      else if (acao === "ficha-no-lote") {
-        /* O cliente vem do LOTE, e por isso o campo fica travado na modal: a
-           ficha de outro cliente jamais entraria neste lote, e oferecer a
-           escolha seria oferecer um caminho que termina em recusa.
-
-           Depois de abrir, a tela volta para o lote — e não para a do
-           operador, que é o destino de sempre. O aviso diz o passo seguinte:
-           a ficha só entra no lote depois de FECHADA, pela amálgama. */
-        const det = await api("/restrito/api/lotes/" + id);
-        if (det.lote.situacao === "faturado") {
-          alert("Este lote já foi faturado — ele não aceita mais ficha.\n\n" +
-                "O que está na nota tem de continuar sendo o que estava no sistema.");
-          return;
-        }
-        await modalAbrirFicha({
-          cliente_id: det.lote.cliente_id,
-          cliente_fixo: true,
-          aoTerminar: async function () {
-            await pintarLote(id);
-            recado("Ficha aberta para " + det.lote.cliente_nome +
-                   ". Feche-a e use “Juntar fichas” para trazer ao lote.");
-          },
-        });
-      }
+      /* ---- os atalhos da tela do lote ---- */
       else if (acao === "nota-do-lote") {
         const det = await api("/restrito/api/lotes/" + id);
         await modalNovaNota({
@@ -5264,6 +5325,29 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
             recado("Nota " + r.codigo + " criada com este lote.");
           },
         });
+      }
+      else if (acao === "editar-ficha-lote") {
+        fecharMenuLinha();
+        const lote = LOTE_ABERTO;
+        await modalEditarFicha(Number(id), function () { return lote ? pintarLote(lote) : pintarProducao(); });
+      }
+      else if (acao === "remover-ficha") {
+        fecharMenuLinha();
+        /* Duas frases no confirm, e as duas necessárias: o que sai (a ficha,
+           de verdade, não só do lote) e o que não tem (volta). O caso da soma
+           é dito pelo SERVIDOR na resposta, que sabe o que devolveu. */
+        if (!confirm("Remover esta ficha?\n\nEla sai do lote, da produção e do histórico do operador. " +
+                     "Isso não tem volta.")) return;
+        try {
+          const r = await enviar("/restrito/api/fichas/" + id, "DELETE");
+          recado(r.devolvidas
+            ? "Ficha removida. " + r.devolvidas + " parcela(s) da soma voltaram como fichas soltas."
+            : "Ficha removida.");
+        } catch (e) {
+          if (e.status === 409) { alert(e.message); return; }
+          throw e;
+        }
+        if (LOTE_ABERTO) await pintarLote(LOTE_ABERTO);
       }
       else if (acao === "valor-ficha") {
         await modalValorDaFicha(Number(id), function () {

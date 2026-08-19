@@ -2672,6 +2672,61 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     }
 
     if (req.method === "GET") return responder(res, 200, f);
+
+    if (!acao && req.method === "DELETE") {
+      /* ------------------------------------------------------------------
+         REMOVER A FICHA — só administrador, e com três cercas
+
+         Diferente de CANCELAR (que mantém o registro, riscado): remover
+         apaga de verdade. O número some da produção do operador — que é por
+         onde se paga — e por isso a tela pergunta duas vezes e esta rota
+         confere o que a remoção quebraria:
+
+         · LOTE FATURADO não muda. O que está na nota tem de continuar sendo
+           o que estava no sistema — é a mesma regra da amálgama.
+
+         · FICHA ABSORVIDA ('somada') não se remove sozinha: ela é parcela da
+           conta de uma ficha somada, e tirá-la deixaria a soma dizendo um
+           total que as partes não sustentam. Remove-se a SOMADA, não a parte.
+
+         · REMOVER UMA FICHA SOMADA DEVOLVE AS PARCELAS. As originais estão
+           no banco com situacao='somada' apontando para ela (somada_em_id).
+           Sem a devolução, o FK as deixaria apontando para o nada — produção
+           de várias pessoas sumindo do histórico por um clique. Devolvidas,
+           elas voltam a ser fichas fechadas soltas, como eram antes da soma:
+           remover a soma É desfazê-la.
+         ------------------------------------------------------------------ */
+      if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador remove ficha" });
+
+      if (f.situacao === "somada") {
+        return responder(res, 409, {
+          error: "Esta ficha é parcela de uma soma. Remova a ficha somada — as parcelas voltam sozinhas.",
+        });
+      }
+      if (f.lote_id) {
+        const lote = await Q.get("SELECT situacao, codigo FROM lotes WHERE id = ?", f.lote_id);
+        if (lote && lote.situacao === "faturado") {
+          return responder(res, 409, {
+            error: `O lote ${lote.codigo} já foi faturado — o que está na nota não muda.`,
+          });
+        }
+      }
+
+      let devolvidas = 0;
+      await Q.tx(async () => {
+        if (f.soma_de) {
+          const r = await Q.all(
+            `UPDATE fichas SET situacao = 'fechada', somada_em_id = NULL
+              WHERE somada_em_id = ? RETURNING id`, id);
+          devolvidas = r.length;
+        }
+        await Q.run("DELETE FROM fichas WHERE id = ?", id);
+      });
+
+      avisar("fichas");
+      avisar("lotes");
+      return responder(res, 200, { ok: true, removida: id, devolvidas });
+    }
   }
 
   /* ======================================================================
