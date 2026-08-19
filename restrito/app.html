@@ -2358,6 +2358,14 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
            refazer à mão o que a tela já sabe — e é onde se marca o lote
            errado, porque na lista eles só se distinguem pelo código. */
         '<button class="btn btn--verde" data-acao="nota-do-lote" data-id="' + id + '">Abrir nota</button>' +
+        /* ABRIR FICHA AVULSA na composição. O caso é o lançamento retroativo:
+           o serviço foi bordado, ninguém registrou, e a nota está sendo
+           montada agora. Sem este botão o caminho é sair do lote, ir à tela
+           do operador, abrir, fechar e voltar — e é no voltar que se perde de
+           vista qual lote estava sendo fechado. (Saiu na 1.20.0 e voltou a
+           pedido, rebatizado: "avulsa" porque a ficha nasce FORA do lote e só
+           entra nele depois de fechada, pela amálgama.) */
+        '<button class="btn btn--fantasma" data-acao="ficha-no-lote" data-id="' + id + '">Abrir ficha avulsa</button>' +
         '<button class="btn btn--laranja" data-acao="amalgamar" data-id="' + id + '">Juntar fichas</button>' +
         '<button class="btn btn--fantasma" data-acao="editar-lote" data-id="' + id + '">Editar lote</button>' +
       "</div><div class=\"bloco__corpo\">" +
@@ -5313,6 +5321,30 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         await modalNovoLote(r.lote);
       }
       /* ---- os atalhos da tela do lote ---- */
+      else if (acao === "ficha-no-lote") {
+        /* O cliente vem do LOTE, e por isso o campo fica travado na modal: a
+           ficha de outro cliente jamais entraria neste lote, e oferecer a
+           escolha seria oferecer um caminho que termina em recusa.
+
+           Depois de abrir, a tela volta para o lote — e não para a do
+           operador, que é o destino de sempre. O aviso diz o passo seguinte:
+           a ficha só entra no lote depois de FECHADA, pela amálgama. */
+        const det = await api("/restrito/api/lotes/" + id);
+        if (det.lote.situacao === "faturado") {
+          alert("Este lote já foi faturado — ele não aceita mais ficha.\n\n" +
+                "O que está na nota tem de continuar sendo o que estava no sistema.");
+          return;
+        }
+        await modalAbrirFicha({
+          cliente_id: det.lote.cliente_id,
+          cliente_fixo: true,
+          aoTerminar: async function () {
+            await pintarLote(id);
+            recado("Ficha aberta para " + det.lote.cliente_nome +
+                   ". Feche-a e use “Juntar fichas” para trazer ao lote.");
+          },
+        });
+      }
       else if (acao === "nota-do-lote") {
         const det = await api("/restrito/api/lotes/" + id);
         await modalNovaNota({
