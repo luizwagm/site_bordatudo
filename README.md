@@ -3,6 +3,8 @@
 Site institucional + **controle de produção** (`/restrito`) da Borda Tudo —
 Bordados Computadorizados, Caruaru-PE.
 
+**Versão 1.21.0** · Node ≥ 20 · porta 5193 · `npm test` → **632 conferências**.
+
 São duas coisas no mesmo processo, com bancos separados:
 
 | Parte | O que é | Onde grava |
@@ -138,6 +140,79 @@ extensão — um `.png` que na verdade é HTML é recusado.
 
 ---
 
+## Financeiro
+
+Depois que o lote fecha, o dinheiro tem três passos: **lote → nota →
+lançamentos**.
+
+| Peça | O que é |
+|---|---|
+| **Nota** | agrupa um ou mais lotes de um cliente. Tem código próprio (`NOTA-2026-0001`), número da nota fiscal, vencimento, desconto e acréscimo |
+| **Lançamento** | uma linha por movimento de dinheiro, entrada ou saída, com recibo numerado quando é de nota |
+| **Caixa** | o extrato da fábrica: o que o cliente pagou e o que a fábrica gastou |
+
+**O valor da nota não é coluna.** Ele é a soma dos lotes, que somam as fichas.
+Guardar um total criaria um segundo lugar para a mesma verdade — e no dia em que
+uma ficha fosse corrigida, a nota continuaria dizendo o valor antigo sem que
+nada avisasse. Pelo mesmo motivo **não existe situação "paga"**: a quitação é
+calculada (valor menos o que entrou), e por isso não tem como mentir.
+
+**Um lote entra em UMA nota.** É um índice único no banco. Sem ele, o mesmo
+serviço poderia ser cobrado duas vezes — e a segunda cobrança pareceria tão
+legítima quanto a primeira.
+
+**Entrada e saída vivem na mesma tabela**, com a nota como coluna opcional.
+Separar em duas faria "quanto entrou no mês" depender de qual consulta se usou.
+O valor é **sempre positivo**; o sinal vem do tipo.
+
+**Não se apaga lançamento.** `cancelado_em` marca e a linha fica: um recibo já
+entregue ao cliente precisa continuar tendo lastro.
+
+**Salário não tem nota.** É restrição no banco: um lançamento com nota é do
+cliente, um com funcionário é da folha. Juntos, o salário apareceria no extrato
+que o cliente recebe. Qual categoria pede funcionário é uma **coluna** da
+categoria — não a palavra "Salários" escrita no servidor, que quebraria no dia
+em que alguém a renomeasse para "Folha" pela própria tela.
+
+---
+
+## Somar fichas
+
+Várias fichas de um lote podem virar uma só, para a nota sair enxuta. A ficha
+absorvida vira situação **`somada`** — não é apagada:
+
+- o **recibo já impresso continua conferível**, porque as parcelas ainda existem;
+- **clique errado tem volta**: remover a ficha somada devolve as parcelas ao
+  estado anterior;
+- a **produção do operador não some do histórico** — e é por ela que se paga.
+
+Ficha somada não pode estar em lote, e o banco recusa se tentarem.
+
+---
+
+## Horas do operador
+
+Cada pessoa tem um **expediente** combinado, guardado em uma coluna JSONB com
+dois formatos possíveis:
+
+```
+{"tipo":"fixo",  "dias":{"1":{"entrada":"07:30","saida":"17:00"}}}
+{"tipo":"horas", "dias":{"1":{"horas":8}, "6":{"horas":4}}}
+```
+
+**Dia ausente = não trabalha.** É a distinção que catorze colunas separadas não
+saberiam expressar, e é ela que faz o relatório saber que a falta de sábado não
+é falta.
+
+Daí saem a tela **Minhas horas** (o dia e o calendário do mês, para o operador)
+e a tela **Horários** (a equipe inteira, com saldo, cor por pessoa e correção de
+jornada, para o escritório).
+
+> A ficha retroativa **não entra em jornada**: hora de trabalho é medida por
+> relógio, não digitada.
+
+---
+
 ## Instalação do /restrito
 
 > **Para subir no servidor, o roteiro completo está em [SUBIR.md](SUBIR.md)** —
@@ -218,9 +293,20 @@ Um adesivo fotografado não dá acesso a nada. Se um adesivo se perder, use
 
 ```bash
 npm start                    # site + painel + /restrito na porta 5193
-npm test                     # as duas suítes (308 + 47 conferências)
+npm test                     # as TRÊS suítes (501 + 84 + 47 = 632 conferências)
 node backup.js agora         # cópia dos DOIS bancos (site.db + pg_dump)
 ```
+
+| Suíte | Porta padrão | Confere |
+|---|---|---|
+| `testar-restrito.cjs` | 5199 | produção, lotes, cadastros, papéis, tempo real |
+| `testar-financeiro.cjs` | 5197 | notas, lançamentos, caixa e salário |
+| `testar-site.cjs` | 5198 | a trava e os três estados do site |
+
+> **As portas padrão de duas delas colidem com produção de outros projetos**
+> (5198 e 5197). A suíte se recusa a rodar se a porta estiver ocupada — o que a
+> trava sempre que o vizinho está no ar. Contorne com `PORTA_TESTE_SITE=` e
+> `PORTA_TESTE_FIN=`, ou mude os padrões para uma faixa reservada.
 
 `testar-restrito.cjs` sobe o servidor numa porta própria, cria os registros dela
 com prefixo `ZZ QA` e apaga **por id** no fim. Se morrer no meio, os restos
@@ -352,6 +438,26 @@ mais — escolha de novo"), a tela recarrega as listas sozinha, e a ficha
 > A mensagem é o remendo; o conserto é o aviso. Apagar e desativar cadastro
 > passaram a avisar as telas abertas, o que fecha a janela em que a lista velha
 > existe em vez de só tratar o sintoma.
+
+---
+
+## Documentação
+
+Documentação completa em [`docs/`](docs/), gerada a partir da análise do código
+e do banco em execução:
+
+| Documento | Conteúdo |
+|---|---|
+| [Documentação Técnica](docs/documentacao-tecnica.pdf) | Arquitetura, a trava de construção, APIs, segurança, deploy, testes e pontos de atenção |
+| [Documentação de Produto](docs/documentacao-produto.pdf) | O problema do papel, personas, fluxos, regras de negócio e requisitos |
+| [Documentação de Banco de Dados](docs/documentacao-banco-de-dados.pdf) | 21 tabelas, diagrama ER, as regras que o banco impõe, migrações e recomendações |
+| [Documentação de Protótipo](docs/documentacao-prototipo.pdf) | Identidade visual, telas, componentes, estados e navegação |
+
+Roteiro de instalação em [`SUBIR.md`](SUBIR.md) — 10 passos, com o que conferir
+em cada um.
+
+> Os PDFs refletem a versão **1.21.0**. Ao subir versão que mude arquitetura,
+> banco ou telas, vale regerá-los.
 
 ---
 

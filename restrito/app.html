@@ -825,6 +825,15 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
            "T" + p(d.getHours()) + ":" + p(d.getMinutes());
   }
 
+  /* O caminho de VOLTA do datetime-local: o valor do campo é hora LOCAL sem
+     fuso ("2026-08-20T05:23"), e mandá-lo cru obrigava o servidor a adivinhar
+     o fuso — foi assim que a correção do administrador empurrava a ficha 3
+     horas para trás (05:23 → 02:23) com o servidor em UTC, sem ninguém tocar
+     na hora. Convertido AQUI, no navegador, que é quem sabe o fuso de quem
+     digitou, o que viaja é o INSTANTE completo (ISO com Z) — sem ambiguidade
+     em servidor nenhum. */
+  function doCampoDataHora(v) { return v ? new Date(v).toISOString() : ""; }
+
   /* ========================================================================
      3b. TEMPO REAL
 
@@ -1371,7 +1380,7 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
            rota entrar no ramo da data e recusar o operador — que nem viu o
            campo — por "só o administrador escolhe a data do bordado". */
         const campoData = caixa.querySelector("#ff-data");
-        if (campoData && campoData.value) corpo.aberta_em = campoData.value;
+        if (campoData && campoData.value) corpo.aberta_em = doCampoDataHora(campoData.value);
         if (MAQUINA_TOKEN) corpo.maquina_token = MAQUINA_TOKEN;
         else {
           const m = caixa.querySelector("#ff-maquina");
@@ -2073,7 +2082,8 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         if (!ini) throw new Error("A jornada precisa da hora de início.");
         if (fim && new Date(fim) < new Date(ini)) throw new Error("O fim não pode ser antes do início.");
         await enviar("/restrito/api/horarios/" + id, "PUT", {
-          inicio: ini, fim: fim, observacao: caixa.querySelector("#ej-obs").value,
+          inicio: doCampoDataHora(ini), fim: doCampoDataHora(fim),
+          observacao: caixa.querySelector("#ej-obs").value,
         });
         recado("Horário corrigido."); pintarHorarios();
       },
@@ -2214,8 +2224,8 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           mercadoria_id: caixa.querySelector("#ef-merc").value || null,
           cor_id: caixa.querySelector("#ef-cor").value || null,
           observacao: caixa.querySelector("#ef-obs").value,
-          aberta_em: ini,
-          fechada_em: fim,
+          aberta_em: doCampoDataHora(ini),
+          fechada_em: doCampoDataHora(fim),
         });
         recado("Ficha corrigida."); await depois();
       },

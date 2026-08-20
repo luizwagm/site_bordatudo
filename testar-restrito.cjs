@@ -1312,6 +1312,25 @@ async function limparRestos() {
   eq(new Date(r.dados.ficha.fechada_em) - new Date(r.dados.ficha.aberta_em), 3.5 * 3600e3,
      "e a duração passa a ser a corrigida");
 
+  /* ====================================================================
+     HORA SEM FUSO VALE NO FUSO DA FÁBRICA — NUNCA NO DO SERVIDOR.
+
+     O defeito real: o operador fechou às 07:37, o administrador corrigiu um
+     campo QUALQUER, e a ficha voltou 3 horas (05:23 → 02:23) — a modal
+     mandava "2026-08-20T05:23" sem fuso e o servidor, rodando em UTC, o
+     interpretava como UTC. Este teste crava o INSTANTE esperado com o fuso
+     da fábrica por extenso: rodando a suíte com TZ=UTC (é assim que o CI
+     deve rodar), uma regressão desloca o instante em 3h e cai aqui. */
+  eq(new Date(r.dados.ficha.aberta_em).getTime(), new Date("2026-08-01T08:00:00-03:00").getTime(),
+     "hora sem fuso é interpretada no fuso da FÁBRICA (-03), não no do servidor");
+  /* E salvar o que a tela devolve NÃO desloca nada: a modal manda o instante
+     completo (ISO com Z) — regravar o mesmo valor tem de ser neutro. */
+  r = await admin("/restrito/api/fichas/" + fVal, "PUT",
+    { aberta_em: new Date("2026-08-01T08:00:00-03:00").toISOString(),
+      fechada_em: new Date("2026-08-01T11:30:00-03:00").toISOString() });
+  eq(new Date(r.dados.ficha.aberta_em).getTime(), new Date("2026-08-01T08:00:00-03:00").getTime(),
+     "regravar o mesmo instante (ISO com Z) não move a hora nem um minuto");
+
   /* Fim antes do início não quebra nada visível: a peça continua contando e o
      que fica negativo é o tempo por peça, que entra na média do dia. */
   /* DUAS CAMADAS recusam isto, e o teste precisa dizer QUAL. O banco tem o

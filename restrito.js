@@ -1019,6 +1019,38 @@ const DINHEIRO = new Set(["preco"]);
    de "é de graça". Um `Number("")` valendo 0 é exatamente como um desenho
    entraria valendo R$ 0,00 dentro de um lote faturado.
    ========================================================================== */
+/* ==========================================================================
+   HORA SEM FUSO NÃO EXISTE AQUI
+
+   Os campos <input type="datetime-local"> mandam "2026-08-20T05:23" — sem
+   fuso — e `new Date` interpreta essa string no fuso DO SERVIDOR. Na máquina
+   de desenvolvimento (UTC-3) dava certo; num servidor em UTC, cada correção
+   do administrador EMPURRAVA a ficha três horas para trás (05:23 virava
+   02:23) sem ninguém tocar no campo de hora — o pior tipo de defeito, o que
+   reescreve dado certo em silêncio.
+
+   A tela agora envia o instante completo (ISO com Z, convertido no navegador,
+   que é quem sabe o fuso de quem digitou). Mas o servidor não pode DEPENDER
+   do navegador: string sem fuso que chegar aqui é interpretada no FUSO DA
+   FÁBRICA, fixo — o Brasil não tem mais horário de verão e a fábrica é uma
+   só, em Caruaru (-03:00). Data sem hora vale meia-noite DE LÁ: "2026-08-18"
+   como UTC viraria 21h do dia 17 no relatório.
+
+   Devolve: null para vazio, undefined para inválido, ISO (Z) para o resto.
+   ========================================================================== */
+const FUSO_FABRICA = "-03:00";
+function instanteDe(bruto) {
+  const s = String(bruto ?? "").trim();
+  if (!s) return null;
+  let completo = s;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) completo = s + "T00:00:00" + FUSO_FABRICA;
+  else if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) {
+    completo = s.replace(" ", "T") + FUSO_FABRICA;
+  }
+  const d = new Date(completo);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
 function dinheiro(v, rotulo) {
   let s = String(v ?? "").trim().replace(/^R\$\s*/i, "").replace(/\s/g, "");
   if (s === "") return null;
@@ -2253,16 +2285,17 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     if (corpo.aberta_em !== undefined && corpo.aberta_em !== null && String(corpo.aberta_em).trim() !== "") {
       if (!ehAdmin(sessao))
         return responder(res, 403, { error: "só o administrador escolhe a data do bordado" });
-      const d = new Date(String(corpo.aberta_em));
-      if (Number.isNaN(d.getTime()))
+      const iso = instanteDe(corpo.aberta_em);
+      if (iso === undefined)
         return responder(res, 400, { error: "a data do bordado não é válida" });
+      const d = new Date(iso);
       /* Uma folga de um dia porque a tela manda a hora local e o servidor
          compara em UTC: sem ela, lançar às 22h de hoje em Caruaru seria
          recusado como "futuro" por causa das três horas de diferença. */
       if (d.getTime() > Date.now() + 864e5)
         return responder(res, 400, { error: "a data do bordado não pode ser no futuro" });
-      abertaEm = d.toISOString();
-      retroativa = d.toISOString().slice(0, 10) < new Date().toISOString().slice(0, 10);
+      abertaEm = iso;
+      retroativa = iso.slice(0, 10) < new Date().toISOString().slice(0, 10);
     }
 
     /* A PONTUAÇÃO É COPIADA DO DESENHO, e nunca vem do corpo da requisição.
@@ -2624,14 +2657,14 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       }
       for (const c of horas) {
         if (!(c in corpo)) continue;
-        const bruto = String(corpo[c] ?? "").trim();
-        if (bruto === "") { campos[c] = null; continue; }
-        /* `new Date` aceita quase tudo e devolve `Invalid Date` sem reclamar —
-           que viraria NULL no banco e apagaria a hora em vez de corrigi-la. */
-        const d = new Date(bruto);
-        if (Number.isNaN(d.getTime()))
+        /* `instanteDe` recusa o inválido (que viraria NULL e apagaria a hora
+           em vez de corrigi-la) e interpreta hora sem fuso NO FUSO DA FÁBRICA
+           — era aqui que a correção do administrador empurrava a ficha 3
+           horas para trás quando o servidor rodava em UTC. */
+        const iso = instanteDe(corpo[c]);
+        if (iso === undefined)
           return responder(res, 400, { error: `${c === "aberta_em" ? "o início" : "o fim"} não é uma data válida` });
-        campos[c] = d.toISOString();
+        campos[c] = iso;
       }
 
       if (!Object.keys(campos).length) return responder(res, 400, { error: "nada para alterar" });
@@ -3756,17 +3789,18 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     const campos = {};
     for (const c of ["inicio", "fim"]) {
       if (!(c in corpo)) continue;
-      const bruto = String(corpo[c] ?? "").trim();
-      if (bruto === "") {
+      /* `instanteDe`: hora sem fuso vale no fuso da FÁBRICA, nunca no do
+         servidor — a mesma proteção da correção de ficha. */
+      const iso = instanteDe(corpo[c]);
+      if (iso === null) {
         /* Só o FIM pode ficar em branco — é a jornada reaberta. Início vazio
            deixaria a jornada sem começo, e o cálculo do tempo sem base. */
         if (c === "inicio") return responder(res, 400, { error: "a jornada precisa da hora de início" });
         campos.fim = null; continue;
       }
-      const d = new Date(bruto);
-      if (Number.isNaN(d.getTime()))
+      if (iso === undefined)
         return responder(res, 400, { error: `${c === "inicio" ? "o início" : "o fim"} não é uma data válida` });
-      campos[c] = d.toISOString();
+      campos[c] = iso;
     }
     if ("observacao" in corpo) campos.observacao = sanitizarHtml(String(corpo.observacao || ""));
     if (!Object.keys(campos).length) return responder(res, 400, { error: "nada para alterar" });
