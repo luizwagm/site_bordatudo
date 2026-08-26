@@ -547,8 +547,29 @@ async function detalheDoLote(lote) {
       .sort((a, b) => b.pecas - a.pecas);
   };
 
+  /* ------------------------------------------------------------------
+     O PAGAMENTO VEM DA NOTA (sql/11)
+
+     Aqui, e não na tela: `detalheDoLote` serve a tela E o recibo, e o papel
+     que o cliente leva embora não pode discordar do que a fábrica vê.
+     ------------------------------------------------------------------ */
+  const pg = await Q.get("SELECT * FROM lote_pagamento WHERE lote_id = ?", lote.id) || {};
+  const pagamento = {
+    pago: !!pg.pago,
+    em: pg.pago_em || null,
+    origem: pg.origem || null,
+    nota_id: pg.nota_id || null,
+    nota: pg.nota_codigo || null,
+    nota_situacao: pg.nota_situacao || null,
+    valor_nota: pg.nota_valor == null ? null : Number(pg.nota_valor),
+    recebido_nota: pg.nota_pago == null ? null : Number(pg.nota_pago),
+    saldo: pg.nota_saldo == null ? null : Number(pg.nota_saldo),
+  };
+  pagamento.parcial = !pagamento.pago && pagamento.recebido_nota > 0
+    && pagamento.nota_situacao !== "cancelada";
+
   return {
-    lote, fichas, pecas, pontos, valor,
+    lote, fichas, pecas, pontos, valor, pagamento,
     falta: lote.quantidade_prevista === null ? null : Number(lote.quantidade_prevista) - pecas,
     porCor: agrupar("cor_nome"),
     porMercadoria: agrupar("mercadoria_nome"),
@@ -1955,7 +1976,9 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
         item.resumo = await Q.get(
           `SELECT (SELECT COUNT(*) FROM desenhos WHERE cliente_id = $1) desenhos,
                   (SELECT COUNT(*) FROM lotes    WHERE cliente_id = $1) lotes,
-                  (SELECT COUNT(*) FROM lotes    WHERE cliente_id = $1 AND pago_em IS NULL) lotes_a_receber,
+                  (SELECT COUNT(*) FROM lotes l
+                     LEFT JOIN lote_pagamento lp ON lp.lote_id = l.id
+                    WHERE l.cliente_id = $1 AND NOT COALESCE(lp.pago, FALSE)) lotes_a_receber,
                   (SELECT COALESCE(SUM(quantidade),0) FROM fichas
                     WHERE cliente_id = $1 AND situacao = 'fechada') pecas`.replace(/\$1/g, "?"),
           id, id, id, id);
@@ -2798,9 +2821,16 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
                 (SELECT COUNT(*) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS fichas,
                 (SELECT COALESCE(SUM(f.quantidade),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS pecas,
                 (SELECT COALESCE(SUM(f.total_pontos),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS pontos,
-                (SELECT COALESCE(SUM(f.total_valor),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS valor
-           FROM lotes l WHERE l.cliente_id = ?
+                (SELECT COALESCE(SUM(f.total_valor),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS valor,
+                lp.pago AS pg_pago, lp.pago_em AS pg_em, lp.origem AS pg_origem,
+                lp.nota_id AS pg_nota_id, lp.nota_codigo AS pg_nota, lp.nota_saldo AS pg_saldo,
+                lp.nota_valor AS pg_nota_valor, lp.nota_pago AS pg_nota_pago,
+                lp.nota_situacao AS pg_nota_situacao
+           FROM lotes l
+           LEFT JOIN lote_pagamento lp ON lp.lote_id = l.id
+          WHERE l.cliente_id = ?
           ORDER BY l.criado_em DESC LIMIT 300`, clienteId);
+      for (const l of lotes) empacotarPagamento(l);
 
       /* O resumo financeiro do cliente, na mesma resposta. "Quanto este
          cliente já rendeu e quanto ainda deve" é a pergunta que a aba existe
@@ -2809,7 +2839,11 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       const conta = lotes.reduce((a, l) => {
         const v = Number(l.valor || 0);
         a.total += v;
-        if (l.pago_em) { a.recebido += v; a.pagos++; } else { a.a_receber += v; a.abertos++; }
+        /* Quem diz se entrou é o PAGAMENTO derivado (nota quitada ou marcação
+           antiga), não mais o carimbo `pago_em` sozinho — era ele que fazia o
+           cliente aparecer devendo o que o caixa já tinha recebido. */
+        if (l.pagamento && l.pagamento.pago) { a.recebido += v; a.pagos++; }
+        else { a.a_receber += v; a.abertos++; }
         return a;
       }, { total: 0, recebido: 0, a_receber: 0, pagos: 0, abertos: 0 });
 
@@ -3457,17 +3491,53 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     }, envelope(Number(total.c), rec)));
   }
 
+  /* ==========================================================================
+     O PAGAMENTO EMPACOTADO NUMA CHAVE SÓ
+
+     A view devolve nove colunas; a tela precisa de um objeto. Feito aqui, e
+     não em cada tela, porque são quatro rotas devolvendo lote (lista, detalhe,
+     cliente, nota) e a que ficasse de fora mostraria "a receber" para um lote
+     que o caixa já quitou — o defeito que este trabalho veio consertar.
+     ========================================================================== */
+  function empacotarPagamento(l) {
+    if (!l) return l;
+    l.pagamento = {
+      pago: !!l.pg_pago,
+      em: l.pg_em || null,
+      /* 'nota' | 'manual' | null — quem confere precisa saber ONDE mexer
+         para corrigir: no caixa ou no cadastro do lote. */
+      origem: l.pg_origem || null,
+      nota_id: l.pg_nota_id || null,
+      nota: l.pg_nota || null,
+      nota_situacao: l.pg_nota_situacao || null,
+      valor_nota: l.pg_nota_valor == null ? null : Number(l.pg_nota_valor),
+      recebido_nota: l.pg_nota_pago == null ? null : Number(l.pg_nota_pago),
+      saldo: l.pg_saldo == null ? null : Number(l.pg_saldo),
+    };
+    /* Pagamento PARCIAL: a nota recebeu alguma coisa e ainda não fechou.
+       Não paga o lote (a nota é do cliente, não da peça — não há como dizer
+       qual metade foi paga), mas a tela precisa dizer que já entrou algo. */
+    l.pagamento.parcial = !l.pagamento.pago
+      && l.pagamento.recebido_nota > 0
+      && l.pagamento.nota_situacao !== "cancelada";
+    for (const k of Object.keys(l)) if (k.startsWith("pg_")) delete l[k];
+    return l;
+  }
+
   if (caminho === "/restrito/api/lotes" && req.method === "GET") {
     const url = new URL(req.url, "http://localhost");
     const situacao = url.searchParams.get("situacao");
     const onde = [], args = [];
     if (situacao) { onde.push("l.situacao = ?"); args.push(situacao); }
 
-    /* `?pago=0` é a lista de cobrança: o que já saiu e ainda não entrou. É a
-       consulta que o índice parcial `ix_lotes_a_receber` existe para servir. */
+    /* `?pago=0` é a lista de cobrança: o que já saiu e ainda não entrou.
+
+       O filtro passou a olhar a VIEW, e não `l.pago_em`: quem paga hoje é a
+       NOTA, e um lote de nota quitada continuava aparecendo na cobrança
+       porque ninguém tinha ido marcá-lo à mão. Ver sql/11. */
     const pago = url.searchParams.get("pago");
-    if (pago === "0") onde.push("l.pago_em IS NULL");
-    if (pago === "1") onde.push("l.pago_em IS NOT NULL");
+    if (pago === "0") onde.push("NOT COALESCE(lp.pago, FALSE)");
+    if (pago === "1") onde.push("COALESCE(lp.pago, FALSE)");
     const doCliente = Number(url.searchParams.get("cliente")) || null;
     if (doCliente) { onde.push("l.cliente_id = ?"); args.push(doCliente); }
 
@@ -3488,17 +3558,32 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     /* Contado antes da página, sobre o mesmo filtro: é o que a barra usa para
        saber quantas páginas existem, e o que o caixa usa para não somar só a
        página que está na tela. */
-    const tot = await Q.get(`SELECT COUNT(*) c FROM lotes l ${clausula}`, ...args);
+    /* A view entra em TODAS as consultas desta rota — inclusive na contagem.
+       Se a contagem ignorasse o filtro de pago, a barra de páginas prometeria
+       linhas que a listagem não traria. */
+    const comPagamento = "LEFT JOIN lote_pagamento lp ON lp.lote_id = l.id";
+    const tot = await Q.get(`SELECT COUNT(*) c FROM lotes l ${comPagamento} ${clausula}`, ...args);
 
     const lotes = await Q.all(
       `SELECT l.*, c.nome AS cliente_nome,
               (SELECT COUNT(*) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS fichas,
               (SELECT COALESCE(SUM(f.quantidade),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS pecas,
               (SELECT COALESCE(SUM(f.total_pontos),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS pontos,
-              (SELECT COALESCE(SUM(f.total_valor),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS valor
+              (SELECT COALESCE(SUM(f.total_valor),0) FROM fichas f WHERE f.lote_id = l.id AND f.situacao='fechada') AS valor,
+              -- O pagamento vem da NOTA (sql/11). A coluna pago_em continua na
+              -- linha porque l.* a traz, mas quem a tela le e o bloco pagamento.
+              -- (Comentario em -- e sem crase: isto vive dentro de um template
+              --  literal, e uma crase aqui fecharia a string e derrubaria o
+              --  arquivo inteiro sem erro visivel na tela.)
+              lp.pago AS pg_pago, lp.pago_em AS pg_em, lp.origem AS pg_origem,
+              lp.nota_id AS pg_nota_id, lp.nota_codigo AS pg_nota, lp.nota_saldo AS pg_saldo,
+              lp.nota_valor AS pg_nota_valor, lp.nota_pago AS pg_nota_pago,
+              lp.nota_situacao AS pg_nota_situacao
          FROM lotes l JOIN clientes c ON c.id = l.cliente_id
+         ${comPagamento}
         ${clausula}
         ORDER BY l.criado_em DESC LIMIT ${rec.por} OFFSET ${rec.offset}`, ...args);
+    for (const l of lotes) empacotarPagamento(l);
 
     /* ------------------------------------------------------------------
        O CAIXA É DE TODOS OS LOTES DO FILTRO, NÃO DA PÁGINA
@@ -3509,12 +3594,13 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
        ------------------------------------------------------------------ */
     const cx = await Q.get(
       `SELECT COALESCE(SUM(v.valor),0) total,
-              COALESCE(SUM(CASE WHEN l.pago_em IS NOT NULL THEN v.valor ELSE 0 END),0) recebido,
-              COALESCE(SUM(CASE WHEN l.pago_em IS NULL     THEN v.valor ELSE 0 END),0) a_receber,
-              COUNT(*) FILTER (WHERE l.pago_em IS NOT NULL) pagos,
-              COUNT(*) FILTER (WHERE l.pago_em IS NULL)     abertos
+              COALESCE(SUM(CASE WHEN COALESCE(lp.pago,FALSE) THEN v.valor ELSE 0 END),0) recebido,
+              COALESCE(SUM(CASE WHEN COALESCE(lp.pago,FALSE) THEN 0 ELSE v.valor END),0) a_receber,
+              COUNT(*) FILTER (WHERE COALESCE(lp.pago,FALSE)) pagos,
+              COUNT(*) FILTER (WHERE NOT COALESCE(lp.pago,FALSE)) abertos
          FROM lotes l
          JOIN clientes c ON c.id = l.cliente_id
+         ${comPagamento}
          CROSS JOIN LATERAL (
            SELECT COALESCE(SUM(f.total_valor),0) valor FROM fichas f
             WHERE f.lote_id = l.id AND f.situacao = 'fechada') v
@@ -3622,6 +3708,24 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
          quase sempre clique na linha errada da lista — e o estrago sai
          calado, porque o lote continua parecendo normal em toda tela.
          -------------------------------------------------------------- */
+      /* --------------------------------------------------------------
+         DENTRO DE UMA NOTA, QUEM PAGA É O CAIXA
+
+         A marcação manual sobreviveu para os lotes anteriores ao financeiro.
+         Deixá-la editável num lote que JÁ está numa nota devolveria o
+         problema que a view veio resolver: dois lugares dizendo se o lote foi
+         pago, divergindo no primeiro estorno — e o carimbo do lote, que
+         ninguém revisa, é o que continuaria dizendo "pago".
+         -------------------------------------------------------------- */
+      if ("pago_em" in campos) {
+        const emNota = await Q.get(
+          `SELECT n.codigo FROM nota_lotes nl JOIN notas n ON n.id = nl.nota_id
+            WHERE nl.lote_id = ?`, id);
+        if (emNota) return responder(res, 409, {
+          error: `este lote está na nota ${emNota.codigo} — o pagamento dele é registrado no financeiro, na própria nota`,
+        });
+      }
+
       if (campos.pago_em) {
         const situacaoFinal = campos.situacao || lote.situacao;
         if (situacaoFinal === "aberto")

@@ -285,6 +285,22 @@ function conferirTela() {
        e faz toda nota vencida parecer em dia. */
     ok(v.vencida === true, "e aparece como VENCIDA (venceu em 2020)", v.vencida);
 
+    /* ==================================================================
+       O PAGAMENTO DO LOTE VEM DA NOTA (sql/11)
+
+       Antes disto, o lote lia `lotes.pago_em` — a marcação manual — e um lote
+       de nota QUITADA continuava aparecendo na cobrança até alguém ir marcá-lo
+       à mão. Duas verdades sobre o mesmo dinheiro.
+
+       O teste segue o dinheiro em três tempos: nada pago, parcial, quitado.
+       ================================================================== */
+    let lote1 = (await a("/restrito/api/lotes/" + L1)).dados;
+    ok(lote1.pagamento && lote1.pagamento.pago === false,
+      "nada pago: o lote não está pago");
+    ok(lote1.pagamento.nota === n1.dados.codigo,
+      "e ele já sabe em que nota está", lote1.pagamento.nota);
+    ok(Number(lote1.pagamento.saldo) === 8000, "com o saldo da nota", lote1.pagamento.saldo);
+
     /* ------------------------------------------------------------------ */
     secao("3. pagamento em parcelas: 1.000 de 8.000");
     const p1 = await a("/restrito/api/lancamentos", "POST",
@@ -294,6 +310,17 @@ function conferirTela() {
     ok(/^RC-\d{4}-\d{4}$/.test(p1.dados.recibo || ""), "com número de recibo", p1.dados.recibo);
     v = (await a("/restrito/api/notas/" + N1)).dados;
     ok(Number(v.saldo) === 7000 && Number(v.pago) === 1000, "faltam exatamente 7.000", v.saldo);
+
+    /* PARCIAL NÃO PAGA LOTE NENHUM. A nota é do CLIENTE, não da peça: com
+       dois lotes e 1.000 de 8.000 recebidos, dizer que um deles está pago
+       seria escolher no chute qual metade foi quitada — e a cobrança
+       perdoaria um lote que ninguém pagou. */
+    lote1 = (await a("/restrito/api/lotes/" + L1)).dados;
+    ok(lote1.pagamento.pago === false, "pagamento parcial NÃO paga o lote");
+    ok(lote1.pagamento.parcial === true, "mas a tela sabe que já entrou parte");
+    ok(Number(lote1.pagamento.saldo) === 7000, "e quanto ainda falta", lote1.pagamento.saldo);
+    const emAberto = (await a("/restrito/api/lotes?pago=0")).dados.lotes || [];
+    ok(emAberto.some((x) => x.id === L1), "com a nota em aberto, o lote fica na cobrança");
 
     const demais = await a("/restrito/api/lancamentos", "POST",
       { categoria: "recebimento", nota_id: N1, valor: 999999 });
@@ -312,6 +339,25 @@ function conferirTela() {
     ok(Number(v.saldo) === 0 && v.quitada === true, "o segundo pagamento quita", v.saldo);
     ok(v.vencida === false, "e a nota deixa de estar vencida");
 
+    /* QUITOU A NOTA, PAGOU OS LOTES — sem ninguém marcar nada no lote. */
+    lote1 = (await a("/restrito/api/lotes/" + L1)).dados;
+    const lote2 = (await a("/restrito/api/lotes/" + L2)).dados;
+    ok(lote1.pagamento.pago === true && lote2.pagamento.pago === true,
+      "a nota quitada paga TODOS os lotes dela");
+    ok(lote1.pagamento.origem === "nota", "e a origem diz que veio do financeiro", lote1.pagamento.origem);
+    ok(!!lote1.pagamento.em, "com a data do último recebimento", lote1.pagamento.em);
+    const naCobranca = (await a("/restrito/api/lotes?pago=0")).dados.lotes || [];
+    ok(!naCobranca.some((x) => x.id === L1 || x.id === L2),
+      "e os dois SAEM da lista de cobrança (?pago=0)");
+    const pagos = (await a("/restrito/api/lotes?pago=1")).dados.lotes || [];
+    ok(pagos.some((x) => x.id === L1), "aparecendo em ?pago=1");
+
+    /* A porta manual fica trancada enquanto o lote pertence a uma nota: duas
+       marcações do mesmo fato divergem no primeiro estorno. */
+    const manual = await a("/restrito/api/lotes/" + L1, "PUT", { pago_em: "2026-01-01" });
+    ok(manual.status === 409 && /nota/i.test(manual.dados.error || ""),
+      "e marcar pago à mão é recusado: quem paga é a nota", JSON.stringify(manual.dados));
+
     /* ------------------------------------------------------------------ */
     secao("4. estorno e cancelamento: marca, não apaga");
     const p3 = await a("/restrito/api/lancamentos", "POST",
@@ -321,6 +367,15 @@ function conferirTela() {
     /* Devolução AUMENTA o que falta: o dinheiro voltou, o cliente deve de
        novo. Subtrair aqui é o erro que deixa a nota quitada após um estorno. */
     ok(Number(v.saldo) === 500 && v.quitada === false, "a devolução faz o saldo voltar a 500", v.saldo);
+
+    /* A PROVA DE QUE NADA FOI COPIADO PARA O LOTE: o estorno desquita a nota,
+       e o lote volta a "a receber" no mesmo instante. Se o pagamento tivesse
+       virado carimbo no lote, ele continuaria dizendo "pago" — com toda a
+       aparência de verdade. */
+    lote1 = (await a("/restrito/api/lotes/" + L1)).dados;
+    ok(lote1.pagamento.pago === false,
+      "o estorno tira o lote de pago — nada foi copiado, tudo é derivado");
+    ok(lote1.pagamento.parcial === true, "e ele volta a ser um parcial");
 
     ok((await a("/restrito/api/lancamentos/" + p3.dados.id + "/cancelar", "PUT", { motivo: "" })).status === 400,
       "cancelar exige motivo");

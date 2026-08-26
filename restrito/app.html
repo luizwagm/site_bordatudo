@@ -432,6 +432,8 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
   font-size: 11.5px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; }
 .etiqueta--verde { background: var(--verde-fundo); color: var(--verde); }
 .etiqueta--ambar { background: var(--ambar-fundo); color: var(--ambar); }
+/* pagamento PARCIAL: parte do valor da nota ja entrou, e ainda falta */
+.etiqueta--laranja { background: #fdece2; color: var(--laranja); }
 .etiqueta--cinza { background: var(--prata-fundo); color: #5c5c70; }
 .etiqueta--vermelha { background: var(--vermelho-fundo); color: var(--vermelho); }
 
@@ -2240,6 +2242,37 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
      é o serviço; as fichas são os pedaços. Juntar é dizer quais pedaços são
      daquele serviço — e o sistema soma, quebra por cor e diz o que falta.
      ====================================================================== */
+  /* ==========================================================================
+     A ETIQUETA DE PAGAMENTO
+
+     Uma função só para lista e detalhe: se cada tela desenhasse a sua, a que
+     ficasse para trás mostraria "em aberto" num lote que o caixa já quitou —
+     o defeito que a versão 11 veio consertar.
+
+     Três estados, e a diferença entre eles importa para quem cobra:
+       · PAGO      — a nota quitou (ou é lote antigo marcado à mão);
+       · PARCIAL   — a nota recebeu alguma coisa e ainda falta. Não paga o
+                     lote: a nota é do CLIENTE, não da peça, e não há como
+                     dizer qual metade dela foi paga;
+       · EM ABERTO — nada entrou.
+     ========================================================================== */
+  function etiquetaPagamento(pg) {
+    const p = pg || {};
+    if (p.pago) {
+      const de = p.origem === "nota" && p.nota ? " · " + esc(p.nota)
+               : p.origem === "manual" ? " · manual" : "";
+      return '<span class="etiqueta etiqueta--verde" title="' +
+        (p.origem === "nota" ? "quitado no financeiro, pela nota " + esc(p.nota || "")
+                             : "marcação manual, anterior ao financeiro") +
+        '">pago' + (p.em ? " " + soData(p.em) : "") + de + "</span>";
+    }
+    if (p.parcial) {
+      return '<span class="etiqueta etiqueta--laranja" title="a nota ' + esc(p.nota || "") +
+        ' recebeu parte do valor">parcial · falta ' + dinheiro(p.saldo) + "</span>";
+    }
+    return '<span class="etiqueta etiqueta--cinza">em aberto</span>';
+  }
+
   async function pintarLotes() {
     TELA = "lotes"; LOTE_ABERTO = null;
     const alvo = document.getElementById("principal");
@@ -2288,9 +2321,7 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           /* Pagamento em coluna PRÓPRIA, e não fundido em `situacao`: o estado
              que a cobrança procura é "faturado E não pago", e ele deixaria de
              existir se as duas informações dividissem a mesma célula. */
-          "<td>" + (l.pago_em
-            ? '<span class="etiqueta etiqueta--verde">pago ' + soData(l.pago_em) + "</span>"
-            : '<span class="etiqueta etiqueta--cinza">em aberto</span>') + "</td>" +
+          "<td>" + etiquetaPagamento(l.pagamento) + "</td>" +
           "<td>" + esc(l.nota || "—") + "</td>" +
           '<td class="linha-botoes"><button class="btn btn--mini" data-acao="abrir-lote" data-id="' + l.id + '">abrir</button>' +
           '<a class="btn btn--fantasma btn--mini" href="/restrito/lotes/' + l.id + '/recibo" ' +
@@ -2330,14 +2361,13 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
        linha a linha antes de faturar — é a tabela que mais precisa de página. */
     const fatiaLote = fatiar("lote", r.fichas);
 
+    const pago = !!(r.pagamento && r.pagamento.pago);
     alvo.innerHTML =
       '<p style="margin:0 0 10px"><button class="btn btn--fantasma btn--mini" data-acao="voltar-lotes">← todos os lotes</button></p>' +
       '<h1 class="titulo-tela">' + esc(l.codigo) + " · " + esc(l.cliente_nome) + "</h1>" +
       '<p class="subtitulo-tela">' + esc(l.descricao || "sem descrição") + " — " + selo(l.situacao) +
         (l.nota ? " · nota " + esc(l.nota) : "") +
-        (l.pago_em
-          ? ' · <span class="etiqueta etiqueta--verde">pago em ' + soData(l.pago_em) + "</span>"
-          : "") + "</p>" +
+        " · " + etiquetaPagamento(r.pagamento) + "</p>" +
 
       '<div class="bloco"><div class="bloco__corpo"><div class="resumo-dia">' +
         "<div><b>" + (prev == null ? "—" : num(prev)) + "</b><span>previsto</span></div>" +
@@ -2347,10 +2377,35 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         "<div><b>" + num(r.pontos) + "</b><span>pontos</span></div>" +
         /* O valor do lote fecha a conta que a nota vai usar. Em laranja
            enquanto não estiver pago: é o que ainda tem de entrar. */
-        '<div' + (l.pago_em ? "" : ' style="border-color:var(--laranja)"') + "><b" +
-          (l.pago_em ? "" : ' style="color:var(--laranja)"') + ">" + dinheiro(r.valor) + "</b><span>" +
-          (l.pago_em ? "recebido" : "a receber") + "</span></div>" +
+        '<div' + (pago ? "" : ' style="border-color:var(--laranja)"') + "><b" +
+          (pago ? "" : ' style="color:var(--laranja)"') + ">" + dinheiro(r.valor) + "</b><span>" +
+          (pago ? "recebido" : "a receber") + "</span></div>" +
       "</div></div></div>" +
+
+      /* ------------------------------------------------------------
+         DE ONDE VEM O PAGAMENTO DESTE LOTE
+
+         Enquanto o lote está numa nota, o dinheiro entra no financeiro — e
+         quem abre o lote precisa saber disso para não ficar procurando um
+         campo de "marcar pago" que não existe mais aqui. O atalho leva à
+         nota, que é onde a ação acontece.
+         ------------------------------------------------------------ */
+      (r.pagamento && r.pagamento.nota
+        ? '<div class="bloco"><div class="bloco__corpo" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">' +
+            "<div>Este lote está na nota <b>" + esc(r.pagamento.nota) + "</b>" +
+            (r.pagamento.nota_situacao === "cancelada"
+              ? " (cancelada — nada a receber por ela)"
+              : r.pagamento.pago
+              ? " · <b style=\"color:var(--verde)\">quitada</b>"
+              : " · recebido " + dinheiro(r.pagamento.recebido_nota) +
+                " de " + dinheiro(r.pagamento.valor_nota) +
+                " · falta <b style=\"color:var(--laranja)\">" + dinheiro(r.pagamento.saldo) + "</b>") +
+            ". O pagamento é registrado lá.</div>" +
+            '<span class="espaco"></span>' +
+            '<button class="btn btn--fantasma btn--mini" data-acao="abrir-nota" data-id="' +
+              r.pagamento.nota_id + '">abrir a nota</button>' +
+          "</div></div>"
+        : "") +
 
       '<div class="bloco"><div class="bloco__topo"><h2>Composição</h2><span class="espaco"></span>' +
         /* Duas portas para a mesma folha. Escolher a orientação AQUI, e não só
