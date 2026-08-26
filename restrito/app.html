@@ -463,6 +463,12 @@ td.vazia { color: #b6b6c4; }
   border-radius: 999px; padding: .34rem .9rem; white-space: nowrap; }
 .abas-periodo .aba:hover { border-color: var(--laranja); }
 .abas-periodo .aba.on { background: var(--tinta); color: #fff; border-color: var(--tinta); }
+/* O número dentro da aba (ex.: "Vencidas 3"). Herda a cor do texto da pílula,
+   então continua legível quando ela está ativa e vira fundo escuro. */
+.abas-periodo .aba__conta { display: inline-block; min-width: 18px; margin-left: 6px;
+  padding: 0 6px; border-radius: 999px; background: rgba(120, 120, 150, .16);
+  font-size: 12.5px; font-weight: 700; }
+.abas-periodo .aba.on .aba__conta { background: rgba(255, 255, 255, .24); }
 /* Só marca, não é botão: diz que o período veio dos campos de data, e nenhuma
    aba corresponde a ele. Sem isso, filtrar à mão apagaria todas as abas e a
    tela ficaria sem dizer em que recorte está. */
@@ -2653,9 +2659,24 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     if (r.pagina !== pag("notas").pagina) pag("notas").pagina = r.pagina;
 
     const clientes = await lista("clientes", true);
-    const aba = (chave, rotulo) =>
-      '<a class="aba' + (filtroNotas.s === chave ? " on" : "") + '" href="#" ' +
-      'data-acao="filtro-notas" data-s="' + chave + '">' + rotulo + "</a>";
+    /* ------------------------------------------------------------------
+       ABA, E NÃO LINK
+
+       Eram `<a>` dentro de `<nav class="abas">` — e o CSS dessa classe
+       estiliza `button`, não âncora. Resultado: quatro links azuis crus no
+       meio de uma tela inteira de pílulas, e nada dizia qual filtro estava
+       valendo além da cor do texto.
+
+       Agora usam o MESMO desenho das abas do topo (`abas-periodo` + `.aba`),
+       que é o padrão desta tela — e ganham `aria-pressed`, que é como um
+       botão de alternância se anuncia para o leitor de tela. O contador vem
+       junto: "Vencidas 3" responde antes do clique a pergunta que faz alguém
+       clicar. Zero fica sem número, que é a resposta boa. */
+    const aba = (chave, rotulo, quantas) =>
+      '<button type="button" class="aba' + (filtroNotas.s === chave ? " on" : "") + '" ' +
+      'aria-pressed="' + (filtroNotas.s === chave ? "true" : "false") + '" ' +
+      'data-acao="filtro-notas" data-s="' + chave + '">' + rotulo +
+      (quantas ? ' <span class="aba__conta">' + num(quantas) + "</span>" : "") + "</button>";
 
     alvo.innerHTML =
       '<h1 class="titulo-tela">Financeiro</h1>' +
@@ -2674,8 +2695,9 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
       "</div></div>" +
 
       '<div class="bloco"><div class="bloco__topo">' +
-        '<nav class="abas" style="padding:0;border:0">' +
-          aba("aberta", "Em aberto") + aba("vencida", "Vencidas") +
+        '<nav class="abas-periodo" aria-label="Filtrar notas" style="margin:0">' +
+          aba("aberta", "Em aberto") +
+          aba("vencida", "Vencidas", r.resumo.vencidas) +
           aba("quitada", "Quitadas") + aba("", "Todas") +
         "</nav><span class=\"espaco\"></span>" +
         '<button class="btn btn--laranja" data-acao="nova-nota">+ Nova nota</button>' +
