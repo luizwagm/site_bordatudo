@@ -1572,6 +1572,21 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
 
   if (caminho === "/restrito/api/sair" && req.method === "POST") {
     const rid = ridDe(req);
+    /* SAIR de dentro de uma conta emprestada NÃO derruba a sessão: devolve o
+       administrador para a conta dele. Encerrar de vez aqui faria o "Sair" da
+       tela do operador expulsar quem estava só corrigindo — e a próxima ação
+       do administrador seria digitar a senha de novo sem entender por quê. */
+    const atual = rid ? sessoes.get(rid) : null;
+    if (atual && atual.como) {
+      const eu = await Q.get("SELECT id, usuario, nome, papel, ativo FROM usuarios WHERE id = ?", atual.como.adminId);
+      if (eu && eu.ativo) {
+        sessoes.set(rid, {
+          usuarioId: eu.id, usuario: eu.usuario, nome: eu.nome, papel: eu.papel,
+          provisoria: false, visto: Date.now(),
+        });
+        return responder(res, 200, { ok: true, voltou: true, usuario: eu.usuario, nome: eu.nome });
+      }
+    }
     if (rid) sessoes.delete(rid);
     return responder(res, 200, { ok: true }, { "Set-Cookie": cookieRid("", req, true) });
   }
@@ -1591,7 +1606,15 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
 
   if (caminho === "/restrito/api/eu") {
     return responder(res, 200, {
+      usuarioId: sessao.usuarioId,
       usuario: sessao.usuario, nome: sessao.nome, papel: sessao.papel,
+      /* Quem está de empréstimo na conta de outro precisa VER isso o tempo
+         todo. Sem o aviso na tela, o administrador esquece, faz o dia inteiro
+         de trabalho como o operador e só descobre quando a produção de outra
+         pessoa não bate. */
+      comoOutro: sessao.como
+        ? { quem: sessao.como.adminNome, usuario: sessao.como.adminUsuario, desde: sessao.como.desde }
+        : null,
       /* A TELA NÃO DECIDE PELO NOME DO PAPEL. Com a entrada do `dono`, um
          `papel === "admin"` no JavaScript esconderia do dono justamente os
          botões que ele foi criado para usar. O servidor manda a RESPOSTA
@@ -1623,6 +1646,28 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
      isto não deveria acontecer nunca. "Não deveria acontecer nunca" é
      exatamente a frase que precede os travamentos que ninguém consegue
      explicar depois — e o custo de escrever esta linha é uma comparação. */
+  /* ======================================================================
+     O QUE NÃO SE FAZ DE EMPRÉSTIMO
+
+     Entrar na conta de alguém serve para CORRIGIR O TRABALHO dela — fechar a
+     jornada esquecida, arrumar a ficha. Não serve para mexer em contas: nem
+     na dela (trocar a senha tomaria a conta da pessoa, e ela descobriria
+     sozinha, no dia seguinte, sem poder entrar), nem nas outras (seria o
+     caminho curto para escalar poder usando o papel emprestado).
+
+     Barrado por CAMINHO, no servidor, e não escondendo botões: a tela do
+     operador nem tem esses botões, mas quem sabe montar um POST não precisa
+     deles.
+     ====================================================================== */
+  if (sessao.como
+      && (caminho === "/restrito/api/eu/senha"
+          || caminho.startsWith("/restrito/api/usuarios"))) {
+    return responder(res, 403, {
+      error: "você está usando a conta de " + sessao.nome +
+             " — volte a ser você para mexer em contas e senhas",
+    });
+  }
+
   if (sessao.provisoria
       && !ehDono(sessao)
       && caminho !== "/restrito/api/eu/senha"
@@ -2788,6 +2833,31 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   /* ======================================================================
      ADMINISTRATIVO — daqui para baixo, só administrador
      ====================================================================== */
+  /* Voltar a ser você. Liberada para QUALQUER sessão emprestada — inclusive a
+     de um operador, que é o papel que a sessão tem nesse momento. Amarrá-la a
+     `ehAdmin` deixaria o administrador preso na conta do outro, com uma
+     única saída: sair e entrar de novo. */
+  if (caminho === "/restrito/api/eu/voltar" && req.method === "POST") {
+    if (!sessao.como) return responder(res, 400, { error: "você já está na sua conta" });
+    const rid = ridDe(req);
+    const de = sessao.usuario;
+    const eu = await Q.get("SELECT id, usuario, nome, papel, ativo FROM usuarios WHERE id = ?", sessao.como.adminId);
+    /* A conta de origem pode ter sido desativada enquanto isto durava. Nesse
+       caso a sessão morre: voltar para uma conta desligada seria contornar o
+       desligamento. */
+    if (!eu || !eu.ativo) {
+      sessoes.delete(rid);
+      return responder(res, 401, { error: "sua conta não está mais ativa — entre de novo" },
+        { "Set-Cookie": cookieRid("", req, true) });
+    }
+    sessoes.set(rid, {
+      usuarioId: eu.id, usuario: eu.usuario, nome: eu.nome, papel: eu.papel,
+      provisoria: false, visto: Date.now(),
+    });
+    console.log(`  · ENTRAR COMO: ${eu.usuario} saiu da conta de ${de}`);
+    return responder(res, 200, { ok: true, usuario: eu.usuario, nome: eu.nome, papel: eu.papel });
+  }
+
   if (!ehAdmin(sessao)) return responder(res, 403, { error: "área do administrador" });
 
   /* ========================================================================
@@ -3791,6 +3861,73 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
      com a conta de manutenção deixaria a fábrica sem escritório, e a saída
      seria justamente chamar o dono — que é o que se quer evitar precisar.
      ======================================================================== */
+
+  /* ========================================================================
+     ENTRAR COMO — o administrador opera a conta de outro
+
+     Para quê: o operador esqueceu de fechar a jornada, marcou a máquina
+     errada, deixou uma ficha aberta. O administrador precisa arrumar isso NA
+     CONTA DELE — porque a produção pertence ao operador, e é por ela que ele
+     recebe. Corrigir "de fora" criaria produção sem dono.
+
+     AS QUATRO REGRAS QUE FAZEM ISSO NÃO SER UMA PORTA DOS FUNDOS:
+
+     1. NUNCA pela senha. A senha do usuário não é lida, não é trocada e não é
+        pedida — o administrador não fica sabendo dela, e a pessoa continua
+        dona da própria conta.
+     2. A SESSÃO CARREGA A ORIGEM (`como`). Toda tela e todo registro sabem
+        que ali está o administrador de empréstimo, e a faixa no alto não
+        deixa esquecer.
+     3. O PAPEL PASSA A SER O DO ALVO. Entrando como operador, o administrador
+        VÊ e PODE o que o operador vê e pode — inclusive não ver dinheiro. Um
+        "admin com a cara do operador" mostraria uma tela que a pessoa nunca
+        vai encontrar quando pedir ajuda pelo telefone.
+     4. NÃO SE ENCADEIA e não se promove: quem já está de empréstimo não entra
+        em outra conta, não troca senha nenhuma e não mexe em usuários. Sem
+        isso, "entrar como" viraria o caminho curto para trocar a senha do
+        dono da fábrica.
+
+     O DONO não é personificável, pela mesma razão de ele não aparecer na
+     lista: a conta de manutenção não é um lugar onde se opera o dia a dia.
+     ======================================================================== */
+  const mEntrarComo = /^\/restrito\/api\/usuarios\/(\d+)\/entrar-como$/.exec(caminho);
+  if (mEntrarComo && req.method === "POST") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador entra na conta de outro" });
+    if (sessao.como) return responder(res, 409, {
+      error: "você já está usando a conta de " + sessao.nome + " — volte a ser você antes de entrar em outra",
+    });
+    const id = Number(mEntrarComo[1]);
+    if (id === sessao.usuarioId) return responder(res, 400, { error: "essa conta já é a sua" });
+
+    const alvo = await Q.get("SELECT id, usuario, nome, papel, ativo, senha_provisoria FROM usuarios WHERE id = ?", id);
+    if (!alvo) return responder(res, 404, { error: "usuário não encontrado" });
+    if (alvo.papel === "dono") return responder(res, 404, { error: "usuário não encontrado" });
+    if (!alvo.ativo) return responder(res, 409, {
+      error: "essa conta está desativada — reative antes de entrar nela",
+    });
+    /* Conta que ainda não teve a primeira senha trocada: entrar nela agora
+       gastaria a senha de uso único que a pessoa ainda não usou, e ela ficaria
+       trancada para fora da própria conta no primeiro acesso. */
+    if (alvo.senha_provisoria) return responder(res, 409, {
+      error: "essa pessoa ainda não trocou a senha provisória — ela precisa entrar uma vez primeiro",
+    });
+
+    const rid = ridDe(req);
+    const atual = sessoes.get(rid);
+    sessoes.set(rid, {
+      usuarioId: alvo.id, usuario: alvo.usuario, nome: alvo.nome, papel: alvo.papel,
+      provisoria: false,
+      visto: Date.now(),
+      /* De onde veio, para poder VOLTAR e para todo o resto saber. */
+      como: {
+        adminId: atual.usuarioId, adminUsuario: atual.usuario, adminNome: atual.nome,
+        adminPapel: atual.papel, desde: new Date().toISOString(),
+      },
+    });
+    console.log(`  · ENTRAR COMO: ${atual.usuario} (${atual.papel}) está usando a conta de ${alvo.usuario}`);
+    avisar("usuarios");
+    return responder(res, 200, { ok: true, usuario: alvo.usuario, nome: alvo.nome, papel: alvo.papel });
+  }
 
   /* Alvo de qualquer rota que mexe em usuário. Devolve o papel para as rotas
      recusarem o dono num lugar só, em vez de cada uma repetir a consulta. */

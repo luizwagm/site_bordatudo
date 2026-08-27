@@ -342,9 +342,12 @@ async function limparRestos() {
   /* ---- usuários próprios, senha só aqui dentro ------------------------- */
   const SENHA_ADMIN = "zz-qa-admin-2026";
   const SENHA_OPER = "zz-qa-oper-2026";
-  CRIADO.usuarios.push(await Q.inserir(
+  /* O id do admin fica guardado: a seção 12o (entrar como) precisa dele para
+     provar que a própria conta é recusada e que o operador não personifica. */
+  const idAdmin = await Q.inserir(
     "INSERT INTO usuarios (usuario, nome, senha_hash, papel) VALUES (?,?,?,?) RETURNING id",
-    "zz_qa_admin", "ZZ QA Admin", gerarHash(SENHA_ADMIN), "admin"));
+    "zz_qa_admin", "ZZ QA Admin", gerarHash(SENHA_ADMIN), "admin");
+  CRIADO.usuarios.push(idAdmin);
   const idOper = await Q.inserir(
     "INSERT INTO usuarios (usuario, nome, senha_hash, papel) VALUES (?,?,?,?) RETURNING id",
     "zz_qa_oper", "ZZ QA Operador", gerarHash(SENHA_OPER), "operador");
@@ -2029,6 +2032,92 @@ async function limparRestos() {
 
     await dono("/restrito/api/sair", "POST");
   }
+
+  /* ============================================ 12o. ENTRAR COMO ========= */
+  console.log("  12o. entrar como (o admin dentro da conta de outro)");
+
+  /* Navegador PRÓPRIO: esta seção troca a identidade da sessão, e usar o
+     `admin` das outras seções deixaria as seguintes rodando dentro da conta
+     do operador sem ninguém perceber. */
+  const empresta = criarNavegador("empresta");
+  eq((await empresta("/restrito/api/entrar", "POST",
+     { usuario: "zz_qa_admin", senha: SENHA_ADMIN })).status, 200, "admin entra no navegador próprio");
+
+  eq((await oper("/restrito/api/usuarios/" + idAdmin + "/entrar-como", "POST", {})).status, 403,
+     "operador NÃO entra na conta de ninguém");
+
+  r = await empresta("/restrito/api/usuarios/" + idOper + "/entrar-como", "POST", {});
+  eq(r.status, 200, "o admin entra na conta do operador", JSON.stringify(r.dados));
+
+  r = await empresta("/restrito/api/eu");
+  eq(r.dados.usuario, "zz_qa_oper", "a sessão passa a ser a do operador");
+  eq(r.dados.papel, "operador", "com o PAPEL dele — não um admin disfarçado");
+  eq(r.dados.admin, false, "e sem o poder de administrador");
+  ok(r.dados.comoOutro && /zz_qa_admin/.test(r.dados.comoOutro.usuario),
+     "a sessão diz de quem ela é emprestada — é o que alimenta a faixa na tela",
+     JSON.stringify(r.dados.comoOutro));
+
+  /* O PAPEL EMPRESTADO VALE DE VERDADE: o operador não vê dinheiro, e o admin
+     dentro da conta dele também não. Se visse, a tela mostrada em "vou ver o
+     que você está vendo" não seria a que a pessoa vê. */
+  ok(!("preco" in (await empresta("/restrito/api/desenhos/" + desA1)).dados),
+     "dentro da conta do operador, o preço some — como para ele");
+  eq((await empresta("/restrito/api/lotes")).status, 403, "e a área do administrador fecha");
+
+  /* AS TRAVAS. Sem elas, "entrar como" é uma porta dos fundos. */
+  eq((await empresta("/restrito/api/eu/senha", "PUT",
+     { atual: SENHA_OPER, nova: "zz-qa-roubada-2026" })).status, 403,
+     "de empréstimo NÃO se troca a senha da pessoa (seria tomar a conta dela)");
+  eq((await empresta("/restrito/api/usuarios")).status, 403,
+     "nem se mexe na lista de usuários");
+  eq((await empresta("/restrito/api/usuarios/" + idOper2 + "/entrar-como", "POST", {})).status, 403,
+     "e não se pula de uma conta emprestada para outra");
+
+  /* A senha da pessoa continua a dela — a prova de que nada foi trocado. */
+  eq((await oper2("/restrito/api/eu")).status, 200, "a sessão do próprio operador 2 segue viva");
+
+  /* VOLTAR. Liberado mesmo com papel de operador: amarrar em `ehAdmin` deixaria
+     o administrador preso na conta do outro. */
+  r = await empresta("/restrito/api/eu/voltar", "POST", {});
+  eq(r.status, 200, "volta a ser você");
+  r = await empresta("/restrito/api/eu");
+  eq(r.dados.usuario, "zz_qa_admin", "a sessão é de novo do administrador");
+  eq(r.dados.admin, true, "com o poder de volta");
+  ok(!r.dados.comoOutro, "e sem a marca de empréstimo");
+  eq((await empresta("/restrito/api/eu/voltar", "POST", {})).status, 400,
+     "voltar duas vezes é recusado com recado, não com erro de servidor");
+
+  /* O SAIR de dentro do empréstimo devolve o admin em vez de derrubar a
+     sessão — senão o "Sair" da tela do operador expulsaria quem só corrigia. */
+  await empresta("/restrito/api/usuarios/" + idOper + "/entrar-como", "POST", {});
+  r = await empresta("/restrito/api/sair", "POST");
+  eq(r.dados.voltou, true, "sair de dentro do empréstimo devolve o administrador");
+  eq((await empresta("/restrito/api/eu")).dados.usuario, "zz_qa_admin",
+     "e a sessão continua viva, na conta certa");
+
+  /* Quem não pode ser personificado. */
+  eq((await empresta("/restrito/api/usuarios/" + idAdmin + "/entrar-como", "POST", {})).status, 400,
+     "a própria conta é recusada");
+  eq((await empresta("/restrito/api/usuarios/999999/entrar-como", "POST", {})).status, 404,
+     "conta inexistente: 404");
+
+  /* Conta DESATIVADA: entrar nela contornaria o desligamento. */
+  await Q.run("UPDATE usuarios SET ativo = FALSE WHERE id = ?", idOper2);
+  eq((await empresta("/restrito/api/usuarios/" + idOper2 + "/entrar-como", "POST", {})).status, 409,
+     "conta desativada é recusada — entrar nela contornaria o desligamento");
+  await Q.run("UPDATE usuarios SET ativo = TRUE WHERE id = ?", idOper2);
+
+  /* Conta que ainda não trocou a senha de uso único: entrar gastaria a senha
+     que a pessoa ainda vai usar. */
+  const idNovato = await Q.inserir(
+    `INSERT INTO usuarios (usuario, nome, senha_hash, papel, senha_provisoria)
+     VALUES (?,?,?,'operador',TRUE) RETURNING id`,
+    "zz_qa_novato", "ZZ QA Novato", gerarHash("zz-qa-novato-2026"));
+  CRIADO.usuarios.push(idNovato);
+  eq((await empresta("/restrito/api/usuarios/" + idNovato + "/entrar-como", "POST", {})).status, 409,
+     "conta que ainda não usou a senha provisória é recusada");
+
+  await empresta("/restrito/api/sair", "POST");
 
   /* ==================================================== 13. SAIR ========= */
   console.log("  13. sair");

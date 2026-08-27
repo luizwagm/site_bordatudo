@@ -463,6 +463,26 @@ td.vazia { color: #b6b6c4; }
   border-radius: 999px; padding: .34rem .9rem; white-space: nowrap; }
 .abas-periodo .aba:hover { border-color: var(--laranja); }
 .abas-periodo .aba.on { background: var(--tinta); color: #fff; border-color: var(--tinta); }
+
+/* ==========================================================================
+   FAIXA DE EMPRESTIMO — o administrador dentro da conta de outra pessoa
+
+   Fixa NO RODAPE, e nao no topo: o topo desta tela ja tem a barra do sistema,
+   e empurrar tudo para baixo mudaria a posicao de todos os botoes que a
+   pessoa conhece de cor. Embaixo ela fica sempre visivel e nao move nada.
+   ========================================================================== */
+.faixa-emprestimo {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 400;
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  padding: 10px 16px; background: var(--laranja); color: #fff;
+  font-size: 14px; box-shadow: 0 -6px 18px rgb(20 24 60 / .18);
+}
+.faixa-emprestimo b { font-weight: 800; }
+.faixa-emprestimo span { opacity: .92; }
+.faixa-emprestimo .btn { margin-left: auto; background: #fff; color: var(--laranja);
+  border-color: #fff; font-weight: 700; }
+/* O rodape da pagina nao pode ficar debaixo da faixa. */
+body.de-emprestimo { padding-bottom: 56px; }
 /* O número dentro da aba (ex.: "Vencidas 3"). Herda a cor do texto da pílula,
    então continua legível quando ela está ativa e vira fundo escuro. */
 .abas-periodo .aba__conta { display: inline-block; min-width: 18px; margin-left: 6px;
@@ -4741,6 +4761,16 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
             '<button class="btn btn--fantasma btn--mini" data-acao="editar-usuario" data-id="' + u.id + '">editar</button>' +
             '<button class="btn btn--fantasma btn--mini" data-acao="senha-usuario" data-id="' + u.id +
               '" data-usuario="' + esc(u.usuario) + '">redefinir senha</button>' +
+            /* Só para conta ATIVA que já trocou a senha inicial: entrar numa
+               conta desativada contornaria o desligamento, e numa que ainda
+               não foi usada gastaria a senha de uso único da pessoa. Quem
+               julga de verdade é o servidor; aqui é para não oferecer o que
+               vai ser recusado. */
+            (u.ativo && String(u.id) !== String(EU && EU.usuarioId)
+              ? '<button class="btn btn--fantasma btn--mini" data-acao="entrar-como" data-id="' + u.id +
+                '" data-usuario="' + esc(u.usuario) + '" data-nome="' + esc(u.nome || u.usuario) +
+                '" title="Abrir o sistema como esta pessoa, para corrigir algo na conta dela">entrar como</button>'
+              : "") +
             botoesDeVida("usuarios", { id: u.id, ativo: u.ativo, nome: u.usuario }) +
           "</td></tr>").join("") +
         "</tbody></table></div>" + paginacao(fatiaUsr, "usuarios") +
@@ -5590,6 +5620,8 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
       /* ---- usuários ---- */
       else if (acao === "novo-usuario") await modalUsuario(null);
       else if (acao === "editar-usuario") await modalUsuario(id);
+      else if (acao === "entrar-como") await entrarComo(id, b.getAttribute("data-nome"));
+      else if (acao === "voltar-a-ser-eu") await voltarASerEu();
       else if (acao === "senha-usuario") {
         const quem = b.getAttribute("data-usuario");
         if (!confirm("Gerar uma senha nova para " + quem + "?\n\n" +
@@ -5686,6 +5718,48 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     }
   });
 
+  /* ==========================================================================
+     A FAIXA DE "VOCÊ ESTÁ NA CONTA DE OUTRA PESSOA"
+
+     Fixa no alto, cor de aviso, sem como fechar. Não é enfeite: quem entra na
+     conta de um operador para fechar uma jornada vê a tela DELE — e uma tela
+     de operador é exatamente igual para todo mundo. Sem a faixa, o
+     administrador segue trabalhando achando que é a própria conta, e a
+     produção do dia inteiro vai para o nome de quem não trabalhou.
+     ========================================================================== */
+  function pintarFaixaEmprestimo() {
+    var velha = document.getElementById("faixa-emprestimo");
+    if (velha) velha.remove();
+    if (!EU || !EU.comoOutro) { document.body.classList.remove("de-emprestimo"); return; }
+    document.body.classList.add("de-emprestimo");
+    var f = document.createElement("div");
+    f.id = "faixa-emprestimo";
+    f.className = "faixa-emprestimo";
+    f.innerHTML =
+      "<b>Você está usando a conta de " + esc(EU.nome || EU.usuario) + "</b>" +
+      "<span>tudo que fizer aqui entra na produção dela — " + esc(EU.comoOutro.quem) + " está de empréstimo</span>" +
+      '<button class="btn btn--mini" data-acao="voltar-a-ser-eu">voltar a ser eu</button>';
+    document.body.appendChild(f);
+  }
+
+  async function entrarComo(id, nome) {
+    if (!confirm("Abrir o sistema como " + nome + "?\n\n" +
+        "Você vai ver e fazer o que essa pessoa vê e faz, e o que registrar entra na produção dela. " +
+        "A senha dela não é usada nem alterada. Para voltar, use o botão na faixa do alto.")) return;
+    try { await enviar("/restrito/api/usuarios/" + id + "/entrar-como", "POST", {}); }
+    catch (e) { return recado(e.message, true); }
+    /* Recarrega a página inteira: papel, menu e telas mudam de dono, e
+       repintar pedaço por pedaço deixaria restos da tela do administrador
+       numa sessão que agora é de outra pessoa. */
+    location.reload();
+  }
+
+  async function voltarASerEu() {
+    try { await enviar("/restrito/api/eu/voltar", "POST", {}); }
+    catch (e) { return recado(e.message, true); }
+    location.reload();
+  }
+
   async function comecar() {
     EU = await api("/restrito/api/eu");
     if (EU.trocarSenha) return pedirTroca(EU);
@@ -5693,6 +5767,8 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     document.getElementById("tela-entrar").hidden = true;
     document.getElementById("tela-trocar").hidden = true;
     document.getElementById("app").hidden = false;
+
+    pintarFaixaEmprestimo();
 
     const nomeCurto = (EU.nome || EU.usuario).split(" ")[0];
     document.getElementById("topo-nome").textContent = nomeCurto;
