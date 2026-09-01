@@ -3,7 +3,7 @@
 Site institucional + **controle de produção** (`/restrito`) da Borda Tudo —
 Bordados Computadorizados, Caruaru-PE.
 
-**Versão 1.21.0** · Node ≥ 20 · porta 5193 · `npm test` → **632 conferências**.
+**Versão 1.24.0** · Node ≥ 20 · porta 5193 · `npm test` → **713 conferências**.
 
 São duas coisas no mesmo processo, com bancos separados:
 
@@ -188,6 +188,54 @@ absorvida vira situação **`somada`** — não é apagada:
 
 Ficha somada não pode estar em lote, e o banco recusa se tentarem.
 
+### As parcelas continuam na Produção
+
+Somar é um gesto de RECIBO: ele muda como o cliente vê o serviço, e não o que a
+fábrica produziu. Por isso a tela de Produção mostra as **parcelas** — com o
+operador, a quantidade e a pontuação exata de cada uma — e esconde a ficha
+somada, que é peça administrativa.
+
+Mostrar as duas contaria cada peça duas vezes. Mostrar só a somada — que era o
+que acontecia até a 1.24 — esconde o trabalho de quem bordou e joga tudo no nome
+de uma pessoa só: a ficha somada nasce com o operador da PRIMEIRA parcela.
+
+Na linha da parcela aparece a etiqueta `somada #N`, e o lote mostrado é o da
+soma — a parcela não está solta, quem carrega o lote é a ficha que a absorveu.
+
+**A parcela não se corrige nem se cancela sozinha** (409). A soma foi calculada
+uma vez; mexer numa parte deixaria o total sem sustentação. O caminho é remover
+a ficha somada — as parcelas voltam —, corrigir e somar de novo.
+
+> **Duas perguntas parecidas, respostas diferentes.** `?soltas=1` é "que trabalho
+> ainda não foi faturado" e inclui a parcela cuja soma está fora de lote.
+> `?anexavel=1` é "o que dá para marcar neste lote" e exclui parcela — o
+> `PUT /lotes/:id/fichas` só aceita `fechada` e a descartaria em silêncio.
+
+### O administrador escolhe o operador ao abrir a ficha
+
+Em **Abrir ficha**, o admin vê um campo **Operador** (o operador não vê, e o
+servidor recusa o campo de quem não for admin). Serve para o lançamento do que
+JÁ FOI FEITO: sem ele, a produção antiga entra inteira no nome do administrador
+e a folha de quem trabalhou fica vazia.
+
+Nasce em "eu", que é o comportamento de sempre. Combinando com **Lançar bordado
+de outra data**, o escritório registra a nota antiga com a data e o nome certos.
+
+Três regras que vêm junto:
+
+- a conferência de "já tem ficha aberta" é do **alvo**, não de quem clicou;
+- conta **desativada** recusa (409) e a conta de **dono** responde 404, como em
+  toda rota de usuário;
+- **abrir ficha para outra pessoa não bate o ponto dela.** Se o expediente dela
+  estiver aberto, a ficha entra na jornada dela; se não estiver, a ficha nasce
+  **sem jornada** e a tela avisa — ela conta peça e não conta hora. Criar uma
+  jornada seria o administrador registrar início de expediente de terceiro, e
+  hora vira dinheiro na folha.
+
+O dono da ficha se escolhe na ABERTURA e não muda depois: `usuario_id` continua
+fora da rota de correção, porque trocar depois é mover a produção de uma pessoa
+para outra.
+
 ---
 
 ## Horas do operador
@@ -293,7 +341,7 @@ Um adesivo fotografado não dá acesso a nada. Se um adesivo se perder, use
 
 ```bash
 npm start                    # site + painel + /restrito na porta 5193
-npm test                     # as TRÊS suítes (501 + 84 + 47 = 632 conferências)
+npm test                     # as TRÊS suítes (567 + 99 + 47 = 713 conferências)
 node backup.js agora         # cópia dos DOIS bancos (site.db + pg_dump)
 ```
 

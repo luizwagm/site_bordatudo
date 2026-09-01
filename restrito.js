@@ -1059,6 +1059,37 @@ const DINHEIRO = new Set(["preco"]);
 
    Devolve: null para vazio, undefined para inválido, ISO (Z) para o resto.
    ========================================================================== */
+/* ==========================================================================
+   O QUE CONTA COMO TRABALHO DO OPERADOR
+
+   Depois de somar fichas existem DUAS verdades sobre as mesmas peças, e cada
+   tela precisa da sua:
+
+     · as PARCELAS (`situacao = 'somada'`) carregam quem bordou, em que jornada
+       e a pontuação exata da peça. É o trabalho, e é por ele que se paga.
+     · a ficha SOMADA (`soma_de` preenchido) é peça administrativa: existe para
+       o recibo do cliente sair com uma linha em vez de três. O operador dela é
+       o da primeira parcela, a pontuação é uma média, e a jornada é nula.
+
+   A Produção mostra as PARCELAS e esconde a somada. Mostrar as duas contaria
+   cada peça duas vezes; mostrar só a somada — que era o que acontecia — esconde
+   o trabalho de quem bordou e joga tudo no nome de uma pessoa só.
+
+   O Lote e a nota fazem o contrário, e continuam como estavam: lá a parcela
+   ficou com `lote_id` nulo, então ela some sozinha e quem aparece é a somada.
+
+   Um lugar só para a regra, porque ela vale em quatro consultas — e uma delas
+   ficando para trás faria o total da tela discordar do total do rodapé.
+   ========================================================================== */
+const SQL_TRABALHO = "f.situacao IN ('fechada','somada') AND f.soma_de IS NULL";
+
+/* A parcela ficou sem lote próprio, mas ela NÃO está solta: quem carrega o lote
+   é a ficha que a absorveu. Sem esta volta, toda parcela apareceria na lista de
+   "fora de lote" — que é a lista do que ainda falta faturar. */
+const SQL_SEM_LOTE =
+  "(f.lote_id IS NULL AND (f.somada_em_id IS NULL" +
+  " OR (SELECT s.lote_id FROM fichas s WHERE s.id = f.somada_em_id) IS NULL))";
+
 const FUSO_FABRICA = "-03:00";
 function instanteDe(bruto) {
   const s = String(bruto ?? "").trim();
@@ -2024,8 +2055,8 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
                   (SELECT COUNT(*) FROM lotes l
                      LEFT JOIN lote_pagamento lp ON lp.lote_id = l.id
                     WHERE l.cliente_id = $1 AND NOT COALESCE(lp.pago, FALSE)) lotes_a_receber,
-                  (SELECT COALESCE(SUM(quantidade),0) FROM fichas
-                    WHERE cliente_id = $1 AND situacao = 'fechada') pecas`.replace(/\$1/g, "?"),
+                  (SELECT COALESCE(SUM(f.quantidade),0) FROM fichas f
+                    WHERE f.cliente_id = $1 AND ${SQL_TRABALHO}) pecas`.replace(/\$1/g, "?"),
           id, id, id, id);
       }
       esconderSegredos(def, sessao, item);
@@ -2195,7 +2226,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
          LEFT JOIN mercadorias me ON me.id = f.mercadoria_id
          LEFT JOIN cores co ON co.id = f.cor_id
          LEFT JOIN maquinas ma ON ma.id = f.maquina_id
-        WHERE f.usuario_id = ? AND f.situacao = 'fechada'
+        WHERE f.usuario_id = ? AND ${SQL_TRABALHO}
           AND f.fechada_em::date = current_date
         ORDER BY f.fechada_em DESC`, uid);
 
@@ -2322,10 +2353,52 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     if (!clienteId) return responder(res, 400, { error: "escolha o cliente" });
     if (!desenhoId) return responder(res, 400, { error: "escolha o desenho" });
 
+    /* ------------------------------------------------------------------
+       DE QUEM É ESTA FICHA — só o administrador escolhe
+
+       A ficha é o trabalho de alguém, e é por ela que a pessoa recebe. Por
+       padrão ela nasce de quem está logado, que é o caso do operador na
+       máquina.
+
+       O escritório precisa de outra coisa: lançar bordado que JÁ FOI FEITO e
+       dizer quem bordou. Sem isso, a produção do mês antigo entra inteira no
+       nome do administrador — e a folha de quem trabalhou fica vazia.
+
+       Por que aqui e não na correção: `usuario_id` é dos campos que a rota de
+       correção guarda fechados de propósito ("isso não é correção, é reescrever
+       a história"). Escolher na ABERTURA é declarar; trocar depois seria mover
+       a produção de uma pessoa para outra.
+
+       O operador não manda este campo. Se pudesse, poderia pendurar a própria
+       produção em qualquer colega — ou tirar dele.
+       ------------------------------------------------------------------ */
+    let donoId = sessao.usuarioId;
+    if (corpo.usuario_id !== undefined && corpo.usuario_id !== null && String(corpo.usuario_id).trim() !== "") {
+      if (!ehAdmin(sessao))
+        return responder(res, 403, { error: "só o administrador escolhe o operador da ficha" });
+      const alvoId = Number(corpo.usuario_id) || 0;
+      const alvo = await Q.get(
+        "SELECT id, nome, usuario, papel, ativo FROM usuarios WHERE id = ?", alvoId);
+      /* 404 também para o DONO, como em todas as rotas de usuário: esconder a
+         conta não é protegê-la se uma outra rota confirmar que ela existe. */
+      if (!alvo || alvo.papel === "dono")
+        return responder(res, 404, { error: "operador não encontrado" });
+      if (!alvo.ativo)
+        return responder(res, 409, { error: `${alvo.nome || alvo.usuario} está desativado.` });
+      donoId = alvo.id;
+    }
+    const paraOutro = Number(donoId) !== Number(sessao.usuarioId);
+
+    /* O índice único parcial garante UMA ficha aberta por pessoa. A conferência
+       é do ALVO, e não de quem está clicando: abrindo para o João, quem não pode
+       ter ficha aberta é o João. */
     const jaAberta = await Q.get(
-      "SELECT id FROM fichas WHERE usuario_id = ? AND situacao = 'aberta'", sessao.usuarioId);
+      "SELECT id FROM fichas WHERE usuario_id = ? AND situacao = 'aberta'", donoId);
     if (jaAberta) return responder(res, 409, {
-      error: "Você já tem uma ficha aberta. Feche-a antes de abrir outra.", fichaAberta: jaAberta.id,
+      error: paraOutro
+        ? "Esse operador já tem uma ficha aberta. Feche a dele antes de abrir outra."
+        : "Você já tem uma ficha aberta. Feche-a antes de abrir outra.",
+      fichaAberta: jaAberta.id,
     });
 
     const desenho = await Q.get("SELECT id, pontuacao, preco, cliente_id FROM desenhos WHERE id = ? AND ativo", desenhoId);
@@ -2403,11 +2476,22 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
        um bordado de três semanas atrás na jornada de hoje somaria ao dia do
        administrador um trabalho que não aconteceu agora — e o saldo de horas
        dele, que é o que se olha para pagar, passaria a contar digitação. */
+    /* ------------------------------------------------------------------
+       ABRIR FICHA PARA OUTRA PESSOA NÃO BATE O PONTO DELA
+
+       Para si mesmo, a regra de sempre: sem jornada aberta, abre uma — quem
+       foi direto para a máquina não pode ficar sem registro de hora.
+
+       Para outra pessoa, NÃO. A ficha entra na jornada dela se ela já estiver
+       trabalhando; se não estiver, a ficha nasce sem jornada. Criar uma seria
+       o administrador registrar início de expediente de terceiro — hora que
+       vira dinheiro na folha, a partir de um clique que nem era sobre isso.
+       ------------------------------------------------------------------ */
     let jornada = null;
     if (!retroativa) {
-      jornada = await Q.get("SELECT id FROM jornadas WHERE usuario_id = ? AND fim IS NULL", sessao.usuarioId);
-      if (!jornada) {
-        const jid = await Q.inserir("INSERT INTO jornadas (usuario_id) VALUES (?) RETURNING id", sessao.usuarioId);
+      jornada = await Q.get("SELECT id FROM jornadas WHERE usuario_id = ? AND fim IS NULL", donoId);
+      if (!jornada && !paraOutro) {
+        const jid = await Q.inserir("INSERT INTO jornadas (usuario_id) VALUES (?) RETURNING id", donoId);
         jornada = { id: jid };
       }
     }
@@ -2420,11 +2504,18 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       `INSERT INTO fichas (usuario_id, jornada_id, maquina_id, cliente_id, desenho_id,
                            pontuacao, preco_unitario, aberta_em)
        VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?::timestamptz, now())) RETURNING id`,
-      sessao.usuarioId, jornada ? jornada.id : null, maquinaId, clienteId, desenhoId,
+      donoId, jornada ? jornada.id : null, maquinaId, clienteId, desenhoId,
       pontuacao, precoUnitario, abertaEm);
     /* A produção do dia mudou — a tela do escritório se atualiza sozinha. */
     avisar("fichas");
-    return responder(res, 201, { ok: true, id, pontuacao });
+    /* `sem_jornada` volta para a tela poder avisar. Ficha sem jornada conta
+       peça e não conta hora: o administrador precisa saber disso na hora, e não
+       descobrir no fim do mês olhando um tempo por peça que não fecha. */
+    return responder(res, 201, {
+      ok: true, id, pontuacao,
+      para_outro: paraOutro,
+      sem_jornada: !retroativa && !jornada,
+    });
   }
 
   /* ======================================================================
@@ -2628,6 +2719,15 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     if (acao === "cancelar" && req.method === "PUT") {
       if (f.situacao === "fechada" && !ehAdmin(sessao))
         return responder(res, 403, { error: "ficha já fechada — só o administrador cancela" });
+      /* Cancelar a parcela tiraria as peças dela da conta e deixaria a soma
+         intacta — o mesmo estrago da correção, por outra porta. */
+      if (f.situacao === "somada") {
+        return responder(res, 409, {
+          error: "Esta ficha é parcela de uma soma. Remova a ficha somada "
+               + "(#" + f.somada_em_id + ") antes — as parcelas voltam sozinhas.",
+          somada_em_id: f.somada_em_id,
+        });
+      }
       await Q.run("UPDATE fichas SET situacao = 'cancelada' WHERE id = ?", id);
       avisar("fichas");
       return responder(res, 200, { ok: true });
@@ -2680,6 +2780,25 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
          continua contando, e o que fica negativo é a média do dia.
          ------------------------------------------------------------------ */
       if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador corrige ficha" });
+
+      /* ------------------------------------------------------------------
+         PARCELA DE SOMA NÃO SE CORRIGE SOZINHA
+
+         Ela voltou a aparecer na Produção — e passou a ter um botão "corrigir"
+         ao lado. Mudar a quantidade aqui deixaria a ficha somada dizendo um
+         total que as partes não sustentam mais, sem nada na tela denunciar:
+         a soma foi calculada uma vez, no momento em que foi feita.
+
+         O caminho existe e é o mesmo do DELETE: remover a somada devolve as
+         parcelas, corrige, soma de novo.
+         ------------------------------------------------------------------ */
+      if (f.situacao === "somada") {
+        return responder(res, 409, {
+          error: "Esta ficha é parcela de uma soma. Remova a ficha somada "
+               + "(#" + f.somada_em_id + ") — as parcelas voltam —, corrija e some de novo.",
+          somada_em_id: f.somada_em_id,
+        });
+      }
       const corpo = (await lerCorpo(req)) || {};
       const campos = {};
       const inteiros = ["quantidade", "mercadoria_id", "cor_id", "pontuacao"];
@@ -2963,9 +3082,25 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     const usuarioId = Number(url.searchParams.get("usuario")) || null;
     const clienteId = Number(url.searchParams.get("cliente")) || null;
     const soltas = url.searchParams.get("soltas") === "1";
+    /* ------------------------------------------------------------------
+       "FORA DE LOTE" E "PODE ENTRAR NUM LOTE" SÃO PERGUNTAS DIFERENTES
+
+       `soltas` é a do escritório: que trabalho ainda não foi faturado. Depois
+       da soma, a PARCELA é trabalho e conta — ela só deixa de estar solta
+       quando a soma dela entra num lote.
+
+       `anexavel` é a da tela do lote: o que dá para marcar ali. Parcela não dá:
+       o `PUT /lotes/:id/fichas` só aceita `situacao = 'fechada'` e a
+       descartaria em silêncio. Oferecer na lista o que o servidor vai recusar
+       é o tipo de tela que faz a pessoa clicar três vezes achando que travou.
+
+       Foi a armadilha desta mudança: com uma pergunta só, trazer as parcelas
+       de volta à Produção as colocava também na lista de anexar.
+       ------------------------------------------------------------------ */
+    const anexavel = url.searchParams.get("anexavel") === "1";
 
     const rec = recorteDaPagina(url, 20);
-    const onde = ["f.situacao = 'fechada'"];
+    const onde = [anexavel ? "f.situacao = 'fechada'" : SQL_TRABALHO];
     const args = [];
     /* `::date` dos dois lados: sem isso, "até 05/08" não pega o que foi
        fechado às 14h de 05/08, porque a data pura vira meia-noite. */
@@ -2973,12 +3108,17 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     if (ate) { onde.push("f.fechada_em::date <= ?::date"); args.push(ate); }
     if (usuarioId) { onde.push("f.usuario_id = ?"); args.push(usuarioId); }
     if (clienteId) { onde.push("f.cliente_id = ?"); args.push(clienteId); }
-    if (soltas) onde.push("f.lote_id IS NULL");
+    if (anexavel) onde.push("f.lote_id IS NULL");
+    else if (soltas) onde.push(SQL_SEM_LOTE);
 
     const fichas = await Q.all(
+      /* `lote_codigo` sai do lote PRÓPRIO ou do lote da ficha que absorveu esta
+         — a parcela entregue ao cliente dentro de uma soma está faturada tanto
+         quanto qualquer outra, e mostrá-la como "solta" mandaria cobrar de novo
+         um serviço que já foi cobrado. */
       `SELECT f.*, u.nome AS operador_nome, c.nome AS cliente_nome, d.nome AS desenho_nome,
               me.nome AS mercadoria_nome, co.nome AS cor_nome, ma.nome AS maquina_nome,
-              l.codigo AS lote_codigo
+              COALESCE(l.codigo, ls.codigo) AS lote_codigo
          FROM fichas f
          JOIN usuarios u ON u.id = f.usuario_id
          JOIN clientes c ON c.id = f.cliente_id
@@ -2987,6 +3127,8 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
          LEFT JOIN cores co ON co.id = f.cor_id
          LEFT JOIN maquinas ma ON ma.id = f.maquina_id
          LEFT JOIN lotes l ON l.id = f.lote_id
+         LEFT JOIN fichas sm ON sm.id = f.somada_em_id
+         LEFT JOIN lotes ls ON ls.id = sm.lote_id
         WHERE ${onde.join(" AND ")}
         ORDER BY f.fechada_em DESC LIMIT ${rec.por} OFFSET ${rec.offset}`, ...args);
 
@@ -3060,7 +3202,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     const argsAbertas = [];
     if (usuarioId) { ondeAbertas.push("f.usuario_id = ?"); argsAbertas.push(usuarioId); }
     if (clienteId) { ondeAbertas.push("f.cliente_id = ?"); argsAbertas.push(clienteId); }
-    if (soltas) ondeAbertas.push("f.lote_id IS NULL");
+    if (soltas) ondeAbertas.push(SQL_SEM_LOTE);
 
     const abertas = await Q.all(
       `SELECT f.*, u.nome AS operador_nome, c.nome AS cliente_nome, d.nome AS desenho_nome,

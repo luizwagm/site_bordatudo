@@ -1284,10 +1284,15 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     const desenhos = await lista("desenhos");
     const maquinas = await lista("maquinas");
     const admin = !!(EU && EU.admin);
+    /* A lista de gente só é buscada para o administrador — a rota é dele, e
+       pedi-la como operador daria 403 no meio da abertura da ficha. */
+    const pessoas = admin ? (await lista("usuarios")).filter((u) => u.ativo) : [];
     /* Cliente travado: veio da tela de um lote, e o lote já diz de quem é o
        serviço. Deixar o campo solto ali seria oferecer a escolha errada — a
        ficha de outro cliente nunca entraria naquele lote. */
     const clientePreso = escolha.cliente_fixo ? String(escolha.cliente_id || "") : "";
+    /* Reposta em `aoAbrir`, quando a caixa existe. Fora dali não há o que ler. */
+    let operadorEscolhido = function () { return escolha.usuario_id || ""; };
 
     abrirModal({
       titulo: "Abrir ficha",
@@ -1313,6 +1318,30 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         '<button type="button" class="btn btn--fantasma btn--mini" id="ff-novo-desenho" ' +
           'style="margin:-8px 0 16px">+ cadastrar desenho novo</button>' +
         '<div id="ff-pontos"></div>' +
+        /* ------------------------------------------------------------
+           DE QUEM É A FICHA — só o administrador vê este campo
+
+           O escritório lança bordado que já foi feito e precisa dizer quem
+           bordou. Sem escolher, a produção do mês antigo entra inteira no nome
+           do administrador, e a folha de quem trabalhou fica vazia.
+
+           Nasce em MIM, que é o caso mais comum e o comportamento de sempre —
+           quem abre a própria ficha não precisa escolher nada.
+
+           NÃO É ESCONDIDO POR CSS, pelo mesmo motivo do campo de data: para o
+           operador ele não é escrito na página, e o servidor recusa o campo de
+           quem não é administrador. Um campo `hidden` continuaria no HTML.
+           ------------------------------------------------------------ */
+        (admin && pessoas.length > 1
+          ? '<label class="campo"><span>Operador</span><select id="ff-operador">' +
+            pessoas.map(function (u) {
+              const meu = String(u.id) === String(EU.usuarioId);
+              return '<option value="' + u.id + '"' + (meu ? " selected" : "") + ">" +
+                esc(u.nome || u.usuario) + (meu ? " (eu)" : "") + "</option>";
+            }).join("") +
+            "</select><small>Quem bordou. É por esta escolha que a peça entra na " +
+            "produção — e na folha — da pessoa certa.</small></label>"
+          : "") +
         (MAQUINA_TOKEN ? "" :
           '<label class="campo"><span>Máquina <small style="font-weight:600;text-transform:none;color:#8a8a99">(ou leia o QR colado nela)</small></span>' +
           '<select id="ff-maquina">' + opcoes(maquinas, "", "— não informar —") + "</select></label>") +
@@ -1343,6 +1372,13 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         const selCliente = caixa.querySelector("#ff-cliente");
         const selDesenho = caixa.querySelector("#ff-desenho");
         const painel = caixa.querySelector("#ff-pontos");
+        /* Declarado aqui e usado lá embaixo, na reabertura: a modal se fecha e
+           abre de novo depois de cadastrar um desenho, e a escolha do operador
+           precisa atravessar essa ida e volta. */
+        operadorEscolhido = function () {
+          const el = caixa.querySelector("#ff-operador");
+          return el ? el.value : "";
+        };
 
         function mostrarPontos() {
           const d = desenhos.filter((x) => String(x.id) === selDesenho.value)[0];
@@ -1394,6 +1430,10 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
               modalAbrirFicha({
                 cliente_id: cliente, desenho_id: novoId,
                 cliente_fixo: escolha.cliente_fixo, aoTerminar: escolha.aoTerminar,
+                /* O operador escolhido volta junto: sem isto, quem estava
+                   lançando a produção do João e parou para cadastrar o desenho
+                   voltaria com a ficha no próprio nome. */
+                usuario_id: operadorEscolhido(),
               });
             });
         });
@@ -1404,6 +1444,12 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         if (!cliente) throw new Error("Escolha o cliente.");
         if (!desenho) throw new Error("Escolha o desenho.");
         const corpo = { cliente_id: cliente, desenho_id: desenho };
+        /* Só vai no corpo quando o administrador escolheu OUTRA pessoa. Mandar
+           sempre faria o operador — que nem vê o campo — bater no "só o
+           administrador escolhe o operador da ficha". */
+        const selOp = caixa.querySelector("#ff-operador");
+        if (selOp && selOp.value && String(selOp.value) !== String(EU.usuarioId))
+          corpo.usuario_id = selOp.value;
         /* Só vai no corpo quando foi PREENCHIDO. Mandar string vazia faria a
            rota entrar no ramo da data e recusar o operador — que nem viu o
            campo — por "só o administrador escolhe a data do bordado". */
@@ -1414,15 +1460,22 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           const m = caixa.querySelector("#ff-maquina");
           if (m && m.value) corpo.maquina_id = m.value;
         }
-        await enviar("/restrito/api/fichas", "POST", corpo);
+        const criada = await enviar("/restrito/api/fichas", "POST", corpo);
         await carregarDia();
         /* `aoTerminar` é de quem chamou. Da tela do lote, cair na tela do
            operador seria perder o lugar no meio do fechamento de uma nota —
            que é justamente o trabalho em curso quando se abre uma ficha por
            ali. Sem ele, o caminho de sempre. */
         if (escolha.aoTerminar) await escolha.aoTerminar();
+        else if (criada && criada.para_outro) pintarProducao();
         else pintarOperar();
-        recado("Ficha aberta.");
+        /* O aviso da jornada não é detalhe: ficha sem jornada conta PEÇA e não
+           conta HORA. Descobrir isso no fim do mês, olhando um tempo por peça
+           que não fecha, custa muito mais que ler uma linha agora. */
+        recado(criada && criada.sem_jornada
+          ? "Ficha aberta no nome do operador. Ele não está com expediente aberto, "
+            + "então ela conta peça e não conta hora."
+          : criada && criada.para_outro ? "Ficha aberta no nome do operador." : "Ficha aberta.");
       },
     });
   }
@@ -2014,10 +2067,34 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           "<td>" + esc(f.maquina_nome || "—") + "</td>" +
           '<td class="num">' + num(f.quantidade) + "</td>" +
           '<td class="num">' + num(f.total_pontos) + "</td>" +
+          /* ------------------------------------------------------------
+             A PARCELA DE UMA SOMA VOLTOU A APARECER AQUI
+
+             Ela tem o operador certo, a quantidade certa e a pontuação exata
+             — é o trabalho de quem bordou, e é por ele que se paga. Some da
+             tela só a ficha SOMADA, que é peça administrativa do recibo.
+
+             A etiqueta não é enfeite: sem ela, ver duas linhas iguais do mesmo
+             desenho no mesmo lote parece duplicidade, e a primeira reação
+             seria apagar uma.
+
+             E o "corrigir" sai: mudar a quantidade de uma parcela deixaria a
+             soma dizendo um total que as partes não sustentam mais. O caminho
+             é remover a somada — as parcelas voltam —, corrigir e somar de novo.
+             ------------------------------------------------------------ */
           "<td>" + (f.lote_codigo
             ? '<span class="etiqueta etiqueta--verde">' + esc(f.lote_codigo) + "</span>"
-            : '<span class="etiqueta etiqueta--ambar">solta</span>') + "</td>" +
-          '<td><button class="btn btn--fantasma btn--mini" data-acao="editar-ficha" data-id="' + f.id + '">corrigir</button></td>' +
+            : '<span class="etiqueta etiqueta--ambar">solta</span>') +
+            (f.somada_em_id
+              ? ' <span class="etiqueta etiqueta--cinza" title="Esta ficha entrou na soma #' +
+                f.somada_em_id + ', que é a linha que sai no recibo do cliente.">somada #' +
+                f.somada_em_id + "</span>"
+              : "") + "</td>" +
+          "<td>" + (f.somada_em_id
+            ? '<button class="btn btn--fantasma btn--mini" data-acao="ver-soma" data-id="' +
+              f.somada_em_id + '" title="Abre a ficha somada, que é onde a correção acontece">ver a soma</button>'
+            : '<button class="btn btn--fantasma btn--mini" data-acao="editar-ficha" data-id="' + f.id + '">corrigir</button>') +
+            "</td>" +
           "</tr>").join("") +
         /* O rodapé soma o FILTRO INTEIRO, não a página — por isso o rótulo
            diz "total do período" e não "total". Uma linha "Total" embaixo de
@@ -3607,7 +3684,9 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
        existiam. Uma lista de escolha não pode paginar: o que não está à vista
        não é escolhido nem recusado, é esquecido. */
     const soltasR = await api(
-      "/restrito/api/producao?soltas=1&por=500&cliente=" + detalhe.lote.cliente_id);
+      /* `anexavel`, e não `soltas`: aqui a pergunta é "o que dá para marcar neste
+         lote". Parcela de uma soma não dá — o servidor a descartaria em silêncio. */
+      "/restrito/api/producao?anexavel=1&por=500&cliente=" + detalhe.lote.cliente_id);
     const soltas = soltasR.fichas;
     /* Se um dia passar de 500, o aviso aparece em vez de o excedente sumir
        calado — é a diferença entre um limite conhecido e uma perda invisível. */
@@ -5347,6 +5426,10 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         await pintarProducao();
       }
       else if (acao === "editar-ficha") await modalEditarFicha(id);
+      /* A parcela não se corrige sozinha — o servidor recusa com 409. O botão
+         leva para a ficha SOMADA, que é onde a correção de verdade acontece
+         (ou de onde se desfaz a soma). */
+      else if (acao === "ver-soma") await modalEditarFicha(id);
       else if (acao === "cancelar-ficha-admin") {
         if (!confirm("Cancelar esta ficha? Ela sai da produção e de qualquer lote.")) return;
         await enviar("/restrito/api/fichas/" + id + "/cancelar", "PUT");

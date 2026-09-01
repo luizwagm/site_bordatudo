@@ -1398,8 +1398,20 @@ async function limparRestos() {
   /* A prova que separa "somou o banco" de "somou as linhas da página": o
      total de peças tem de bater com a soma de TODAS as fichas fechadas,
      contada aqui por fora, por SQL. */
+  /* A REGRA É A DA PRODUÇÃO, e não "situacao = fechada".
+
+     Depois de somar fichas existem duas verdades sobre as mesmas peças: as
+     PARCELAS (`somada`), que carregam quem bordou, e a ficha SOMADA
+     (`soma_de` preenchido), que é a linha do recibo. A Produção mostra as
+     parcelas e esconde a somada — mostrar as duas contaria cada peça duas
+     vezes.
+
+     A conferência daqui tem de fazer a MESMA pergunta que a rota. Com a regra
+     velha, este teste falhava contra o banco do cliente (13 × 14): lá existem
+     somas de verdade, feitas no dia a dia. */
   const conferencia = await Q.get(
-    "SELECT COUNT(*) c, COALESCE(SUM(quantidade),0) p, COALESCE(SUM(total_pontos),0) pt FROM fichas WHERE situacao = 'fechada'");
+    "SELECT COUNT(*) c, COALESCE(SUM(quantidade),0) p, COALESCE(SUM(total_pontos),0) pt" +
+    "  FROM fichas f WHERE f.situacao IN ('fechada','somada') AND f.soma_de IS NULL");
   eq(Number(r.dados.total), Number(conferencia.c), "o número de fichas bate com o banco");
   eq(Number(r.dados.soma.pecas), Number(conferencia.p), "as peças também");
   eq(Number(r.dados.soma.pontos), Number(conferencia.pt), "e os pontos");
@@ -1765,6 +1777,214 @@ async function limparRestos() {
     "SELECT COALESCE(SUM(quantidade),0) s FROM fichas WHERE id = ANY(?)", [fp1, fp2]);
   eq(Number(pecasDeVolta.s), 8, "as peças das parcelas continuam no histórico");
 
+  /* --- 3b. a soma NÃO tira o trabalho da Produção --------------------
+     Pedido do cliente: somar fichas para o recibo fazia as peças sumirem da
+     tela de Produção, e conferir o que cada operador fez ficava impossível.
+
+     A prova forte é de INVARIÂNCIA: somar é um gesto de recibo, e não pode
+     mexer em quanto a fábrica produziu. Nem no total de peças, nem no número
+     de fichas — e era exatamente o número de fichas que caía. */
+  const antesSoma = await admin("/restrito/api/producao?usuario=" + idOper + "&por=1");
+  const fpa = await fichaFechada(7);
+  const fpb = await fichaFechada(11);
+  const meioSoma = await admin("/restrito/api/producao?usuario=" + idOper + "&por=1");
+  eq(Number(meioSoma.dados.soma.pecas), Number(antesSoma.dados.soma.pecas) + 18,
+     "duas fichas novas entram na produção do operador");
+
+  r = await admin("/restrito/api/fichas/somar", "POST", { ids: [fpa, fpb] });
+  eq(r.status, 201, "as duas viram uma somada");
+  const fSoma2 = r.dados.id;
+  CRIADO.fichas.push(fSoma2);
+
+  const depoisSoma = await admin("/restrito/api/producao?usuario=" + idOper + "&por=500");
+  eq(Number(depoisSoma.dados.soma.pecas), Number(meioSoma.dados.soma.pecas),
+     "somar NÃO muda o total de peças da produção");
+  eq(Number(depoisSoma.dados.total), Number(meioSoma.dados.total),
+     "nem o número de fichas — é o mesmo trabalho, contado uma vez só");
+
+  const naProducao = depoisSoma.dados.fichas.map((f) => String(f.id));
+  ok(naProducao.includes(String(fpa)) && naProducao.includes(String(fpb)),
+     "as duas parcelas continuam apareceendo, com o operador e a quantidade delas");
+  ok(!naProducao.includes(String(fSoma2)),
+     "e a ficha SOMADA não aparece — se aparecesse, cada peça contaria duas vezes");
+
+  const linhaParcela = depoisSoma.dados.fichas.filter((f) => String(f.id) === String(fpa))[0];
+  eq(Number(linhaParcela.somada_em_id), Number(fSoma2),
+     "a linha diz em qual soma ela entrou — sem isso, duas linhas iguais parecem duplicidade");
+
+  /* O DIA DO OPERADOR também. É a tela em que ele confere o próprio trabalho,
+     e era ela que esvaziava quando o escritório somava as fichas do dia. */
+  const dia = await oper("/restrito/api/meu-dia");
+  const noDia = (dia.dados.fechadas || []).map((f) => String(f.id));
+  ok(noDia.includes(String(fpa)), "a parcela continua no dia do operador");
+  ok(!noDia.includes(String(fSoma2)), "e a somada não entra no dia dele");
+
+  /* A PARCELA NÃO SE CORRIGE SOZINHA. Ela voltou a aparecer, e com ela voltou
+     o botão ao lado: mudar a quantidade aqui deixaria a soma dizendo um total
+     que as partes não sustentam mais. */
+  r = await admin("/restrito/api/fichas/" + fpa, "PUT", { quantidade: 99 });
+  eq(r.status, 409, "corrigir uma parcela de soma é recusado");
+  ok(String(r.dados.error || "").includes(String(fSoma2)),
+     "e a recusa diz QUAL soma remover — senão não há saída a partir da tela");
+  const intacta = await Q.get("SELECT quantidade FROM fichas WHERE id = ?", fpa);
+  eq(Number(intacta.quantidade), 7, "a quantidade da parcela não foi tocada");
+
+  r = await admin("/restrito/api/fichas/" + fpa + "/cancelar", "PUT");
+  eq(r.status, 409, "cancelar a parcela também é recusado — mesmo estrago, outra porta");
+
+  /* FORA DE LOTE É SOBRE O LOTE DA SOMA. A parcela ficou sem `lote_id`, mas
+     ela não está solta: quem carrega o lote é a ficha que a absorveu. Sem
+     esta regra, a lista do que falta faturar mandaria cobrar de novo. */
+  const soltasAntes = await admin("/restrito/api/producao?usuario=" + idOper + "&soltas=1&por=500");
+  ok(soltasAntes.dados.fichas.some((f) => String(f.id) === String(fpa)),
+     "com a soma fora de lote, a parcela conta como solta");
+
+  r = await admin("/restrito/api/lotes", "POST", { cliente_id: cliA, descricao: "ZZ QA Lote soma" });
+  const loteSoma = r.dados.id;
+  CRIADO.lotes.push(loteSoma);
+  await admin("/restrito/api/lotes/" + loteSoma + "/fichas", "PUT", { fichas: [fSoma2] });
+
+  const soltasDepois = await admin("/restrito/api/producao?usuario=" + idOper + "&soltas=1&por=500");
+  ok(!soltasDepois.dados.fichas.some((f) => String(f.id) === String(fpa)),
+     "com a soma NO lote, a parcela sai da lista de fora-de-lote");
+  const comLote = await admin("/restrito/api/producao?usuario=" + idOper + "&por=500");
+  const linha2 = comLote.dados.fichas.filter((f) => String(f.id) === String(fpa))[0];
+  ok(linha2 && linha2.lote_codigo, "e a linha da parcela passa a mostrar o lote da soma",
+     JSON.stringify(linha2 && linha2.lote_codigo));
+
+  /* ANEXAR É OUTRA PERGUNTA. A tela do lote pede o que dá para MARCAR ali, e
+     parcela não dá: o `PUT /lotes/:id/fichas` só aceita `fechada` e a
+     descartaria em silêncio. Oferecer o que o servidor recusa é o tipo de tela
+     que faz a pessoa clicar três vezes achando que travou. */
+  await admin("/restrito/api/lotes/" + loteSoma + "/fichas", "PUT", { fichas: [] });
+  const anexaveis = await admin(
+    "/restrito/api/producao?anexavel=1&por=500&cliente=" + cliA);
+  const idsAnex = anexaveis.dados.fichas.map((f) => String(f.id));
+  ok(!idsAnex.includes(String(fpa)) && !idsAnex.includes(String(fpb)),
+     "a parcela NÃO aparece na lista de anexar ao lote");
+  ok(idsAnex.includes(String(fSoma2)),
+     "e a ficha SOMADA aparece — é ela que entra no lote e vira linha do recibo");
+
+  /* A prova de que as duas perguntas continuam diferentes: a mesma ficha está
+     "fora de lote" para o escritório e fora da lista de anexar. */
+  const soltasFinal = await admin("/restrito/api/producao?usuario=" + idOper + "&soltas=1&por=500");
+  ok(soltasFinal.dados.fichas.some((f) => String(f.id) === String(fpa)),
+     "mas continua contando como trabalho fora de lote");
+
+  await admin("/restrito/api/fichas/" + fSoma2, "DELETE");
+
+  /* ============ 12k-octies. o admin abre ficha para o operador ==========
+     Pedido do cliente: lançar bordado já feito e dizer quem bordou. Sem isso,
+     a produção do mês antigo entra inteira no nome do administrador e a folha
+     de quem trabalhou fica vazia. */
+  console.log("\n  12k-octies. abrir ficha no nome de outro operador");
+
+  r = await admin("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, usuario_id: idOper2 });
+  eq(r.status, 201, "o admin abre ficha no nome do operador", JSON.stringify(r.dados));
+  const fDoOutro = r.dados.id;
+  CRIADO.fichas.push(fDoOutro);
+  ok(r.dados.para_outro, "e a resposta diz que a ficha não é de quem clicou");
+
+  const dona = await Q.get("SELECT usuario_id, jornada_id FROM fichas WHERE id = ?", fDoOutro);
+  eq(Number(dona.usuario_id), Number(idOper2),
+     "a ficha nasce no nome do operador escolhido — é por ela que ele recebe");
+
+  /* Com o expediente DELE aberto, a ficha entra na jornada dele — o trabalho
+     aconteceu dentro do turno que está correndo. */
+  const jornadaDele = await Q.get(
+    "SELECT id FROM jornadas WHERE usuario_id = ? AND fim IS NULL", idOper2);
+  ok(jornadaDele, "o operador 2 está com expediente aberto (vem da seção 2)");
+  eq(Number(dona.jornada_id), Number(jornadaDele.id),
+     "com o expediente dele aberto, a ficha entra na jornada dele");
+
+  /* ------------------------------------------------------------------
+     O ADMIN NÃO BATE O PONTO DE NINGUÉM
+
+     Esta prova precisa de um alvo SEM expediente aberto — e essa é a lição
+     da rodada: com o operador 2, que já tinha jornada, reusar a dele e criar
+     uma nova dão exatamente o mesmo resultado, e a sabotagem passava batida.
+
+     Para si mesmo, a regra continua sendo abrir jornada: quem foi direto para
+     a máquina não pode ficar sem registro de hora. Para outra pessoa, não —
+     hora vira dinheiro na folha, e ela não pode nascer de um clique que era
+     sobre outra coisa.
+     ------------------------------------------------------------------ */
+  const idSemTurno = await Q.inserir(
+    "INSERT INTO usuarios (usuario, nome, senha_hash, papel) VALUES (?,?,?,?) RETURNING id",
+    "zz_qa_sem_turno", "ZZ QA Sem Turno", gerarHash(SENHA_OPER), "operador");
+  CRIADO.usuarios.push(idSemTurno);
+  const jornadasAntes = await Q.get(
+    "SELECT COUNT(*) c FROM jornadas WHERE usuario_id = ?", idSemTurno);
+  eq(Number(jornadasAntes.c), 0, "o alvo começa sem nenhuma jornada");
+
+  r = await admin("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, usuario_id: idSemTurno });
+  eq(r.status, 201, "a ficha abre mesmo sem o expediente dele estar aberto");
+  const fSemTurno = r.dados.id;
+  CRIADO.fichas.push(fSemTurno);
+  ok(r.dados.sem_jornada,
+     "e a resposta AVISA: ela conta peça e não conta hora");
+
+  const semTurno = await Q.get("SELECT jornada_id FROM fichas WHERE id = ?", fSemTurno);
+  eq(semTurno.jornada_id, null, "a ficha nasce fora de jornada");
+  const jornadasDepois = await Q.get(
+    "SELECT COUNT(*) c FROM jornadas WHERE usuario_id = ?", idSemTurno);
+  eq(Number(jornadasDepois.c), 0,
+     "e o admin NÃO criou expediente para ele — isso seria bater o ponto de outra pessoa");
+  await admin("/restrito/api/fichas/" + fSemTurno + "/cancelar", "PUT");
+
+  /* UMA FICHA ABERTA POR PESSOA, e a conferência é do ALVO. Abrindo para o
+     João, quem não pode ter ficha aberta é o João — olhar a de quem clicou
+     deixaria o índice único do banco estourar com erro cru na cara do admin. */
+  r = await admin("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, usuario_id: idOper2 });
+  eq(r.status, 409, "segunda ficha para o mesmo operador é recusada");
+  ok(String(r.dados.error || "").toLowerCase().includes("operador"),
+     "e a mensagem diz que a ficha aberta é DELE, não minha", r.dados.error);
+  await admin("/restrito/api/fichas/" + fDoOutro + "/cancelar", "PUT");
+
+  /* O OPERADOR NÃO ESCOLHE. Se pudesse, penduraria a própria produção em
+     qualquer colega — ou tiraria dele. */
+  r = await oper("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, usuario_id: idOper2 });
+  eq(r.status, 403, "o operador NÃO escolhe o dono da ficha");
+
+  /* Conta que não existe, conta do DONO e conta desativada. O 404 do dono é o
+     mesmo de todas as rotas de usuário: esconder a conta não é protegê-la se
+     outra rota confirma que ela existe. */
+  r = await admin("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, usuario_id: 99999999 });
+  eq(r.status, 404, "operador inexistente: 404");
+
+  /* A conta de DONO também responde 404 aqui — a prova vive na seção 12n,
+     que é onde existe um dono para apontar. Escrita aqui ela ficava CEGA:
+     neste ponto da suíte ainda não há conta de dono nenhuma. */
+
+  /* Usuário se desativa pelo PUT do próprio recurso — a rota `/ativo` existe
+     para os CADASTROS (cliente, desenho, cor, máquina), não para gente. */
+  eq((await admin("/restrito/api/usuarios/" + idOper2, "PUT", { ativo: false })).status, 200,
+     "o operador 2 é desativado");
+  r = await admin("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, usuario_id: idOper2 });
+  eq(r.status, 409, "operador desativado não recebe ficha nova — entrar contornaria o desligamento");
+  await admin("/restrito/api/usuarios/" + idOper2, "PUT", { ativo: true });
+
+  /* RETROATIVA NO NOME DE OUTRO — o caso que originou o pedido: a nota antiga
+     que ninguém lançou, com o nome de quem bordou. Sem jornada, pela regra que
+     já valia para toda ficha retroativa: hora é medida por relógio. */
+  const ontem = new Date(Date.now() - 36e5 * 30).toISOString().slice(0, 16);
+  r = await admin("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, usuario_id: idOper2, aberta_em: ontem });
+  eq(r.status, 201, "ficha retroativa no nome do operador", JSON.stringify(r.dados));
+  const fRetro = r.dados.id;
+  CRIADO.fichas.push(fRetro);
+  const linhaRetro = await Q.get(
+    "SELECT usuario_id, jornada_id FROM fichas WHERE id = ?", fRetro);
+  eq(Number(linhaRetro.usuario_id), Number(idOper2), "no nome dele");
+  eq(linhaRetro.jornada_id, null, "e fora de qualquer jornada");
+  await admin("/restrito/api/fichas/" + fRetro + "/cancelar", "PUT");
+
   /* ============ 12k-bis. a lista velha do navegador ===================== */
   /* ISTO ACONTECEU EM PRODUÇÃO, seis vezes nos dias 07 e 08/08/2026:
 
@@ -1953,6 +2173,16 @@ async function limparRestos() {
        VALUES (?,?,?,'dono',FALSE) RETURNING id`,
       "zz_qa_dono", "ZZ QA Dono", gerarHash(SENHA_DONO));
     CRIADO.usuarios.push(idDono);
+
+    /* ABRIR FICHA NO NOME DO DONO também é 404, como toda rota de usuário.
+       Esconder a conta não é protegê-la se uma outra porta confirmar que ela
+       existe — e a escolha do operador é uma porta nova, aberta agora. */
+    r = await admin("/restrito/api/fichas", "POST",
+      { cliente_id: cliA, desenho_id: desA1, usuario_id: idDono });
+    eq(r.status, 404, "abrir ficha no nome do DONO responde 404");
+    const fichaDoDono = await Q.get(
+      "SELECT COUNT(*) c FROM fichas WHERE usuario_id = ?", idDono);
+    eq(Number(fichaDoDono.c), 0, "e nenhuma ficha foi criada no nome dele");
 
     /* SÓ UMA. A garantia é do banco, não da aplicação: duas execuções do CLI
        ao mesmo tempo passariam por qualquer conferência em JavaScript. */
