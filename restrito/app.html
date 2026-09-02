@@ -1466,16 +1466,35 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
            operador seria perder o lugar no meio do fechamento de uma nota —
            que é justamente o trabalho em curso quando se abre uma ficha por
            ali. Sem ele, o caminho de sempre. */
-        if (escolha.aoTerminar) await escolha.aoTerminar();
+        /* ------------------------------------------------------------
+           QUEM CHAMOU É QUEM SABE O QUE DIZER
+
+           `recado()` REMOVE o anterior — só um vive na tela. A ordem antiga
+           chamava `aoTerminar` primeiro e o recado genérico depois, então a
+           mensagem que a tela do lote escreve ("feche-a e use Juntar fichas")
+           era apagada meio segundo depois de aparecer. Estava assim desde a
+           1.19.0, e ninguém via porque o genérico também diz "Ficha aberta".
+
+           Agora o genérico só sai quando NÃO há `aoTerminar`. `criada` vai
+           junto, para quem chamou poder olhar o que aconteceu.
+
+           A ÚNICA exceção é o aviso da jornada, e ele é exceção de propósito:
+           ficha sem jornada conta PEÇA e não conta HORA. Descobrir isso no fim
+           do mês, olhando um tempo por peça que não fecha, custa muito mais
+           que ler uma linha agora — e nenhuma tela que chama daqui tem como
+           saber disso melhor que a resposta do servidor.
+           ------------------------------------------------------------ */
+        if (escolha.aoTerminar) await escolha.aoTerminar(criada);
         else if (criada && criada.para_outro) pintarProducao();
         else pintarOperar();
-        /* O aviso da jornada não é detalhe: ficha sem jornada conta PEÇA e não
-           conta HORA. Descobrir isso no fim do mês, olhando um tempo por peça
-           que não fecha, custa muito mais que ler uma linha agora. */
-        recado(criada && criada.sem_jornada
-          ? "Ficha aberta no nome do operador. Ele não está com expediente aberto, "
-            + "então ela conta peça e não conta hora."
-          : criada && criada.para_outro ? "Ficha aberta no nome do operador." : "Ficha aberta.");
+
+        if (criada && criada.sem_jornada) {
+          recado("Ficha aberta no nome do operador. Ele não está com expediente aberto, "
+                 + "então ela conta peça e não conta hora.");
+        } else if (!escolha.aoTerminar) {
+          recado(criada && criada.para_outro
+            ? "Ficha aberta no nome do operador." : "Ficha aberta.");
+        }
       },
     });
   }
@@ -2015,6 +2034,27 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         (r.truncado
           ? '<span class="aviso-corte">mostrando as ' + num(r.fichas.length) +
             " mais recentes de " + num(r.total) + " — estreite o período para ver o resto</span>"
+          : "") +
+        /* ------------------------------------------------------------
+           ABRIR FICHA AVULSA TAMBÉM DAQUI
+
+           O mesmo botão que existe na composição do lote, no lugar em que a
+           pergunta nasce: o escritório está OLHANDO a produção, vê que falta
+           um bordado que foi feito e ninguém registrou, e lança ali mesmo.
+           Sem ele o caminho é sair da Produção, ir até um lote ou à tela do
+           operador, abrir, fechar e voltar — e no voltar se perde o recorte
+           que estava sendo conferido.
+
+           Diferença para o do lote: ali o cliente vem TRAVADO, porque o lote
+           já diz de quem é o serviço. Aqui ele é escolhido, que é o sentido
+           de "avulsa" nesta tela — a ficha nasce fora de lote.
+
+           A guarda por `EU.admin` fica escrita mesmo com o menu escondido do
+           operador: quem decide o que se pode fazer é o servidor, e a tela
+           não deve depender de o menu ter sido montado direito. */
+        (EU && EU.admin
+          ? '<button class="btn btn--fantasma btn--mini" data-acao="ficha-avulsa">' +
+            "Abrir ficha avulsa</button>"
           : "") +
         "</div>" +
         ((r.fichas.length || abertas.length) ? '<div class="rolagem"><table><thead><tr>' +
@@ -5521,6 +5561,21 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         await modalNovoLote(r.lote);
       }
       /* ---- os atalhos da tela do lote ---- */
+      else if (acao === "ficha-avulsa") {
+        /* Sem `cliente_fixo`: aqui não há lote dizendo de quem é o serviço, e
+           escolher o cliente é parte do lançamento.
+
+           `aoTerminar` traz de volta à Produção, com o filtro que estava
+           valendo — o padrão da modal é cair na tela do operador, que aqui
+           seria jogar quem está conferindo o mês para outro lugar. */
+        await modalAbrirFicha({
+          aoTerminar: async function () {
+            await pintarProducao();
+            recado("Ficha aberta. Ela aparece em “em produção” até ser fechada — "
+                   + "e só entra num lote depois disso, pela amálgama.");
+          },
+        });
+      }
       else if (acao === "ficha-no-lote") {
         /* O cliente vem do LOTE, e por isso o campo fica travado na modal: a
            ficha de outro cliente jamais entraria neste lote, e oferecer a

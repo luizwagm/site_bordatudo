@@ -3,7 +3,7 @@
 Site institucional + **controle de produção** (`/restrito`) da Borda Tudo —
 Bordados Computadorizados, Caruaru-PE.
 
-**Versão 1.24.0** · Node ≥ 20 · porta 5193 · `npm test` → **713 conferências**.
+**Versão 1.25.0** · Node ≥ 20 · porta 5193 · `npm test` → **713 conferências**.
 
 São duas coisas no mesmo processo, com bancos separados:
 
@@ -235,6 +235,12 @@ Três regras que vêm junto:
 O dono da ficha se escolhe na ABERTURA e não muda depois: `usuario_id` continua
 fora da rota de correção, porque trocar depois é mover a produção de uma pessoa
 para outra.
+
+**Onde abrir ficha avulsa:** na composição do **lote** (com o cliente travado,
+porque o lote já diz de quem é o serviço) e no topo da lista de **Fichas**, na
+tela de Produção (com o cliente livre — é o sentido de "avulsa" ali: a ficha
+nasce fora de lote e só entra depois de fechada, pela amálgama). Nos dois casos
+a tela volta para onde estava, e não para a do operador.
 
 ---
 
