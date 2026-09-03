@@ -3,7 +3,7 @@
 Site institucional + **controle de produção** (`/restrito`) da Borda Tudo —
 Bordados Computadorizados, Caruaru-PE.
 
-**Versão 1.25.0** · Node ≥ 20 · porta 5193 · `npm test` → **713 conferências**.
+**Versão 1.26.0** · Node ≥ 20 · porta 5193 · `npm test` → **719 conferências**.
 
 São duas coisas no mesmo processo, com bancos separados:
 
@@ -241,6 +241,34 @@ porque o lote já diz de quem é o serviço) e no topo da lista de **Fichas**, n
 tela de Produção (com o cliente livre — é o sentido de "avulsa" ali: a ficha
 nasce fora de lote e só entra depois de fechada, pela amálgama). Nos dois casos
 a tela volta para onde estava, e não para a do operador.
+
+### O administrador resolve a ficha sem trocar de conta (1.26.0)
+
+A ficha avulsa aberta na Produção quase nunca é trabalho que vai começar agora:
+é o escritório registrando bordado que **já foi feito**. Mesmo assim, ela parava
+"em produção" e o único jeito de lançar a quantidade era entrar na conta do
+operador — com dois efeitos ruins: o trabalho de trocar de conta, e o registro
+de entrada ficando no nome de quem entrou.
+
+Agora:
+
+* **Abrir a avulsa emenda direto na janela de fechar.** Informe a quantidade e
+  acabou. Quem quiser mesmo deixá-la aberta (o bordado vai começar agora) é só
+  fechar a janela — a ficha continua em produção.
+* **Toda ficha aberta tem "fechar" e "cancelar"** na linha dela, na Produção.
+  Vale para a de qualquer operador, inclusive a que alguém abriu e esqueceu.
+* Quando a ficha é de outra pessoa, a janela **diz de quem é**, e o aviso do fim
+  confirma em qual produção as peças entraram.
+
+Só a TELA mudou: a rota de fechar já autorizava o administrador
+(`if (!minha && !ehAdmin(sessao)) 403`) desde sempre. O que existia era uma
+janela de fechar amarrada a `DIA.ficha` — a ficha do usuário LOGADO —, e era
+essa amarra que obrigava a troca de conta. Ela virou `modalFecharFichaDe(ficha)`,
+usada pelos dois caminhos: o botão gigante do operador continua sendo o gesto do
+chão de fábrica, e a Produção é o do escritório. Uma função só, porque a conta de
+`peças × pontos` é a mesma — duas cópias divergiriam no dia em que uma mudasse.
+
+O operador **não** vê esses botões: a ficha dele se fecha na tela Operar.
 
 ---
 

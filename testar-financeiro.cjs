@@ -27,7 +27,10 @@ carregarAmbiente(__dirname);
 /* Porta própria: 5199 é da suíte do /restrito e 5198 é da do site. Se esta
    subisse numa delas e um processo antigo tivesse ficado de pé, a suíte
    conversaria com ELE — e passaria, provando o servidor errado. */
-const PORTA = Number(process.env.PORTA_TESTE_FIN) || 5197;
+/* Faixa 52xx: a 51xx é dos SITES do parque (5193 Borda Tudo, 5197 LA Chat,
+   5198 Izatec…). Uma suíte ali é uma bomba de efeito retardado — funciona até
+   o dia em que o vizinho sobe. */
+const PORTA = Number(process.env.PORTA_TESTE_FIN) || 5291;
 const BASE = `http://127.0.0.1:${PORTA}`;
 
 async function portaOcupada(porta) {

@@ -1500,15 +1500,56 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
   }
 
   /* ---- fechar ficha ----------------------------------------------- */
+  /* A ficha aberta do operador logado. Continua sendo o caminho do chão de
+     fábrica: o botão gigante verde da tela Operar. */
   async function modalFecharFicha() {
     const f = DIA && DIA.ficha;
     if (!f) return;
+    await modalFecharFichaDe(f, { aoTerminar: async function () {
+      await carregarDia(); pintarOperar();
+    } });
+  }
+
+  /* ========================================================================
+     FECHAR UMA FICHA QUALQUER — a mesma conta, outro caminho
+
+     Esta função recebe a ficha em vez de ir buscá-la em `DIA`. Foi assim que
+     `modalFecharFicha` nasceu, amarrada à ficha do usuário LOGADO, e era isso
+     que obrigava o administrador a entrar na conta do operador para finalizar
+     — com dois efeitos ruins: o trabalho de trocar de conta, e o registro
+     ficando como se quem entrou tivesse dado entrada no bordado.
+
+     Uma função só, e não uma cópia para o administrador: a conta de
+     `peças × pontos` é a mesma, e duas cópias divergiriam no dia em que uma
+     delas mudasse. O que muda é só de onde vem a ficha e o que acontece
+     depois de fechar.
+     ====================================================================== */
+  /* `aoFim`, e nao `opcoes`: existe uma funcao GLOBAL `opcoes(itens, ...)`
+     que monta os <option> dos selects — e um parametro com esse nome a
+     sombreia dentro daqui. O select de mercadoria passava a chamar o objeto
+     de configuracao, com "opcoes is not a function" no console e a janela
+     nao abrindo. Custou um teste na tela para aparecer. */
+  async function modalFecharFichaDe(f, aoFim) {
+    aoFim = aoFim || {};
     const mercadorias = await lista("mercadorias");
     const cores = await lista("cores");
+    const deOutro = EU && EU.admin && String(f.usuario_id) !== String(EU.usuarioId);
 
     abrirModal({
       titulo: "Fechar ficha — " + f.cliente_nome + " · " + f.desenho_nome,
       corpo:
+        /* DE QUEM É A FICHA, quando não é de quem está fechando.
+
+           O administrador fecha a ficha de outra pessoa a partir da Produção,
+           e a peça vai para a folha DELA. Sem esta linha, a única diferença
+           entre fechar a própria ficha e fechar a de um operador seria o
+           título da janela — e a produção do mês é o tipo de coisa que não se
+           conserta com um "desfazer". */
+        (deOutro
+          ? '<p class="aviso aviso--info" style="margin:0 0 14px">Esta ficha é de <b>' +
+            esc(f.operador_nome || f.operador || "outro operador") +
+            "</b>. As peças entram na produção dele, não na sua.</p>"
+          : "") +
         '<label class="campo"><span>Quantas peças foram feitas</span>' +
           '<input type="text" inputmode="numeric" id="fz-qtd" class="numerao" placeholder="0"></label>' +
         '<div id="fz-conta"></div>' +
@@ -1549,8 +1590,9 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           cor_id: caixa.querySelector("#fz-cor").value || null,
           observacao: caixa.querySelector("#fz-obs").value,
         });
-        await carregarDia(); pintarOperar();
-        recado(num(q) + " peças registradas.");
+        if (aoFim.aoTerminar) await aoFim.aoTerminar();
+        recado(num(q) + " peças registradas"
+               + (deOutro ? " na produção de " + (f.operador_nome || f.operador || "o operador") : "") + ".");
       },
     });
   }
@@ -1966,6 +2008,9 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     const porOp = Object.keys(r.porOperador).map((k) =>
       Object.assign({ nome: k }, r.porOperador[k])).sort((a, b) => b.pontos - a.pontos);
     const abertas = r.abertas || [];
+    /* Guardadas para as acoes de fechar e cancelar acharem a MESMA ficha que
+       esta na tela — no mesmo lugar em que a tela ja guarda os operadores. */
+    LISTAS.__abertas = abertas;
 
     alvo.innerHTML =
       '<h1 class="titulo-tela">Produção</h1>' +
@@ -2079,6 +2124,13 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
            Não têm peça nem ponto — traço, não zero: zero é um valor medido,
            traço é "ainda não há". E não têm "corrigir": não existe quantidade,
            mercadoria nem cor para corrigir antes do fechamento.
+
+           O QUE ELAS TÊM É "FECHAR". A célula de ação ficava vazia, e a
+           consequência era esta: o administrador abria a ficha avulsa aqui e
+           precisava entrar na conta do operador para lançar a quantidade —
+           trocando de conta, e deixando o registro de entrada no nome de quem
+           entrou. O servidor já autorizava (`ehAdmin` na rota de fechar);
+           faltava o botão.
            ================================================================ */
         abertas.map((f) =>
           '<tr class="linha-aberta">' +
@@ -2093,7 +2145,15 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           '<td class="num vazia">—</td>' +
           '<td class="num vazia">—</td>' +
           '<td class="vazia">—</td>' +
-          "<td></td>" +
+          /* Só para o administrador: o operador fecha a ficha DELE na tela
+             Operar, com o botão gigante, que é o gesto do chão de fábrica.
+             Aqui é o escritório resolvendo a ficha de outra pessoa. */
+          "<td>" + (EU && EU.admin
+            ? '<button class="btn btn--mini btn--verde" data-acao="fechar-aberta" data-id="' +
+              f.id + '">fechar</button> ' +
+              '<button class="btn btn--fantasma btn--mini" data-acao="cancelar-aberta" data-id="' +
+              f.id + '">cancelar</button>'
+            : "") + "</td>" +
           "</tr>").join("") +
 
         r.fichas.map((f) =>
@@ -5411,6 +5471,30 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         recado("Saída marcada às " + hora(new Date().toISOString()) + ".");
       }
 
+      /* ---- produção: resolver uma ficha ABERTA sem trocar de conta ---- */
+      /* A ficha vem da lista que a tela já tem em mãos (`PRODUCAO.abertas`),
+         e não de uma busca nova: é a mesma linha que o administrador está
+         vendo, com o operador e o desenho que ele acabou de ler. Buscar de
+         novo abriria espaço para fechar uma ficha diferente da que está na
+         tela, se alguém tivesse mexido nela nesse meio-tempo. */
+      else if (acao === "fechar-aberta") {
+        const f = (LISTAS.__abertas || []).find((x) => String(x.id) === String(id));
+        if (!f) { recado("Recarregue a tela: essa ficha mudou.", true); return; }
+        await modalFecharFichaDe(f, { aoTerminar: async function () { await pintarProducao(); } });
+      }
+      else if (acao === "cancelar-aberta") {
+        const f = (LISTAS.__abertas || []).find((x) => String(x.id) === String(id));
+        if (!f) { recado("Recarregue a tela: essa ficha mudou.", true); return; }
+        /* O nome de quem perde o trabalho aparece na pergunta. Cancelar a
+           ficha de outra pessoa é diferente de cancelar a sua. */
+        if (!confirm("Cancelar a ficha de " + (f.operador_nome || "este operador") +
+                     " (" + f.cliente_nome + " · " + f.desenho_nome + ")?\n\n" +
+                     "Ela não será contada na produção.")) return;
+        await enviar("/restrito/api/fichas/" + f.id + "/cancelar", "PUT");
+        await pintarProducao();
+        recado("Ficha cancelada.");
+      }
+
       /* ---- produção ---- */
       else if (acao === "periodo-producao") {
         aplicarAtalho(b.getAttribute("data-periodo"));
@@ -5569,10 +5653,46 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
            valendo — o padrão da modal é cair na tela do operador, que aqui
            seria jogar quem está conferindo o mês para outro lugar. */
         await modalAbrirFicha({
-          aoTerminar: async function () {
+          /* ------------------------------------------------------------
+             ABRIR E JÁ LANÇAR A QUANTIDADE
+
+             A ficha avulsa aberta AQUI quase nunca é trabalho que vai começar
+             agora: é o escritório registrando bordado que já foi feito. Parar
+             na ficha aberta obrigava a um segundo passo que só existia na
+             conta do operador — e era isso que fazia o administrador trocar
+             de conta para finalizar.
+
+             A janela de fechar vem em seguida, com a ficha recém-aberta. Quem
+             quiser mesmo deixá-la aberta (o bordado vai começar agora) é só
+             fechar a janela: a ficha continua lá, "em produção", com o botão
+             "fechar" na linha dela.
+
+             A ficha vem de `LISTAS.__abertas` depois do repinte, e não da
+             resposta do POST: é ali que ela está com cliente, desenho,
+             operador e pontuação — tudo o que a janela de fechar mostra.
+             ------------------------------------------------------------ */
+          aoTerminar: async function (criada) {
             await pintarProducao();
-            recado("Ficha aberta. Ela aparece em “em produção” até ser fechada — "
-                   + "e só entra num lote depois disso, pela amálgama.");
+            const nova = (LISTAS.__abertas || []).find(
+              (x) => criada && String(x.id) === String(criada.id));
+            if (!nova) {
+              recado("Ficha aberta. Ela aparece em “em produção” até ser fechada — "
+                     + "e só entra num lote depois disso, pela amálgama.");
+              return;
+            }
+            recado("Ficha aberta. Informe a quantidade para fechá-la agora, "
+                   + "ou feche esta janela para deixá-la em produção.");
+            /* DEPOIS do ciclo da modal atual, e não dentro dele.
+
+               `abrirModal` substitui o conteúdo de #modais, e quem confirma
+               faz `await aoConfirmar(...)` seguido de `fecharModal()`. Como
+               este `aoTerminar` roda DENTRO daquele await, abrir a janela
+               aqui a criaria para o `fecharModal()` da linha seguinte apagar
+               — a ficha nascia certa e a janela não aparecia. O timeout
+               devolve o controle ao laço de eventos primeiro. */
+            setTimeout(function () {
+              modalFecharFichaDe(nova, { aoTerminar: async function () { await pintarProducao(); } });
+            }, 0);
           },
         });
       }

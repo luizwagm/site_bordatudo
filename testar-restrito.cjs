@@ -21,7 +21,10 @@ const { Q, carregarAmbiente } = require("./pg.js");
 
 carregarAmbiente(__dirname);
 
-const PORTA = Number(process.env.PORTA_TESTE) || 5199;
+/* Faixa 52xx: a 51xx é dos SITES do parque (5193 Borda Tudo, 5197 LA Chat,
+   5198 Izatec…). Uma suíte ali é uma bomba de efeito retardado — funciona até
+   o dia em que o vizinho sobe. */
+const PORTA = Number(process.env.PORTA_TESTE) || 5293;
 const BASE = `http://127.0.0.1:${PORTA}`;
 const SO_LIMPAR = process.argv.includes("--limpar");
 const ARQ_LIMITES = path.join(__dirname, "data", "limites-teste.json");
@@ -495,6 +498,48 @@ async function limparRestos() {
   /* Ficha do outro operador é intocável. */
   eq((await oper2("/restrito/api/fichas/" + f1 + "/cancelar", "PUT")).status, 403,
      "operador não mexe na ficha de outro");
+
+  /* ====================================================================
+     …MAS O ADMINISTRADOR MEXE — e é disso que a Produção depende.
+
+     Da tela de Produção o escritório fecha e cancela a ficha de quem quer que
+     seja, sem entrar na conta de ninguém. A regra vive na rota
+     (`if (!minha && !ehAdmin(sessao)) 403`), e até a 1.26.0 nenhuma prova a
+     cobria: todos os fechamentos daqui eram feitos pelo operador DONO. Quem
+     "apertasse" a rota exigindo o dono veria os testes passarem e quebraria a
+     tela do administrador sem aviso.
+
+     Cada ficha criada aqui sai do banco logo em seguida: a suíte confere somas
+     fixas mais adiante, e uma ficha a mais entraria nelas.
+     ==================================================================== */
+  const sumir = async (id) => { await Q.run("DELETE FROM fichas WHERE id = ?", id); };
+
+  r = await oper2("/restrito/api/fichas", "POST", { cliente_id: cliA, desenho_id: desA2 });
+  const fAdm = r.dados.id;
+  eq((await oper("/restrito/api/fichas/" + fAdm + "/fechar", "PUT", { quantidade: "9" })).status, 403,
+     "outro OPERADOR não fecha a ficha alheia");
+  eq((await admin("/restrito/api/fichas/" + fAdm + "/fechar", "PUT", { quantidade: "9" })).status, 200,
+     "o ADMINISTRADOR fecha a ficha de outro operador");
+  /* A peça é de quem bordou, não de quem digitou. Se o dono mudasse aqui, a
+     folha do mês passaria a pagar a pessoa errada — em silêncio. */
+  eq(Number((await Q.get("SELECT usuario_id FROM fichas WHERE id = ?", fAdm)).usuario_id), idOper2,
+     "e a ficha continua sendo DELE — fechar não transfere a produção");
+  await sumir(fAdm);
+
+  r = await oper2("/restrito/api/fichas", "POST", { cliente_id: cliA, desenho_id: desA2 });
+  const fAdmC = r.dados.id;
+  /* A ficha ABERTA precisa chegar à Produção com o NOME do operador: é por ele
+     que o administrador decide o que fazer, e é ele que a janela de fechar
+     mostra ("esta ficha é de Fulano"). */
+  const prod = await admin("/restrito/api/producao");
+  const abertaNaProducao = (prod.dados.abertas || []).find((x) => Number(x.id) === Number(fAdmC));
+  ok(abertaNaProducao, "a ficha aberta aparece na Produção");
+  ok(abertaNaProducao && abertaNaProducao.operador_nome, "com o NOME do operador, não só o id",
+     abertaNaProducao && abertaNaProducao.operador_nome);
+  eq((await admin("/restrito/api/fichas/" + fAdmC + "/cancelar", "PUT")).status, 200,
+     "e o administrador cancela a ficha aberta de outro operador");
+  await sumir(fAdmC);
+
 
   /* Segunda e terceira fichas, para a amálgama ter o que juntar. */
   r = await oper("/restrito/api/fichas", "POST", { cliente_id: cliA, desenho_id: desA1 });
