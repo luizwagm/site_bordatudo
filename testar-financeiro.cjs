@@ -557,6 +557,139 @@ function conferirTela() {
     ok((await o("/restrito/api/notas", "POST", { cliente_id: cli, lotes: [L3] })).status === 403,
       "e não cria nota");
 
+    /* ==================================================================
+       13. O PAGAMENTO DO CLIENTE E OS PAPÉIS (1.27.0)
+
+       O caso que o escritório descreveu, com os mesmos números: duas notas
+       (1.064,20 com 500 pagos, e 536,60), e o cliente paga 400 em dinheiro e
+       depois 200 no PIX. Esperado: 400 na mais antiga (fica 164,20); dos 200,
+       164,20 quitam a antiga e 35,80 vão para a nova (fica 500,80).
+       ================================================================== */
+    secao("13. pagamento do cliente: da nota mais antiga para a mais nova");
+    const cliC = await Q.inserir("INSERT INTO clientes (nome) VALUES (?) RETURNING id", "ZZ QA Mateus Shorts");
+    CRIADO.clientes.push(cliC);
+    const dC = await Q.inserir(
+      "INSERT INTO desenhos (cliente_id, nome, pontuacao, preco) VALUES (?,?,?,?) RETURNING id",
+      cliC, "ZZ QA Short Bordado", 1000, 1.00);
+    CRIADO.desenhos.push(dC);
+    const LA = await novoLote(cliC, "ZZ-PC-A-" + process.pid);
+    const LB = await novoLote(cliC, "ZZ-PC-B-" + process.pid);
+    await novaFicha(op1, cliC, dC, 1000, 1064.20, 1, LA);
+    await novaFicha(op1, cliC, dC, 1000, 536.60, 1, LB);
+    const nA = await a("/restrito/api/notas", "POST", { cliente_id: cliC, lotes: [LA], emitida_em: "2026-09-18" });
+    const nB = await a("/restrito/api/notas", "POST", { cliente_id: cliC, lotes: [LB], emitida_em: "2026-10-03" });
+    const NA = nA.dados && nA.dados.id, NB = nB.dados && nB.dados.id;
+    if (NA) CRIADO.notas.push(NA); if (NB) CRIADO.notas.push(NB);
+    const p500 = await a("/restrito/api/lancamentos", "POST", { categoria: "recebimento", nota_id: NA, valor: "500,00", forma: "pix" });
+    if (p500.dados && p500.dados.id) CRIADO.lancamentos.push(p500.dados.id);
+
+    const aberto = (await a(`/restrito/api/clientes/${cliC}/aberto`)).dados;
+    ok(aberto.notas.map((n) => n.id).join() === [NA, NB].join(), "as notas em aberto vêm da mais antiga para a mais nova",
+      JSON.stringify(aberto.notas.map((n) => n.codigo)));
+    ok(Math.abs(aberto.total - 1100.80) < 0.001, "o saldo devedor do cliente é 1.100,80", aberto.total);
+
+    const pg400 = await a(`/restrito/api/clientes/${cliC}/pagamento`, "POST", { valor: "400,00", forma: "dinheiro" });
+    ok(pg400.status === 201, "registra os 400 em dinheiro", JSON.stringify(pg400.dados));
+    (pg400.dados.partes || []).forEach((p) => CRIADO.lancamentos.push(p.id));
+    ok(/^PG-\d{4}-\d{4}$/.test(pg400.dados.grupo || ""), "com código de grupo", pg400.dados.grupo);
+    ok(pg400.dados.partes.length === 1 && pg400.dados.partes[0].nota_id === NA
+      && Math.abs(pg400.dados.partes[0].falta_depois - 164.20) < 0.001,
+      "os 400 vão TODOS para a mais antiga, que fica com 164,20", JSON.stringify(pg400.dados.partes));
+
+    const pg200 = await a(`/restrito/api/clientes/${cliC}/pagamento`, "POST", { valor: "200", forma: "pix" });
+    (pg200.dados.partes || []).forEach((p) => CRIADO.lancamentos.push(p.id));
+    const [pa, pb] = pg200.dados.partes || [];
+    ok(pg200.status === 201 && pg200.dados.partes.length === 2, "os 200 no PIX se dividem em duas notas", JSON.stringify(pg200.dados));
+    ok(pa && pa.nota_id === NA && Math.abs(pa.valor - 164.20) < 0.001 && pa.falta_depois === 0,
+      "164,20 quitam a mais antiga", JSON.stringify(pa));
+    ok(pb && pb.nota_id === NB && Math.abs(pb.valor - 35.80) < 0.001 && Math.abs(pb.falta_depois - 500.80) < 0.001,
+      "35,80 abatem a nova, que fica com 500,80", JSON.stringify(pb));
+    ok(/^RC-\d{4}-\d{4}$/.test(pa.recibo) && /^RC-\d{4}-\d{4}$/.test(pb.recibo) && pa.recibo !== pb.recibo,
+      "cada pedaço tem o seu RC", pa.recibo + " / " + pb.recibo);
+    ok(Math.abs(pg200.dados.devedor_depois - 500.80) < 0.001, "o saldo devedor depois é 500,80", pg200.dados.devedor_depois);
+    const vA = (await a("/restrito/api/notas/" + NA)).dados, vB = (await a("/restrito/api/notas/" + NB)).dados;
+    ok(vA.quitada === true && Math.abs(vB.saldo - 500.80) < 0.001, "na nota: a antiga QUITADA, a nova com 500,80",
+      vA.saldo + " / " + vB.saldo);
+    ok(Math.abs(vA.pago + vB.pago - 1100) < 0.001, "nenhum centavo sumiu: 500 + 400 + 200 = 1.100 pagos", vA.pago + vB.pago);
+
+    const demaisC = await a(`/restrito/api/clientes/${cliC}/pagamento`, "POST", { valor: "600" });
+    ok(demaisC.status === 400 && /500,80/.test((demaisC.dados || {}).error || ""),
+      "pagar mais que a dívida é recusado, com o número na mensagem", JSON.stringify(demaisC.dados));
+    ok((await a(`/restrito/api/clientes/${cliC}/pagamento`, "POST", { valor: "0" })).status === 400, "valor zero é recusado");
+    ok((await a(`/restrito/api/clientes/${cli2}/pagamento`, "POST", { valor: "10" })).status === 409,
+      "cliente sem nota em aberto: recusado");
+
+    /* DOIS CLIQUES AO MESMO TEMPO: a trava das notas faz o segundo esperar e
+       recalcular — 300 + 300 não cabem em 500,80. */
+    const [x1, x2] = await Promise.all([
+      a(`/restrito/api/clientes/${cliC}/pagamento`, "POST", { valor: "300" }),
+      a(`/restrito/api/clientes/${cliC}/pagamento`, "POST", { valor: "300" }),
+    ]);
+    [x1, x2].forEach((x) => ((x.dados && x.dados.partes) || []).forEach((p) => CRIADO.lancamentos.push(p.id)));
+    ok([x1.status, x2.status].sort().join() === "201,400",
+      "dois pagamentos ao mesmo tempo não distribuem o mesmo saldo duas vezes", x1.status + "/" + x2.status);
+    const vB2 = (await a("/restrito/api/notas/" + NB)).dados;
+    ok(Math.abs(vB2.saldo - 200.80) < 0.001, "e a nota nova fica com 500,80 − 300 = 200,80", vB2.saldo);
+
+    secao("14. os papéis: extrato da nota, recibo de produção, extrato do cliente, recibo do grupo");
+    const rg = await a(`/restrito/pagamentos/${pg200.dados.grupo}/recibo`);
+    ok(rg.status === 200 && /R\$\s?200,00/.test(rg.dados) && /164,20/.test(rg.dados) && /35,80/.test(rg.dados),
+      "o recibo do grupo diz 200,00 e para onde foi cada pedaço");
+    /* Na CAIXA do saldo devedor, e não em qualquer lugar: a linha da nota nova
+       também diz 500,80 — uma prova frouxa passaria só por causa dela. */
+    ok(/500,80<\/b><span>saldo devedor depois/.test(rg.dados),
+      "e o saldo devedor DAQUELE momento (500,80), não o de agora (200,80)");
+    const exA = await a(`/restrito/notas/${NA}/extrato`);
+    ok(exA.status === 200 && /Extrato da nota/.test(exA.dados) && /1\.064,20/.test(exA.dados) && /564,20/.test(exA.dados)
+      && /QUITADA|quitada/.test(exA.dados), "o extrato da nota: valor, o saldo depois de cada pagamento, quitada");
+    const prB = await a(`/restrito/notas/${NB}/producao`);
+    ok(prB.status === 200 && /ZZ QA Short Bordado/.test(prB.dados) && /Situação do pagamento/.test(prB.dados) && /200,80/.test(prB.dados),
+      "o recibo de produção da nota: as fichas e o que falta pagar");
+    const exCli = await a(`/restrito/clientes/${cliC}/extrato?s=quitada`);
+    ok(exCli.status === 200 && exCli.dados.includes(nA.dados.codigo) && !exCli.dados.includes(nB.dados.codigo + "</b>"),
+      "o extrato do cliente segue o recorte da tela (quitadas)");
+    ok(/saldo devedor total/.test(exCli.dados) && /200,80/.test(exCli.dados),
+      "mas o saldo devedor é sempre o TOTAL do cliente, mesmo no extrato das quitadas");
+    const nomeMalicioso = await a("/restrito/clientes/" + cliC + "/extrato?s=<script>");
+    ok(nomeMalicioso.status === 200 && !/<script>/.test(nomeMalicioso.dados.split("</style>")[1] || ""),
+      "um filtro inventado na URL não vira HTML no papel");
+
+    /* Cancelar UM pedaço do grupo devolve o saldo SÓ daquela nota. */
+    const cancPb = await a(`/restrito/api/lancamentos/${pb.id}/cancelar`, "PUT", { motivo: "ZZ QA teste" });
+    ok(cancPb.status === 200, "um pedaço do grupo pode ser cancelado sozinho");
+    const vB3 = (await a("/restrito/api/notas/" + NB)).dados;
+    ok(Math.abs(vB3.saldo - 236.60) < 0.001, "e só a nota daquele pedaço volta a dever os 35,80", vB3.saldo);
+    ok(/cancelado/.test((await a(`/restrito/pagamentos/${pg200.dados.grupo}/recibo`)).dados),
+      "o recibo do grupo mostra o pedaço cancelado, riscado");
+
+    /* A TRAVA, provada sem depender de sorte: a corrida de dois cliques acima
+       pode sair enfileirada pela própria conexão HTTP. Aqui a suíte SEGURA as
+       notas do cliente numa transação dela — e o pagamento tem de ESPERAR. */
+    /* FOR NO KEY UPDATE, e não FOR UPDATE: gravar o lançamento confere a
+       chave estrangeira da nota com FOR KEY SHARE, que esbarra no FOR UPDATE —
+       a prova esperaria por causa da chave, com ou sem a trava do servidor, e
+       aprovaria código sem trava. FOR NO KEY UPDATE não esbarra na chave, só
+       no FOR UPDATE do servidor: é ele que esta prova mede. (E é por isso que a
+       trava é necessária: duas inserções concorrentes pegam KEY SHARE as duas,
+       que não se bloqueiam, e distribuiriam o mesmo saldo duas vezes.) */
+    let terminou = false, respTrava = null, pedido = null;
+    await Q.tx(async () => {
+      await Q.all("SELECT id FROM notas WHERE cliente_id = ? FOR NO KEY UPDATE", cliC);
+      pedido = a(`/restrito/api/clientes/${cliC}/pagamento`, "POST", { valor: "0,80" })
+        .then((r) => { terminou = true; respTrava = r; });
+      await new Promise((r) => setTimeout(r, 900));
+      ok(!terminou, "com as notas travadas por outra transação, o pagamento ESPERA (não distribui por cima)");
+    });
+    await pedido;
+    ((respTrava && respTrava.dados && respTrava.dados.partes) || []).forEach((p) => CRIADO.lancamentos.push(p.id));
+    ok(respTrava && respTrava.status === 201, "e entra quando a trava é solta", respTrava && respTrava.status);
+    ok(Math.abs((await a("/restrito/api/notas/" + NB)).dados.saldo - 235.80) < 0.001,
+      "sobre o saldo de DEPOIS da trava (236,60 − 0,80)");
+
+    ok((await o(`/restrito/notas/${NA}/extrato`)).status === 403, "o operador não imprime extrato de nota");
+    ok((await o(`/restrito/clientes/${cliC}/extrato`)).status === 403, "nem o do cliente");
+    ok((await o(`/restrito/api/clientes/${cliC}/pagamento`, "POST", { valor: "1" })).status === 403, "nem registra pagamento");
+
   } catch (e) {
     falhou++;
     falhas.push("a suíte quebrou: " + String((e && e.stack) || e).split("\n").slice(0, 3).join(" | "));

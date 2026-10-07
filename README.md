@@ -3,7 +3,7 @@
 Site institucional + **controle de produção** (`/restrito`) da Borda Tudo —
 Bordados Computadorizados, Caruaru-PE.
 
-**Versão 1.26.0** · Node ≥ 20 · porta 5193 · `npm test` → **719 conferências**.
+**Versão 1.27.0** · Node ≥ 20 · porta 5193 · `npm test` → **752 conferências**.
 
 São duas coisas no mesmo processo, com bancos separados:
 
@@ -241,6 +241,28 @@ porque o lote já diz de quem é o serviço) e no topo da lista de **Fichas**, n
 tela de Produção (com o cliente livre — é o sentido de "avulsa" ali: a ficha
 nasce fora de lote e só entra depois de fechada, pela amálgama). Nos dois casos
 a tela volta para onde estava, e não para a do operador.
+
+### Os papéis do financeiro e o pagamento pelo cliente (1.27.0)
+
+Pedido do escritório: mostrar ao cliente, no papel, "a nota era X, você já pagou
+Y, falta Z" — e parar de abrir nota por nota fazendo conta para lançar um
+pagamento.
+
+- **Imprimir extrato** (na nota): os lotes, o valor, cada pagamento e devolução
+  com o **saldo depois dele**, e quanto falta.
+- **Recibo de produção** (na nota): as fichas de cada lote, linha a linha, como o
+  recibo do lote — e no fim o que foi pago e o que falta. Com assinatura.
+- **Imprimir extrato do cliente** (Financeiro, com um cliente escolhido): as notas
+  do recorte da tela (aba e período), os pagamentos recebidos e o **saldo devedor
+  total** — que sai sempre, mesmo no extrato das quitadas.
+- **Registrar pagamento** (Financeiro, com um cliente escolhido): digita-se o que
+  o cliente pagou e o sistema abate da nota **mais antiga** (pela emissão) para a
+  mais nova, mostrando antes quanto vai em cada nota e quanto fica. Cada pedaço
+  vira o recebimento de uma nota (com seu RC), e os pedaços do mesmo dinheiro são
+  ligados por um **grupo** (`PG-2026-0001`, coluna nova em `sql/12`) que vira
+  **um recibo só**. A distribuição é refeita no servidor, dentro da transação e
+  com as notas do cliente travadas — dois cliques não distribuem o mesmo saldo
+  duas vezes. Pagar mais que a dívida é recusado, com o número na mensagem.
 
 ### O administrador resolve a ficha sem trocar de conta (1.26.0)
 

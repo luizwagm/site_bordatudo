@@ -977,6 +977,360 @@ function reciboDePagamento(dados, empresa, opcoes) {
 }
 
 /* ==========================================================================
+   OS PAPÉIS DO FINANCEIRO (1.27.0)
+
+   Pedido do escritório: mostrar ao cliente, no papel, "a nota era X, você já
+   pagou Y, falta Z" — por nota, pelo cliente inteiro, e junto da produção.
+
+   Quatro papéis, uma moldura só (`folhaFinanceira`): cabeçalho, marca d'água e
+   rodapé iguais aos do recibo de produção, para que tudo o que sai da fábrica
+   se reconheça como da mesma casa. Cada papel monta só o MIOLO.
+
+   OS NÚMEROS NÃO SÃO CALCULADOS AQUI. Vêm de `contaDaNota` (a mesma conta da
+   tela) — se o papel somasse por conta própria, ele poderia discordar da tela
+   onde a cobrança foi conferida, e não haveria como saber qual dos dois vale.
+   ========================================================================== */
+const FORMAS_RECIBO = {
+  pix: "PIX", dinheiro: "Dinheiro", cartao: "Cartão", boleto: "Boleto",
+  transferencia: "Transferência", cheque: "Cheque",
+};
+const formaBr = (f) => FORMAS_RECIBO[f] || f || "—";
+
+/* A situação da nota em uma palavra — a mesma régua da tela. */
+function situacaoDaNota(c) {
+  if (c.nota.situacao === "cancelada") return "cancelada";
+  if (c.quitada) return "quitada";
+  if (c.vencida) return "vencida";
+  return "em aberto";
+}
+
+function folhaFinanceira({ titulo, rotulo, codigo, corpo, empresa, opcoes, a5 }) {
+  /* ATENÇÃO: CSS dentro de template literal — CRASE FECHA A STRING. Comentário
+     sem crase. */
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escH(titulo)}</title>
+<style>
+  @page { size: ${a5 ? "A5 landscape" : "A4 portrait"}; margin: ${a5 ? "10mm 12mm" : "14mm 14mm"}; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font: 12px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: #16161c; background: #eceaea; padding: 60px 14px 40px; }
+  .folha { position: relative; overflow: hidden; width: ${a5 ? "210mm" : "210mm"}; max-width: 100%;
+    min-height: ${a5 ? "148mm" : "297mm"}; margin: 0 auto; padding: ${a5 ? "10mm 12mm" : "14mm 14mm"};
+    background: #fff; box-shadow: 0 6px 26px rgb(13 18 64 / .16); }
+  .agua { position: absolute; inset: 0; z-index: 0; pointer-events: none;
+    display: flex; align-items: center; justify-content: center;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .agua span { font: 800 ${a5 ? "64px" : "92px"}/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .06em;
+    color: #1e275f; opacity: .055; transform: rotate(-32deg); white-space: nowrap; text-transform: uppercase; }
+  .conteudo { position: relative; z-index: 1; }
+  .cabeca { display: flex; gap: 16px; align-items: flex-start; padding-bottom: 10px; border-bottom: 2.5px solid #1e275f; }
+  .cabeca__marca { flex: 1; min-width: 0; }
+  .cabeca__marca b { display: block; font-size: ${a5 ? "16px" : "19px"}; color: #1e275f; }
+  .cabeca__marca span { display: block; font-size: 11px; color: #55555f; }
+  .cabeca__doc { text-align: right; white-space: nowrap; }
+  .cabeca__doc b { display: block; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #c03b0c; }
+  .cabeca__doc .cod { font: 800 ${a5 ? "17px" : "20px"} ui-monospace, Consolas, monospace; }
+  .cabeca__doc .em { font-size: 11px; color: #55555f; }
+  h2 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .1em; color: #55555f; margin: 16px 0 6px; }
+  h3 { font-size: 12.5px; margin: 14px 0 4px; color: #1e275f; }
+  .campos { display: grid; grid-template-columns: repeat(${a5 ? 4 : 3}, 1fr); gap: 6px 16px; }
+  .campo b { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #77778a; }
+  .campo span { display: block; font-size: 12.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  th, td { padding: 5px 7px; text-align: left; border-bottom: 1px solid #e2e2ea; }
+  th { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: #55555f; background: #f2f2f6;
+    border-bottom: 1.5px solid #c6c6d2; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  td.n, th.n { text-align: right; font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
+  tr { break-inside: avoid; }
+  tfoot td { font-weight: 800; border-top: 1.5px solid #1e275f; border-bottom: 0; }
+  tfoot tr + tr td { border-top: 0; font-weight: 600; }
+  .riscado td { color: #9a9aa8; text-decoration: line-through; }
+  .verde { color: #157a4a; } .vermelho { color: #b3261e; } .laranja { color: #c03b0c; }
+  .totais { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; break-inside: avoid; }
+  .total { flex: 1; min-width: 120px; border: 1.5px solid #1e275f; border-radius: 3px; padding: 8px 12px; }
+  .total b { display: block; font: 800 ${a5 ? "16px" : "18px"} ui-monospace, Consolas, monospace; color: #1e275f; }
+  .total span { font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em; color: #55555f; }
+  .total--destaque { background: #1e275f; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .total--destaque b, .total--destaque span { color: #fff; }
+  .frase { margin: 14px 0 0; padding: 9px 12px; border-left: 4px solid #c03b0c; background: #fbf4f1; font-size: 12.5px;
+    break-inside: avoid; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .frase--ok { border-left-color: #157a4a; background: #eff8f3; }
+  .nota-mini { font-size: 10.5px; color: #77778a; margin: 6px 0 0; }
+  .assinaturas { margin-top: 18mm; break-inside: avoid; }
+  .declaro { font-size: 11.5px; color: #33333d; margin-bottom: 14mm; }
+  .linhas { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .linha { text-align: center; } .linha .risco { border-top: 1px solid #16161c; margin-bottom: 4px; }
+  .linha b { display: block; font-size: 12px; } .linha span { display: block; font-size: 10.5px; color: #55555f; }
+  .pe { margin-top: 10mm; padding-top: 6px; border-top: 1px solid #e2e2ea; display: flex;
+    justify-content: space-between; gap: 12px; font-size: 9.5px; color: #77778a; }
+  .controles { position: fixed; top: 0; left: 0; right: 0; z-index: 9; display: flex; gap: 8px; align-items: center;
+    padding: 9px 14px; background: #1e275f; color: #fff; }
+  .controles button { padding: 7px 13px; border: 1px solid #c03b0c; border-radius: 3px; background: #c03b0c;
+    color: #fff; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .controles .espaco { flex: 1; } .controles .dica { font-size: 12px; opacity: .75; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .folha { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
+    .controles { display: none; }
+    .agua { position: fixed; }
+  }
+</style></head><body>
+<div class="controles">
+  <button onclick="print()">Imprimir</button><span class="espaco"></span>
+  <span class="dica">${a5 ? "Folha A5 deitada" : "Folha A4 em pé"} — escolha a mesma na janela de impressão.</span>
+</div>
+<div class="folha">
+  <div class="agua"><span>${escH(empresa.curto || empresa.nome)}</span></div>
+  <div class="conteudo">
+    <div class="cabeca">
+      <div class="cabeca__marca">
+        <b>${escH(empresa.nome)}</b>
+        <span>${empresa.cnpj ? "CNPJ " + escH(empresa.cnpj) + " · " : ""}${escH(empresa.endereco)}</span>
+        <span>${[empresa.telefone && "Tel. " + empresa.telefone, empresa.email].filter(Boolean).map(escH).join(" · ")}</span>
+      </div>
+      <div class="cabeca__doc">
+        <b>${escH(rotulo)}</b>
+        <div class="cod">${escH(codigo)}</div>
+        <div class="em">emitido em ${dataBr(opcoes.agora)}</div>
+      </div>
+    </div>
+    ${corpo}
+    <div class="pe">
+      <span>${escH(codigo)} · emitido por ${escH(opcoes.porQuem || "—")} em ${dataBr(opcoes.agora)}</span>
+      <span>${escH(empresa.curto || empresa.nome)}${empresa.versao ? " · sistema v" + escH(empresa.versao) : ""}</span>
+    </div>
+  </div>
+</div>
+</body></html>`;
+}
+
+/* Os dados do cliente, no alto de todo papel do financeiro. */
+const camposDoCliente = (c) => `
+    <h2>Cliente</h2>
+    <div class="campos">
+      <div class="campo"><b>Nome</b><span>${escH(c.cliente_nome || c.nome)}</span></div>
+      <div class="campo"><b>CNPJ / CPF</b><span>${escH(c.documento || "—")}</span></div>
+      <div class="campo"><b>Telefone</b><span>${escH(c.telefone || "—")}</span></div>
+      <div class="campo"><b>Cidade</b><span>${escH(c.cidade || "—")}</span></div>
+    </div>`;
+
+/* Os lotes da nota, com desconto e acréscimo — o "de onde vem o valor". */
+function tabelaDosLotes(conta) {
+  const n = conta.nota;
+  return `
+    <table>
+      <thead><tr><th>Lote</th><th>Serviço</th><th>Entrada</th><th class="n">Peças</th><th class="n">Valor</th></tr></thead>
+      <tbody>${conta.lotes.map((l) => `<tr>
+        <td><b>${escH(l.codigo)}</b></td><td>${escH(l.descricao || "—")}</td>
+        <td>${soData(l.entrada_em)}</td><td class="n">${nBr(l.pecas)}</td><td class="n">${rsBr(l.valor)}</td></tr>`).join("")
+        || '<tr><td colspan="5">Nenhum lote nesta nota.</td></tr>'}</tbody>
+      <tfoot>
+        <tr><td colspan="3">Soma dos lotes</td><td class="n">${nBr(conta.pecas)}</td><td class="n">${rsBr(conta.bruto)}</td></tr>
+        ${Number(n.desconto) ? `<tr><td colspan="4">Desconto</td><td class="n">− ${rsBr(n.desconto)}</td></tr>` : ""}
+        ${Number(n.acrescimo) ? `<tr><td colspan="4">Acréscimo</td><td class="n">+ ${rsBr(n.acrescimo)}</td></tr>` : ""}
+        <tr><td colspan="4">Valor da nota</td><td class="n">${rsBr(conta.valor)}</td></tr>
+      </tfoot>
+    </table>`;
+}
+
+/* As quatro caixas do pé da conta: o que a nota vale, o que entrou, o que
+   voltou (se voltou algo) e o que falta. */
+function caixasDaConta(conta) {
+  return `
+    <div class="totais">
+      <div class="total"><b>${rsBr(conta.valor)}</b><span>valor</span></div>
+      <div class="total"><b class="verde">${rsBr(conta.pago)}</b><span>já pago</span></div>
+      ${conta.devolvido ? `<div class="total"><b class="vermelho">${rsBr(conta.devolvido)}</b><span>devolvido</span></div>` : ""}
+      <div class="total total--destaque"><b>${conta.quitada ? "QUITADA" : rsBr(Math.max(0, conta.saldo))}</b><span>falta pagar</span></div>
+    </div>`;
+}
+
+const fraseDoSaldo = (conta, agora) => conta.nota.situacao === "cancelada"
+  ? '<p class="frase">Esta nota foi <b>cancelada</b> — não há nada a pagar por ela.</p>'
+  : conta.quitada
+    ? `<p class="frase frase--ok">Nota <b>quitada</b>. Nada a pagar em ${soData(agora)}.</p>`
+    : `<p class="frase">Em ${soData(agora)}, falta pagar <b>${rsBr(conta.saldo)}</b> desta nota${
+        conta.vencida ? " — <b>vencida</b> desde " + soData(conta.nota.vencimento) : ""}.</p>`;
+
+/* --------------------------------------------------------------------------
+   1. EXTRATO DA NOTA — "era X, pagou Y, falta Z", com o saldo DEPOIS de
+   cada movimento. É a coluna do saldo que responde a pergunta do cliente:
+   ele vê o número cair a cada pagamento, na ordem em que pagou.
+   O lançamento CANCELADO não entra: no papel do cliente ele só confundiria
+   (a tela continua mostrando, riscado, para a fábrica).
+   -------------------------------------------------------------------------- */
+function extratoDaNota(conta, empresa, opcoes) {
+  const n = conta.nota;
+  const vivos = conta.lancamentos.filter((l) => !l.cancelado_em);
+  let saldo = conta.valor;
+  const linhas = vivos.map((l) => {
+    saldo = Math.round((saldo + (l.tipo === "entrada" ? -1 : 1) * Number(l.valor)) * 100) / 100;
+    return `<tr>
+      <td>${soData(l.ocorrido_em)}</td><td>${escH(l.recibo || "—")}</td>
+      <td>${l.tipo === "entrada" ? "Pagamento" : "Devolução"}</td><td>${escH(formaBr(l.forma))}</td>
+      <td class="n ${l.tipo === "entrada" ? "verde" : "vermelho"}">${l.tipo === "entrada" ? "−" : "+"} ${rsBr(l.valor)}</td>
+      <td class="n"><b>${saldo <= 0.004 ? "quitada" : rsBr(saldo)}</b></td></tr>`;
+  });
+  const corpo = camposDoCliente(n) + `
+    <h2>Nota</h2>
+    <div class="campos">
+      <div class="campo"><b>Nota fiscal</b><span>${escH(n.numero_nf || "—")}</span></div>
+      <div class="campo"><b>Emitida em</b><span>${soData(n.emitida_em)}</span></div>
+      <div class="campo"><b>Vencimento</b><span>${n.vencimento ? soData(n.vencimento) : "—"}</span></div>
+      <div class="campo"><b>Situação</b><span>${escH(situacaoDaNota(conta))}</span></div>
+    </div>
+    <h2>De onde vem o valor</h2>
+    ${tabelaDosLotes(conta)}
+    <h2>Pagamentos e devoluções</h2>
+    <table>
+      <thead><tr><th>Data</th><th>Recibo</th><th>Movimento</th><th>Forma</th><th class="n">Valor</th><th class="n">Falta depois</th></tr></thead>
+      <tbody>
+        <tr><td>${soData(n.emitida_em)}</td><td>—</td><td>Valor da nota</td><td>—</td><td class="n"></td><td class="n"><b>${rsBr(conta.valor)}</b></td></tr>
+        ${linhas.join("") || '<tr><td colspan="6">Nenhum pagamento até agora.</td></tr>'}
+      </tbody>
+    </table>
+    ${caixasDaConta(conta)}
+    ${fraseDoSaldo(conta, opcoes.agora)}`;
+  return folhaFinanceira({ titulo: `${n.codigo} — extrato`, rotulo: "Extrato da nota", codigo: n.codigo,
+    corpo, empresa, opcoes });
+}
+
+/* --------------------------------------------------------------------------
+   2. RECIBO DE PRODUÇÃO DA NOTA — o recibo de produção de cada lote (as
+   fichas, linha a linha) e, no fim, a situação do pagamento. É o papel que
+   o cliente confere peça por peça e, no mesmo papel, vê quanto já pagou.
+   As fichas vêm de `detalheDoLote`, a mesma fonte do recibo do lote.
+   -------------------------------------------------------------------------- */
+function producaoDaNota(conta, detalhes, empresa, opcoes) {
+  const n = conta.nota;
+  const blocos = detalhes.map((d) => `
+    <h3>${escH(d.lote.codigo)}${d.lote.descricao ? " — " + escH(d.lote.descricao) : ""}</h3>
+    <p class="nota-mini">Entrada da mercadoria: ${soData(d.lote.entrada_em)} · ${d.fichas.length} ficha${d.fichas.length === 1 ? "" : "s"}</p>
+    <table>
+      <thead><tr><th>Data</th><th>Desenho</th><th>Mercadoria</th><th class="n">Peças</th><th class="n">Valor unitário</th><th class="n">Valor total</th></tr></thead>
+      <tbody>${d.fichas.map((f) => `<tr>
+        <td>${soData(f.fechada_em)}</td><td>${escH(f.desenho_nome)}</td><td>${escH(f.mercadoria_nome || "—")}</td>
+        <td class="n">${nBr(f.quantidade)}</td><td class="n">${rsBr(f.preco_unitario)}</td><td class="n">${rsBr(f.total_valor)}</td></tr>`).join("")
+        || '<tr><td colspan="6">Nenhuma ficha neste lote.</td></tr>'}</tbody>
+      <tfoot><tr><td colspan="3">Total do lote</td><td class="n">${nBr(d.pecas)}</td><td class="n"></td><td class="n">${rsBr(d.valor)}</td></tr></tfoot>
+    </table>`).join("");
+  const vivos = conta.lancamentos.filter((l) => !l.cancelado_em);
+  const corpo = camposDoCliente(n) + `
+    <h2>Produção — ${detalhes.length} lote${detalhes.length === 1 ? "" : "s"} · ${nBr(conta.pecas)} peças</h2>
+    ${blocos}
+    <h2>Situação do pagamento</h2>
+    <table>
+      <thead><tr><th>Data</th><th>Recibo</th><th>Movimento</th><th>Forma</th><th class="n">Valor</th></tr></thead>
+      <tbody>${vivos.map((l) => `<tr><td>${soData(l.ocorrido_em)}</td><td>${escH(l.recibo || "—")}</td>
+        <td>${l.tipo === "entrada" ? "Pagamento" : "Devolução"}</td><td>${escH(formaBr(l.forma))}</td>
+        <td class="n ${l.tipo === "entrada" ? "verde" : "vermelho"}">${l.tipo === "entrada" ? "" : "− "}${rsBr(l.valor)}</td></tr>`).join("")
+        || '<tr><td colspan="5">Nenhum pagamento até agora.</td></tr>'}</tbody>
+      ${Number(n.desconto) || Number(n.acrescimo) ? `<tfoot>
+        <tr><td colspan="4">Soma da produção</td><td class="n">${rsBr(conta.bruto)}</td></tr>
+        ${Number(n.desconto) ? `<tr><td colspan="4">Desconto</td><td class="n">− ${rsBr(n.desconto)}</td></tr>` : ""}
+        ${Number(n.acrescimo) ? `<tr><td colspan="4">Acréscimo</td><td class="n">+ ${rsBr(n.acrescimo)}</td></tr>` : ""}
+      </tfoot>` : ""}
+    </table>
+    ${caixasDaConta(conta)}
+    ${fraseDoSaldo(conta, opcoes.agora)}
+    <div class="assinaturas">
+      <p class="declaro">Declaro que recebi as peças relacionadas neste recibo, no total de
+      <b>${nBr(conta.pecas)} peça${conta.pecas === 1 ? "" : "s"}</b>, conferidas e nas condições descritas acima.</p>
+      <div class="linhas">
+        <div class="linha"><div class="risco"></div><b>${escH(empresa.nome)}</b><span>quem entregou</span></div>
+        <div class="linha"><div class="risco"></div><b>${escH(n.cliente_nome)}</b><span>nome legível, documento e data</span></div>
+      </div>
+    </div>`;
+  return folhaFinanceira({ titulo: `${n.codigo} — recibo de produção`, rotulo: "Recibo de produção",
+    codigo: n.codigo, corpo, empresa, opcoes });
+}
+
+/* --------------------------------------------------------------------------
+   3. EXTRATO DO CLIENTE — "puxa meu saldo devedor".
+   A tabela segue o recorte escolhido na tela (em aberto, vencidas, quitadas,
+   todas; período). O SALDO DEVEDOR, não: ele é sempre o TOTAL do cliente —
+   num extrato das quitadas, um "saldo devedor R$ 0,00" seria mentira se
+   houvesse outra nota em aberto.
+   -------------------------------------------------------------------------- */
+function extratoDoCliente({ cliente, contas, todas, filtro, pagamentos }, empresa, opcoes) {
+  const ROTULO = { aberta: "Notas em aberto", vencida: "Notas vencidas", quitada: "Notas quitadas", "": "Todas as notas" };
+  const vivas = todas.filter((c) => c.nota.situacao !== "cancelada");
+  const devedor = vivas.reduce((a, c) => a + Math.max(0, c.saldo), 0);
+  const vencido = vivas.filter((c) => c.vencida).reduce((a, c) => a + Math.max(0, c.saldo), 0);
+  const soma = (k) => contas.filter((c) => c.nota.situacao !== "cancelada").reduce((a, c) => a + c[k], 0);
+  const recorte = (ROTULO[filtro.s] || "Notas") +
+    (filtro.de || filtro.ate ? ` · emitidas ${filtro.de ? "de " + soData(filtro.de + "T12:00") : ""}${filtro.ate ? " até " + soData(filtro.ate + "T12:00") : ""}` : "");
+  const corpo = camposDoCliente(cliente) + `
+    <div class="totais">
+      <div class="total total--destaque"><b>${rsBr(devedor)}</b><span>saldo devedor total</span></div>
+      <div class="total"><b class="${vencido ? "vermelho" : ""}">${rsBr(vencido)}</b><span>vencido</span></div>
+      <div class="total"><b>${nBr(vivas.filter((c) => !c.quitada).length)}</b><span>notas em aberto</span></div>
+    </div>
+    <h2>${escH(recorte)}</h2>
+    <table>
+      <thead><tr><th>Nota</th><th>Emitida</th><th>Vencimento</th><th>Situação</th><th class="n">Valor</th><th class="n">Pago</th><th class="n">Falta</th></tr></thead>
+      <tbody>${contas.map((c) => `<tr${c.nota.situacao === "cancelada" ? ' class="riscado"' : ""}>
+        <td><b>${escH(c.nota.codigo)}</b>${c.nota.numero_nf ? "<br><small>NF " + escH(c.nota.numero_nf) + "</small>" : ""}</td>
+        <td>${soData(c.nota.emitida_em)}</td><td>${c.nota.vencimento ? soData(c.nota.vencimento) : "—"}</td>
+        <td class="${c.vencida ? "vermelho" : c.quitada ? "verde" : ""}">${escH(situacaoDaNota(c))}</td>
+        <td class="n">${rsBr(c.valor)}</td><td class="n verde">${rsBr(c.pago - c.devolvido)}</td>
+        <td class="n"><b>${c.quitada || c.nota.situacao === "cancelada" ? "—" : rsBr(c.saldo)}</b></td></tr>`).join("")
+        || '<tr><td colspan="7">Nenhuma nota neste recorte.</td></tr>'}</tbody>
+      ${contas.length ? `<tfoot><tr><td colspan="4">Total do recorte</td><td class="n">${rsBr(soma("valor"))}</td>
+        <td class="n">${rsBr(soma("pago") - soma("devolvido"))}</td>
+        <td class="n">${rsBr(contas.filter((c) => c.nota.situacao !== "cancelada").reduce((a, c) => a + Math.max(0, c.saldo), 0))}</td></tr></tfoot>` : ""}
+    </table>
+    <h2>Pagamentos recebidos nestas notas</h2>
+    <table>
+      <thead><tr><th>Data</th><th>Recibo</th><th>Nota</th><th>Movimento</th><th>Forma</th><th class="n">Valor</th></tr></thead>
+      <tbody>${pagamentos.map((l) => `<tr><td>${soData(l.ocorrido_em)}</td><td>${escH(l.recibo || "—")}</td>
+        <td>${escH(l.nota_codigo)}</td><td>${l.tipo === "entrada" ? "Pagamento" : "Devolução"}</td><td>${escH(formaBr(l.forma))}</td>
+        <td class="n ${l.tipo === "entrada" ? "verde" : "vermelho"}">${l.tipo === "entrada" ? "" : "− "}${rsBr(l.valor)}</td></tr>`).join("")
+        || '<tr><td colspan="6">Nenhum pagamento nestas notas.</td></tr>'}</tbody>
+    </table>
+    ${devedor > 0.004
+      ? `<p class="frase">Em ${soData(opcoes.agora)}, o saldo devedor de <b>${escH(cliente.nome)}</b> é de <b>${rsBr(devedor)}</b>${
+          vencido > 0.004 ? `, dos quais <b>${rsBr(vencido)}</b> já vencidos` : ""}.</p>`
+      : `<p class="frase frase--ok">Em ${soData(opcoes.agora)}, <b>${escH(cliente.nome)}</b> não tem saldo devedor.</p>`}`;
+  return folhaFinanceira({ titulo: `${cliente.nome} — extrato`, rotulo: "Extrato do cliente",
+    codigo: soData(opcoes.agora), corpo, empresa, opcoes });
+}
+
+/* --------------------------------------------------------------------------
+   4. RECIBO DO PAGAMENTO DO CLIENTE — um dinheiro, várias notas.
+   O cliente pagou R$ 200; o papel diz R$ 200 e mostra para onde foi cada
+   pedaço. O saldo é O DAQUELE MOMENTO (como no recibo de uma nota só): a
+   reimpressão do mês que vem diz o mesmo que o papel que ele guardou.
+   -------------------------------------------------------------------------- */
+function reciboDoGrupo({ grupo, cliente, partes, total, forma, data, descricao, devedorDepois }, empresa, opcoes) {
+  const corpo = `
+    <h2 style="margin-top:12px">Recebemos de ${escH(cliente.nome)}</h2>
+    <div style="font:800 28px ui-monospace,Consolas,monospace;color:#157a4a">${rsBr(total)}</div>
+    <p class="nota-mini">${escH(formaBr(forma))} · ${soData(data)}${descricao ? " — " + escH(descricao) : ""} ·
+      distribuído da nota mais antiga para a mais nova</p>
+    <h2>Onde o pagamento foi abatido</h2>
+    <table>
+      <thead><tr><th>Nota</th><th>Recibo</th><th class="n">Abatido</th><th class="n">Falta na nota</th></tr></thead>
+      <tbody>${partes.map((p) => `<tr${p.cancelado ? ' class="riscado"' : ""}>
+        <td><b>${escH(p.nota_codigo)}</b>${p.numero_nf ? " · NF " + escH(p.numero_nf) : ""}${p.cancelado ? " (cancelado)" : ""}</td>
+        <td>${escH(p.recibo)}</td><td class="n">${rsBr(p.valor)}</td>
+        <td class="n"><b>${p.faltavaDepois <= 0.004 ? "quitada" : rsBr(p.faltavaDepois)}</b></td></tr>`).join("")}</tbody>
+    </table>
+    <div class="totais">
+      <div class="total"><b class="verde">${rsBr(total)}</b><span>pago agora</span></div>
+      <div class="total total--destaque"><b>${devedorDepois <= 0.004 ? "R$ 0,00" : rsBr(devedorDepois)}</b><span>saldo devedor depois</span></div>
+    </div>
+    <div class="linhas" style="margin-top:14mm">
+      <div class="linha"><div class="risco"></div><b>${escH(empresa.nome)}</b></div>
+      <div class="linha"><div class="risco"></div><b>${escH(cliente.nome)}</b></div>
+    </div>`;
+  return folhaFinanceira({ titulo: `${grupo} — recibo de pagamento`, rotulo: "Recibo de pagamento",
+    codigo: grupo, corpo, empresa, opcoes, a5: true });
+}
+
+/* ==========================================================================
    4. CADASTROS — uma definição, cinco telas
 
    As cinco tabelas de apoio (clientes, desenhos, mercadorias, cores, máquinas)
@@ -3619,6 +3973,125 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     return responder(res, 200, { ok: true });
   }
 
+  /* ======================================================================
+     PAGAMENTO DO CLIENTE — um dinheiro, várias notas (1.27.0, sql/12)
+
+     "Ele pagou 400 em dinheiro e depois mandou 200 no PIX": o escritório
+     digita só o que entrou, e o sistema abate da nota MAIS ANTIGA (pela
+     emissão) para a mais nova. Sem isto, era abrir nota por nota fazendo
+     564,20 − 400 − 200 na calculadora — e errar a conta é cobrar errado.
+
+     Cada pedaço vira o lançamento de recebimento de UMA nota (a regra do
+     banco: recebimento tem nota) e ganha o seu RC; os pedaços do mesmo
+     dinheiro ficam ligados pelo GRUPO, que vira um recibo só.
+     ====================================================================== */
+
+  /* As notas do cliente que ainda cobram alguma coisa, da mais antiga para a
+     mais nova — a ordem em que o dinheiro é abatido. */
+  async function notasEmAberto(clienteId) {
+    const notas = await Q.all(
+      `SELECT n.*, c.nome AS cliente_nome FROM notas n JOIN clientes c ON c.id = n.cliente_id
+        WHERE n.cliente_id = ? AND n.situacao = 'aberta'
+        ORDER BY n.emitida_em ASC, n.id ASC`, clienteId);
+    const contas = [];
+    for (const n of notas) {
+      const c = await contaDaNota(n);
+      if (c.saldo > 0.004) contas.push(c);
+    }
+    return contas;
+  }
+
+  /* A DISTRIBUIÇÃO, em centavos inteiros: 0,1 + 0,2 em ponto flutuante não
+     dá 0,3, e um centavo perdido aqui vira nota que nunca quita. */
+  function distribuir(valor, contas) {
+    let resta = Math.round(Number(valor) * 100);
+    const partes = [];
+    for (const c of contas) {
+      if (resta <= 0) break;
+      const deve = Math.round(c.saldo * 100);
+      const vai = Math.min(resta, deve);
+      if (vai <= 0) continue;
+      partes.push({ conta: c, centavos: vai, faltaDepois: (deve - vai) / 100 });
+      resta -= vai;
+    }
+    return { partes, sobra: resta / 100 };
+  }
+
+  const mClienteAberto = /^\/restrito\/api\/clientes\/(\d+)\/aberto$/.exec(caminho);
+  if (mClienteAberto && req.method === "GET") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador vê o financeiro" });
+    const cliente = await Q.get("SELECT id, nome FROM clientes WHERE id = ?", Number(mClienteAberto[1]));
+    if (!cliente) return responder(res, 404, { error: "cliente não encontrado" });
+    const contas = await notasEmAberto(cliente.id);
+    return responder(res, 200, {
+      cliente,
+      notas: contas.map((c) => ({
+        id: c.nota.id, codigo: c.nota.codigo, numero_nf: c.nota.numero_nf,
+        emitida_em: c.nota.emitida_em, vencimento: c.nota.vencimento,
+        valor: c.valor, pago: c.pago, devolvido: c.devolvido, saldo: c.saldo, vencida: c.vencida,
+      })),
+      total: Math.round(contas.reduce((a, c) => a + c.saldo, 0) * 100) / 100,
+    });
+  }
+
+  const mClientePag = /^\/restrito\/api\/clientes\/(\d+)\/pagamento$/.exec(caminho);
+  if (mClientePag && req.method === "POST") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador lança no caixa" });
+    const cliente = await Q.get("SELECT id, nome FROM clientes WHERE id = ?", Number(mClientePag[1]));
+    if (!cliente) return responder(res, 404, { error: "cliente não encontrado" });
+    const corpo = (await lerCorpo(req)) || {};
+    let valor;
+    try { valor = dinheiro(corpo.valor, "o valor"); }
+    catch (e) { return responder(res, 400, { error: e.message }); }
+    if (!valor || Number(valor) <= 0) return responder(res, 400, { error: "informe um valor maior que zero" });
+    const forma = String(corpo.forma || "pix").slice(0, 30);
+    const descricao = sanitizarHtml(String(corpo.descricao || "")).slice(0, 500);
+
+    let resposta = null, recusa = null;
+    await Q.tx(async () => {
+      /* TRAVA as notas do cliente: dois cliques em "Registrar" (ou duas
+         pessoas) não podem distribuir o mesmo saldo duas vezes. O segundo
+         espera o primeiro e recalcula sobre o que sobrou. */
+      await Q.all("SELECT id FROM notas WHERE cliente_id = ? FOR UPDATE", cliente.id);
+      const contas = await notasEmAberto(cliente.id);
+      const devido = Math.round(contas.reduce((a, c) => a + c.saldo, 0) * 100) / 100;
+      if (!contas.length) { recusa = [409, "este cliente não tem nota em aberto."]; return; }
+      /* Pagar MAIS que a dívida é quase sempre um zero a mais. A mesma régua
+         da nota (sql/09): barrar com o número na mensagem. */
+      if (Number(valor) > devido + 0.01) {
+        recusa = [400, `o saldo devedor de ${cliente.nome} é de R$ ${devido.toFixed(2).replace(".", ",")}. ` +
+          `Não dá para receber R$ ${Number(valor).toFixed(2).replace(".", ",")}.`];
+        return;
+      }
+      const { partes } = distribuir(valor, contas);
+      const ano = new Date().getFullYear();
+      const g = await Q.get(
+        `SELECT COALESCE(MAX(split_part(grupo, '-', 3)::int), 0) AS n FROM lancamentos WHERE grupo ~ ?`,
+        `^PG-${ano}-[0-9]+$`);
+      const grupo = `PG-${ano}-${String(Number(g?.n || 0) + 1).padStart(4, "0")}`;
+      const feitos = [];
+      for (const p of partes) {
+        const r = await Q.get(
+          `SELECT COALESCE(MAX(split_part(recibo, '-', 3)::int), 0) AS n FROM lancamentos WHERE recibo ~ ?`,
+          `^RC-${ano}-[0-9]+$`);
+        const recibo = `RC-${ano}-${String(Number(r?.n || 0) + 1).padStart(4, "0")}`;
+        const id = await Q.inserir(
+          `INSERT INTO lancamentos (tipo, categoria, nota_id, cliente_id, valor, forma, ocorrido_em,
+                                    descricao, recibo, grupo, criado_por)
+           VALUES ('entrada', 'recebimento', ?, ?, ?, ?, COALESCE(?::date, CURRENT_DATE), ?, ?, ?, ?) RETURNING id`,
+          p.conta.nota.id, cliente.id, (p.centavos / 100).toFixed(2), forma, corpo.ocorrido_em || null,
+          descricao, recibo, grupo, sessao.usuarioId);
+        feitos.push({ id, recibo, nota_id: p.conta.nota.id, nota: p.conta.nota.codigo,
+          valor: p.centavos / 100, falta_depois: p.faltaDepois });
+      }
+      resposta = { ok: true, grupo, partes: feitos,
+        devedor_depois: Math.round((devido - Number(valor)) * 100) / 100 };
+    });
+    if (recusa) return responder(res, recusa[0], { error: recusa[1] });
+    avisar("notas"); avisar("caixa");
+    return responder(res, 201, resposta);
+  }
+
   /* ------------------------------------------------------------ o caixa */
   if (caminho === "/restrito/api/caixa" && req.method === "GET") {
     if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador vê o caixa" });
@@ -4373,6 +4846,112 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
      três recibos, cada um com o que pagou naquele dia e quanto ficou faltando
      DEPOIS daquele pagamento. Um recibo por nota diria só o total, e o cliente
      que pagou R$ 1.000 de R$ 8.000 sairia com um papel de R$ 8.000 na mão. */
+  /* ----------------------------------------- os papéis do financeiro (1.27.0)
+     Todos do administrador: é o dinheiro do cliente. As contas saem de
+     `contaDaNota` — a mesma da tela —, nunca de uma soma feita aqui. */
+  const opcoesDoPapel = () => ({ agora: new Date(), porQuem: sessao.nome || sessao.usuario });
+  const notaComCliente = (id) => Q.get(
+    `SELECT n.*, c.nome AS cliente_nome, c.documento, c.telefone, c.cidade
+       FROM notas n JOIN clientes c ON c.id = n.cliente_id WHERE n.id = ?`, id);
+
+  const mPapelNota = /^\/restrito\/notas\/(\d+)\/(extrato|producao)$/.exec(caminho);
+  if (mPapelNota && req.method === "GET") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador imprime o financeiro" });
+    const nota = await notaComCliente(Number(mPapelNota[1]));
+    if (!nota) return responder(res, 404, { error: "nota não encontrada" });
+    const conta = await contaDaNota(nota);
+    if (mPapelNota[2] === "extrato") {
+      return responder(res, 200, extratoDaNota(conta, empresa, opcoesDoPapel()),
+        { "Content-Type": "text/html; charset=utf-8" });
+    }
+    /* As fichas de cada lote vêm de `detalheDoLote` — a mesma fonte do recibo
+       do lote: o papel da nota não pode discordar do papel do lote. */
+    const detalhes = [];
+    for (const l of conta.lotes) detalhes.push(await detalheDoLote(l));
+    return responder(res, 200, producaoDaNota(conta, detalhes, empresa, opcoesDoPapel()),
+      { "Content-Type": "text/html; charset=utf-8" });
+  }
+
+  const mExtratoCli = /^\/restrito\/clientes\/(\d+)\/extrato$/.exec(caminho);
+  if (mExtratoCli && req.method === "GET") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador imprime o financeiro" });
+    const cliente = await Q.get("SELECT id, nome, documento, telefone, cidade FROM clientes WHERE id = ?",
+      Number(mExtratoCli[1]));
+    if (!cliente) return responder(res, 404, { error: "cliente não encontrado" });
+    const url = new URL(req.url, "http://localhost");
+    const filtro = {
+      s: String(url.searchParams.get("s") || ""),
+      de: /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("de") || "") ? url.searchParams.get("de") : "",
+      ate: /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("ate") || "") ? url.searchParams.get("ate") : "",
+    };
+    /* TODAS as notas do cliente, da mais antiga para a mais nova — a ordem de
+       um extrato. O saldo devedor sai delas; a tabela, do recorte. */
+    const notas = await Q.all(
+      `SELECT n.*, c.nome AS cliente_nome FROM notas n JOIN clientes c ON c.id = n.cliente_id
+        WHERE n.cliente_id = ? ORDER BY n.emitida_em ASC, n.id ASC`, cliente.id);
+    const todas = [];
+    for (const n of notas) todas.push(await contaDaNota(n));
+    const noPeriodo = todas.filter((c) => {
+      const e = emIso(c.nota.emitida_em);
+      return (!filtro.de || e >= filtro.de) && (!filtro.ate || e <= filtro.ate);
+    });
+    /* O MESMO recorte da lista (rota /api/notas) — a tela e o papel mostram
+       as mesmas notas. */
+    const contas = !filtro.s ? noPeriodo
+      : filtro.s === "quitada" ? noPeriodo.filter((x) => x.quitada)
+      : filtro.s === "vencida" ? noPeriodo.filter((x) => x.vencida)
+      : filtro.s === "aberta" ? noPeriodo.filter((x) => !x.quitada && x.nota.situacao !== "cancelada")
+      : filtro.s === "cancelada" ? noPeriodo.filter((x) => x.nota.situacao === "cancelada")
+      : noPeriodo;
+    const pagamentos = contas
+      .flatMap((c) => c.lancamentos.filter((l) => !l.cancelado_em).map((l) => Object.assign({}, l, { nota_codigo: c.nota.codigo })))
+      .sort((a, b) => emIso(a.ocorrido_em).localeCompare(emIso(b.ocorrido_em)) || Number(a.id) - Number(b.id));
+    return responder(res, 200, extratoDoCliente({ cliente, contas, todas, filtro, pagamentos }, empresa, opcoesDoPapel()),
+      { "Content-Type": "text/html; charset=utf-8" });
+  }
+
+  /* O recibo do pagamento distribuído (sql/12): UM papel com o dinheiro que o
+     cliente deu e para onde foi cada pedaço. */
+  const mReciboGrupo = /^\/restrito\/pagamentos\/(PG-\d{4}-\d{4,})\/recibo$/.exec(caminho);
+  if (mReciboGrupo && req.method === "GET") {
+    if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador imprime recibo" });
+    const grupo = mReciboGrupo[1];
+    const pedacos = await Q.all(
+      `SELECT la.*, n.codigo AS nota_codigo, n.numero_nf FROM lancamentos la JOIN notas n ON n.id = la.nota_id
+        WHERE la.grupo = ? ORDER BY la.id`, grupo);
+    if (!pedacos.length) return responder(res, 404, { error: "recibo não encontrado" });
+    const cliente = await Q.get("SELECT id, nome, documento, telefone, cidade FROM clientes WHERE id = ?",
+      pedacos[0].cliente_id);
+    const ultimo = Math.max(...pedacos.map((p) => Number(p.id)));
+    const quando = pedacos[pedacos.length - 1].criado_em;
+
+    /* O SALDO DAQUELE MOMENTO: só os lançamentos até o último deste grupo, e
+       só as notas que já existiam. A reimpressão de amanhã diz o mesmo que o
+       papel que o cliente levou hoje. */
+    const ateAqui = (conta, limite) => {
+      const v = conta.lancamentos.filter((x) => !x.cancelado_em && Number(x.id) <= limite);
+      const pago = v.filter((x) => x.tipo === "entrada").reduce((a, x) => a + Number(x.valor), 0);
+      const dev = v.filter((x) => x.tipo === "saida").reduce((a, x) => a + Number(x.valor), 0);
+      return Math.round((conta.valor - pago + dev) * 100) / 100;
+    };
+    const partes = [];
+    for (const p of pedacos) {
+      const conta = await contaDaNota(await Q.get("SELECT * FROM notas WHERE id = ?", p.nota_id));
+      partes.push({ nota_codigo: p.nota_codigo, numero_nf: p.numero_nf, recibo: p.recibo,
+        valor: Number(p.valor), cancelado: !!p.cancelado_em, faltavaDepois: ateAqui(conta, Number(p.id)) });
+    }
+    const notasDoCliente = await Q.all(
+      "SELECT * FROM notas WHERE cliente_id = ? AND situacao <> 'cancelada' AND criado_em <= ?", cliente.id, quando);
+    let devedorDepois = 0;
+    for (const n of notasDoCliente) devedorDepois += Math.max(0, ateAqui(await contaDaNota(n), ultimo));
+    return responder(res, 200, reciboDoGrupo({
+      grupo, cliente, partes,
+      total: partes.filter((p) => !p.cancelado).reduce((a, p) => a + p.valor, 0),
+      forma: pedacos[0].forma, data: pedacos[0].ocorrido_em, descricao: pedacos[0].descricao,
+      devedorDepois: Math.round(devedorDepois * 100) / 100,
+    }, empresa, opcoesDoPapel()), { "Content-Type": "text/html; charset=utf-8" });
+  }
+
   const mReciboPg = /^\/restrito\/lancamentos\/(\d+)\/recibo$/.exec(caminho);
   if (mReciboPg && req.method === "GET") {
     if (!ehAdmin(sessao)) return responder(res, 403, { error: "só o administrador imprime recibo" });

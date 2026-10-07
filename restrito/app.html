@@ -2905,6 +2905,21 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         '<label class="campo"><span>De</span><input type="date" id="fn-de" value="' + filtroNotas.de + '"></label>' +
         '<label class="campo"><span>Até</span><input type="date" id="fn-ate" value="' + filtroNotas.ate + '"></label>' +
         '<button class="btn" data-acao="filtrar-notas">Filtrar</button>' +
+        /* (1.27.0) COM UM CLIENTE ESCOLHIDO, a conta dele: pagar sem abrir
+           nota por nota, e o extrato com o saldo devedor. O extrato leva o
+           MESMO recorte da tela (aba e período) — o papel mostra o que a
+           pessoa está vendo. */
+        /* Os dois num grupo só, empurrado para a direita: soltos, o espaçador
+           levava um e deixava o outro cair sozinho na linha de baixo. */
+        (filtroNotas.cliente
+          ? '<span style="display:flex;gap:10px;flex-wrap:wrap;margin-left:auto">' +
+            '<a class="btn btn--fantasma" target="_blank" rel="noopener" href="/restrito/clientes/' +
+              encodeURIComponent(filtroNotas.cliente) + "/extrato?" +
+              new URLSearchParams({ s: filtroNotas.s || "", de: filtroNotas.de || "", ate: filtroNotas.ate || "" }).toString() +
+              '">Imprimir extrato do cliente</a>' +
+            '<button class="btn btn--verde" data-acao="pagar-cliente" data-id="' + esc(filtroNotas.cliente) + '">Registrar pagamento</button>' +
+            "</span>"
+          : "") +
       "</div></div>" +
       (r.itens.length
         ? '<div class="rolagem"><table><thead><tr>' +
@@ -2962,14 +2977,20 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           (quitada ? "QUITADA" : dinheiro(r.saldo)) + "</b><span>falta</span></div>" +
         "<div><b>" + num(r.pecas) + "</b><span>peças</span></div>" +
       "</div>" +
-      (n.situacao !== "cancelada" && !quitada
-        ? '<div class="linha-botoes" style="margin-top:16px">' +
-          '<button class="btn btn--verde" data-acao="receber" data-id="' + id + '">Registrar pagamento</button>' +
-          (r.pago > r.devolvido
-            ? '<button class="btn btn--fantasma" data-acao="devolver" data-id="' + id + '">Devolver ao cliente</button>'
-            : "") +
-          "</div>"
-        : "") +
+      '<div class="linha-botoes" style="margin-top:16px">' +
+        (n.situacao !== "cancelada" && !quitada
+          ? '<button class="btn btn--verde" data-acao="receber" data-id="' + id + '">Registrar pagamento</button>' +
+            (r.pago > r.devolvido
+              ? '<button class="btn btn--fantasma" data-acao="devolver" data-id="' + id + '">Devolver ao cliente</button>'
+              : "")
+          : "") +
+        /* (1.27.0) OS PAPÉIS DA NOTA — sempre à vista, inclusive na nota
+           quitada: "mostra que eu já paguei tudo" é pedido de cliente também.
+           O extrato é a conta (era X, pagou Y, falta Z); o recibo de produção
+           é a conta peça por peça, com o pagamento no fim. */
+        '<a class="btn btn--fantasma" href="/restrito/notas/' + id + '/extrato" target="_blank" rel="noopener">Imprimir extrato</a>' +
+        '<a class="btn btn--fantasma" href="/restrito/notas/' + id + '/producao" target="_blank" rel="noopener">Recibo de produção</a>' +
+      "</div>" +
       "</div></div>" +
 
       '<div class="bloco"><div class="bloco__topo"><h2>Lotes desta nota</h2><span class="espaco"></span>' +
@@ -3006,12 +3027,18 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
                 : '<span class="etiqueta etiqueta--vermelha">devolução</span>') + "</td>" +
               "<td>" + esc(FORMAS[l.forma] || l.forma) + "</td>" +
               "<td>" + esc(l.descricao || "—") +
+                (l.grupo ? "<br><small>parte do pagamento " + esc(l.grupo) + " (dividido entre notas)</small>" : "") +
                 (l.cancelado_em ? "<br><small>cancelado: " + esc(l.motivo_cancelamento) + "</small>" : "") + "</td>" +
               '<td class="num"><b style="color:' + (l.tipo === "entrada" ? "var(--verde)" : "var(--vermelho)") +
                 '">' + (l.tipo === "entrada" ? "+" : "−") + " " + dinheiro(l.valor) + "</b></td>" +
               "<td>" + (l.cancelado_em ? "" :
-                '<a class="btn btn--fantasma btn--mini" href="/restrito/lancamentos/' + l.id +
-                  '/recibo" target="_blank" rel="noopener">recibo</a> ' +
+                /* Pedaço de um pagamento DIVIDIDO (1.27.0): o recibo é o do
+                   grupo — o cliente pagou R$ 200 e guardou o papel de R$ 200,
+                   não um de R$ 35,62 que ele não reconhece. */
+                '<a class="btn btn--fantasma btn--mini" href="' + (l.grupo
+                  ? "/restrito/pagamentos/" + encodeURIComponent(l.grupo) + "/recibo"
+                  : "/restrito/lancamentos/" + l.id + "/recibo") +
+                  '" target="_blank" rel="noopener">recibo</a> ' +
                 '<button class="btn btn--fantasma btn--mini" data-acao="cancelar-lancamento" data-id="' +
                   l.id + '">cancelar</button>') + "</td></tr>").join("") +
             "</tbody></table></div>"
@@ -3517,6 +3544,100 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
            entregar, e obrigar a procurar o botão depois de salvar é atrito
            num fluxo que acontece com o cliente esperando na frente. */
         window.open("/restrito/lancamentos/" + r2.id + "/recibo", "_blank", "noopener");
+      },
+    });
+  }
+
+  /* ------------------------------------------- pagamento do cliente (1.27.0)
+     Um dinheiro, várias notas: digita-se o que entrou, e o sistema abate da
+     nota mais antiga para a mais nova. A tabela mostra ANTES de confirmar
+     quanto vai em cada nota e quanto fica — quem confere é o escritório,
+     com o cliente na frente.
+     A conta da tela é só a PRÉVIA: quem distribui de verdade é o servidor,
+     dentro da transação, sobre o saldo daquele instante. */
+  async function modalPagamentoCliente(clienteId) {
+    const r = await api("/restrito/api/clientes/" + clienteId + "/aberto");
+    if (!r.notas.length) { recado(r.cliente.nome + " não tem nota em aberto.", true); return; }
+
+    /* "1.234,56" / "1234.56" / "400" → centavos. O mesmo critério do
+       servidor: o último separador com 1 ou 2 dígitos depois é o decimal. */
+    const centavosDe = (s) => {
+      let t = String(s || "").trim().replace(/^R\$\s*/i, "").replace(/\s/g, "");
+      if (!/^[0-9.,]+$/.test(t)) return NaN;
+      const u = Math.max(t.lastIndexOf(","), t.lastIndexOf("."));
+      let int = t, dec = "";
+      if (u >= 0 && t.length - u - 1 >= 1 && t.length - u - 1 <= 2) { int = t.slice(0, u); dec = t.slice(u + 1); }
+      int = int.replace(/[.,]/g, "") || "0";
+      return Number(int) * 100 + Number((dec + "00").slice(0, 2));
+    };
+    const devidoC = Math.round(r.total * 100);
+
+    function previa(caixa) {
+      const c = centavosDe(caixa.querySelector("#pc-valor").value);
+      let resta = isNaN(c) ? 0 : c;
+      const linhas = r.notas.map((n) => {
+        const deve = Math.round(n.saldo * 100);
+        const vai = Math.max(0, Math.min(resta, deve));
+        resta -= vai;
+        return "<tr" + (vai ? ' style="background:#eff8f3"' : "") + ">" +
+          '<td><b class="num">' + esc(n.codigo) + "</b>" + (n.numero_nf ? "<br><small>NF " + esc(n.numero_nf) + "</small>" : "") + "</td>" +
+          '<td class="num">' + soData(n.emitida_em) + (n.vencida ? ' <span class="etiqueta etiqueta--vermelha">vencida</span>' : "") + "</td>" +
+          '<td class="num">' + dinheiro(n.saldo) + "</td>" +
+          '<td class="num"><b style="color:var(--verde)">' + (vai ? dinheiro(vai / 100) : "—") + "</b></td>" +
+          '<td class="num">' + (deve - vai <= 0 ? '<span class="etiqueta etiqueta--verde">quitada</span>' : dinheiro((deve - vai) / 100)) + "</td></tr>";
+      }).join("");
+      caixa.querySelector("#pc-tabela").innerHTML = linhas;
+      const aviso = caixa.querySelector("#pc-aviso");
+      if (isNaN(c) || c <= 0) {
+        aviso.className = "aviso aviso--info"; aviso.innerHTML = "Digite o valor que o cliente pagou.";
+      } else if (c > devidoC + 1) {
+        aviso.className = "aviso aviso--erro";
+        aviso.innerHTML = "O valor passa da dívida de <b>" + dinheiro(r.total) + "</b>. Confira — quase sempre é um zero a mais.";
+      } else {
+        aviso.className = "aviso aviso--info";
+        aviso.innerHTML = "Depois deste pagamento, o saldo devedor fica em <b>" + dinheiro(Math.max(0, devidoC - c) / 100) + "</b>.";
+      }
+    }
+
+    abrirModal({
+      titulo: "Registrar pagamento — " + r.cliente.nome,
+      corpo:
+        '<div class="aviso aviso--info" style="margin-bottom:14px">' +
+          "Saldo devedor de <b>" + esc(r.cliente.nome) + "</b>: <b>" + dinheiro(r.total) + "</b> em " +
+          r.notas.length + " nota" + (r.notas.length === 1 ? "" : "s") + ". " +
+          "O pagamento é abatido da nota <b>mais antiga</b> para a mais nova." +
+        "</div>" +
+        '<div class="grade-form">' +
+          '<label class="campo"><span>Valor pago (R$)</span>' +
+            '<input id="pc-valor" data-moeda inputmode="decimal" autofocus></label>' +
+          '<label class="campo"><span>Data</span><input type="date" id="pc-data" value="' + hoje() + '"></label>' +
+          '<label class="campo"><span>Forma</span><select id="pc-forma">' +
+            Object.keys(FORMAS).map((k) => '<option value="' + k + '">' + FORMAS[k] + "</option>").join("") +
+          "</select></label>" +
+        "</div>" +
+        '<label class="campo"><span>Observação (sai no recibo)</span><input id="pc-obs" maxlength="200"></label>' +
+        '<div class="rolagem" style="margin-top:6px"><table><thead><tr>' +
+          '<th>Nota</th><th>Emitida</th><th class="num">Falta hoje</th><th class="num">Abate</th><th class="num">Fica</th>' +
+        '</tr></thead><tbody id="pc-tabela"></tbody></table></div>' +
+        '<div id="pc-aviso" class="aviso aviso--info" style="margin-top:10px"></div>',
+      confirmar: "Registrar pagamento",
+      classe: "btn--verde",
+      aoAbrir: function (caixa) {
+        previa(caixa);
+        caixa.querySelector("#pc-valor").addEventListener("input", () => previa(caixa));
+      },
+      aoConfirmar: async function (caixa) {
+        const r2 = await enviar("/restrito/api/clientes/" + clienteId + "/pagamento", "POST", {
+          valor: caixa.querySelector("#pc-valor").value,
+          ocorrido_em: caixa.querySelector("#pc-data").value,
+          forma: caixa.querySelector("#pc-forma").value,
+          descricao: caixa.querySelector("#pc-obs").value,
+        });
+        recado("Registrado em " + r2.partes.length + " nota" + (r2.partes.length === 1 ? "" : "s") +
+          ". Recibo " + r2.grupo + ".");
+        await pintarNotas();
+        /* O recibo abre sozinho — o gesto seguinte é entregar o papel. */
+        window.open("/restrito/pagamentos/" + r2.grupo + "/recibo", "_blank", "noopener");
       },
     });
   }
@@ -5590,6 +5711,7 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
       else if (acao === "abrir-nota") { NOTA_ABERTA = Number(id); await pintarNota(id); }
       else if (acao === "voltar-notas") { NOTA_ABERTA = null; await pintarNotas(); }
       else if (acao === "receber") await modalLancarNota(id, false);
+      else if (acao === "pagar-cliente") await modalPagamentoCliente(id);
       else if (acao === "devolver") await modalLancarNota(id, true);
       else if (acao === "cancelar-lancamento") {
         modalCancelarLancamento(id, () => (NOTA_ABERTA ? pintarNota(NOTA_ABERTA) : pintarCaixa()));
