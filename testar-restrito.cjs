@@ -202,7 +202,14 @@ async function limpar() {
 
        Continua sendo por ID: só as jornadas DOS USUÁRIOS que esta suíte
        criou. */
+    /* (1.28.0) O histórico não tem FK para a ficha (de propósito: sobrevive à
+       remoção), então não sai sozinho. Sai pelo id das fichas da suíte e por
+       quem fez — só os usuários de teste. */
+    if (tabela === "fichas")
+      await Q.run("DELETE FROM fichas_historico WHERE ficha_id = ANY(?)", ids);
     if (tabela === "usuarios") {
+      await Q.run(`DELETE FROM fichas_historico WHERE usuario_id = ANY(?)
+                      OR ficha_id IN (SELECT id FROM fichas WHERE usuario_id = ANY(?))`, ids, ids);
       await Q.run("DELETE FROM fichas WHERE usuario_id = ANY(?)", ids);
       await Q.run("DELETE FROM jornadas WHERE usuario_id = ANY(?)", ids);
     }
@@ -361,6 +368,15 @@ async function limparRestos() {
   CRIADO.usuarios.push(idOper2);
 
   const admin = criarNavegador("admin"), oper = criarNavegador("oper"), oper2 = criarNavegador("oper2"), ninguem = criarNavegador("ninguem");
+
+  /* (1.28.0) Compor o lote como a TELA compõe: lê o que está nele agora e
+     manda junto como `antes`. Sem `antes` a rota recusa (409) — é o que
+     protege contra a janela velha que tirava fichas do lote. */
+  const compor = async (loteId, fichas) => {
+    const atual = await admin("/restrito/api/lotes/" + loteId);
+    const antes = ((atual.dados && atual.dados.fichas) || []).map((x) => x.id);
+    return admin("/restrito/api/lotes/" + loteId + "/fichas", "PUT", { fichas, antes });
+  };
 
   /* ==================================================== 1. AUTENTICAÇÃO == */
   console.log("\n  1. autenticação");
@@ -605,8 +621,7 @@ async function limparRestos() {
 
   /* A AMÁLGAMA. Manda tudo: as 3 do cliente A, a do cliente B, a cancelada e
      um id que não existe. Só as 3 legítimas podem entrar. */
-  r = await admin("/restrito/api/lotes/" + lote + "/fichas", "PUT",
-    { fichas: [f1, f2, f3, fB, fAberta, 99999999] });
+  r = await compor(lote, [f1, f2, f3, fB, fAberta, 99999999]);
   eq(r.status, 200, "amálgama responde");
   eq(r.dados.anexadas, 3, "só as 3 fichas fechadas do cliente A entraram");
   eq(r.dados.pedidas, 6, "e o servidor DIZ quantas foram pedidas, para a tela avisar");
@@ -624,16 +639,16 @@ async function limparRestos() {
   eq(r.dados.porOperador.length, 2, "quebra por operador: dois operadores");
 
   /* Idempotência: mandar a MESMA lista de novo não duplica nem some nada. */
-  r = await admin("/restrito/api/lotes/" + lote + "/fichas", "PUT", { fichas: [f1, f2, f3] });
+  r = await compor(lote, [f1, f2, f3]);
   eq(r.dados.anexadas, 3, "repetir a amálgama dá o mesmo resultado");
   eq(Number((await admin("/restrito/api/lotes/" + lote)).dados.pecas), 120, "e as peças continuam 120");
 
   /* Tirar uma ficha do lote a devolve para as soltas. */
-  await admin("/restrito/api/lotes/" + lote + "/fichas", "PUT", { fichas: [f1, f2] });
+  await compor(lote, [f1, f2]);
   eq(Number((await admin("/restrito/api/lotes/" + lote)).dados.pecas), 100, "sem a f3, sobram 100 peças");
   r = await admin("/restrito/api/producao?soltas=1&cliente=" + cliA);
   ok(r.dados.fichas.some((f) => f.id === f3), "a ficha retirada voltou para a lista de soltas");
-  await admin("/restrito/api/lotes/" + lote + "/fichas", "PUT", { fichas: [f1, f2, f3] });
+  await compor(lote, [f1, f2, f3]);
 
   /* ===================================================== 8. FATURAMENTO == */
   console.log("  8. faturamento");
@@ -644,7 +659,7 @@ async function limparRestos() {
 
   eq((await admin("/restrito/api/lotes/" + lote, "PUT", { situacao: "faturado", nota: "ZZQA-1" })).status, 200,
      "faturar com nota: aceito");
-  eq((await admin("/restrito/api/lotes/" + lote + "/fichas", "PUT", { fichas: [f1] })).status, 409,
+  eq((await compor(lote, [f1])).status, 409,
      "lote faturado não aceita mexer nas fichas");
   eq((await admin("/restrito/api/lotes/" + lote, "DELETE")).status, 409,
      "lote faturado não pode ser apagado");
@@ -654,13 +669,13 @@ async function limparRestos() {
   /* Lote com ficha dentro NÃO é apagado. Antes ele soltava as fichas sozinho e
      se apagava — conveniente e errado: quem clica em "apagar" num lote cheio
      está pensando no lote, não no que tem dentro dele. */
-  await admin("/restrito/api/lotes/" + lote2 + "/fichas", "PUT", { fichas: [fB] });
+  await compor(lote2, [fB]);
   eq(Number((await admin("/restrito/api/lotes/" + lote2)).dados.pecas), 5, "lote 2 com a ficha do cliente B");
   eq((await admin("/restrito/api/lotes/" + lote2, "DELETE")).status, 409, "lote 2 com ficha: recusado");
   linha = await Q.get("SELECT id, lote_id FROM fichas WHERE id = ?", fB);
   ok(linha && Number(linha.lote_id) === lote2, "e a ficha continua no lote, intocada");
 
-  await admin("/restrito/api/lotes/" + lote2 + "/fichas", "PUT", { fichas: [] });
+  await compor(lote2, []);
   eq((await admin("/restrito/api/lotes/" + lote2, "DELETE")).status, 200, "esvaziado, o lote 2 sai");
   linha = await Q.get("SELECT id, lote_id FROM fichas WHERE id = ?", fB);
   ok(linha, "a ficha CONTINUA existindo — ela é a produção que aconteceu");
@@ -1081,7 +1096,7 @@ async function limparRestos() {
 
   r = await admin("/restrito/api/lotes", "POST", { cliente_id: cliA, descricao: "ZZ QA sem cor" });
   const loteSemCor = r.dados.id; CRIADO.lotes.push(loteSemCor);
-  r = await admin(`/restrito/api/lotes/${loteSemCor}/fichas`, "PUT", { fichas: [fSemCor, fComCor] });
+  r = await compor(loteSemCor, [fSemCor, fComCor]);
   eq(r.dados.anexadas, 2, "as duas fichas entraram no lote de teste");
 
   const comSemCor = await admin(`/restrito/lotes/${loteSemCor}/recibo`);
@@ -1256,7 +1271,7 @@ async function limparRestos() {
   eq((await admin("/restrito/api/lotes/" + loteSemCor)).dados.fichas.length, 2,
      "e as fichas continuam onde estavam");
 
-  await admin(`/restrito/api/lotes/${loteSemCor}/fichas`, "PUT", { fichas: [] });
+  await compor(loteSemCor, []);
   eq((await admin("/restrito/api/lotes/" + loteSemCor, "DELETE")).status, 200,
      "esvaziado em “Juntar fichas”, aí sim sai");
   CRIADO.lotes = CRIADO.lotes.filter((x) => x !== loteSemCor);
@@ -1713,8 +1728,7 @@ async function limparRestos() {
     { cliente_id: cliA, descricao: "ZZ QA Lote da nota antiga" });
   const loteNota = r.dados.id;
   CRIADO.lotes.push(loteNota);
-  eq((await admin("/restrito/api/lotes/" + loteNota + "/fichas", "PUT",
-     { fichas: [fichaAntiga, fichaSemValor] })).status, 200, "as duas fichas entram no lote");
+  eq((await compor(loteNota, [fichaAntiga, fichaSemValor])).status, 200, "as duas fichas entram no lote");
 
   r = await admin("/restrito/api/lotes/" + loteNota);
   eq(r.dados.fichas.length, 2, "a composição traz as duas");
@@ -1768,7 +1782,7 @@ async function limparRestos() {
     { cliente_id: cliA, descricao: "ZZ QA Lote remover" });
   const loteRem = r.dados.id;
   CRIADO.lotes.push(loteRem);
-  await admin("/restrito/api/lotes/" + loteRem + "/fichas", "PUT", { fichas: [fAlvo] });
+  await compor(loteRem, [fAlvo]);
   await admin("/restrito/api/lotes/" + loteRem, "PUT", { situacao: "faturado", nota: "ZZQA-1" });
 
   r = await admin("/restrito/api/fichas/" + fAlvo, "DELETE");
@@ -1789,12 +1803,12 @@ async function limparRestos() {
      sem teste é a que o próximo refactor apaga sem ninguém ver. */
   const fs1 = await fichaFechada(2);
   const fs2 = await fichaFechada(2);
-  await admin("/restrito/api/lotes/" + loteRem + "/fichas", "PUT", { fichas: [fs1, fs2] });
+  await compor(loteRem, [fs1, fs2]);
   await admin("/restrito/api/lotes/" + loteRem, "PUT", { situacao: "faturado", nota: "ZZQA-1" });
   r = await admin("/restrito/api/fichas/somar", "POST", { ids: [fs1, fs2] });
   eq(r.status, 409, "somar fichas de lote FATURADO é recusado");
   await admin("/restrito/api/lotes/" + loteRem, "PUT", { situacao: "aberto" });
-  await admin("/restrito/api/lotes/" + loteRem + "/fichas", "PUT", { fichas: [] });
+  await compor(loteRem, []);
 
   /* --- 3. remover uma SOMADA devolve as parcelas ------------------------ */
   const fp1 = await fichaFechada(3);
@@ -1887,7 +1901,7 @@ async function limparRestos() {
   r = await admin("/restrito/api/lotes", "POST", { cliente_id: cliA, descricao: "ZZ QA Lote soma" });
   const loteSoma = r.dados.id;
   CRIADO.lotes.push(loteSoma);
-  await admin("/restrito/api/lotes/" + loteSoma + "/fichas", "PUT", { fichas: [fSoma2] });
+  await compor(loteSoma, [fSoma2]);
 
   const soltasDepois = await admin("/restrito/api/producao?usuario=" + idOper + "&soltas=1&por=500");
   ok(!soltasDepois.dados.fichas.some((f) => String(f.id) === String(fpa)),
@@ -1901,7 +1915,7 @@ async function limparRestos() {
      parcela não dá: o `PUT /lotes/:id/fichas` só aceita `fechada` e a
      descartaria em silêncio. Oferecer o que o servidor recusa é o tipo de tela
      que faz a pessoa clicar três vezes achando que travou. */
-  await admin("/restrito/api/lotes/" + loteSoma + "/fichas", "PUT", { fichas: [] });
+  await compor(loteSoma, []);
   const anexaveis = await admin(
     "/restrito/api/producao?anexavel=1&por=500&cliente=" + cliA);
   const idsAnex = anexaveis.dados.fichas.map((f) => String(f.id));
@@ -2115,7 +2129,7 @@ async function limparRestos() {
 
   r = await admin("/restrito/api/lotes", "POST", { cliente_id: cliB, descricao: "ZZ QA Lote Pago" });
   const lotePg = r.dados.id; CRIADO.lotes.push(lotePg);
-  await admin("/restrito/api/lotes/" + lotePg + "/fichas", "PUT", { fichas: [fVal] });
+  await compor(lotePg, [fVal]);
 
   /* PAGO É UM FATO À PARTE DE FATURADO. Como quarto estado de `situacao`,
      marcar o pagamento apagaria o "faturado" — e "o que já saiu e ainda não
@@ -2393,6 +2407,143 @@ async function limparRestos() {
      "conta que ainda não usou a senha provisória é recusada");
 
   await empresta("/restrito/api/sair", "POST");
+
+  /* ================================ 12p. FICHAS SUMINDO (1.28.0) ========= */
+  /* Investigação de 19/11/2026 ("tem fichas sumindo — é um problema sério").
+     Três defeitos de verdade e uma tela nova:
+       · o banco de produção está em Etc/UTC: das 21h de Caruaru em diante o
+         "hoje" do banco já era o dia seguinte e as fichas do dia sumiam da
+         tela do operador;
+       · o "Juntar fichas" soltava TUDO do lote e prendia de volta só o que a
+         janela marcava: janela velha tirava fichas do lote, e a ficha marcada
+         era puxada até de outro lote;
+       · nada registrava quem cancelou, removeu ou tirou ficha do lote. */
+  console.log("  12p. fichas sumindo: fuso, composição do lote, histórico e consulta");
+
+  /* --- o fuso da conexão ----------------------------------------------- */
+  eq((await Q.get("SELECT current_setting('TimeZone') tz")).tz, "America/Recife",
+     "a conexão do sistema fala no fuso de Caruaru, seja qual for o do servidor");
+
+  /* --- o "hoje" do Node também é o de Caruaru --------------------------
+     Bordado de ONTEM às 22h30 em Caruaru é 01h30 de HOJE em UTC. A conta
+     antiga (`toISOString().slice(0, 10)`) achava que era de hoje: a ficha
+     perdia o tratamento de retroativa e ganhava jornada. */
+  const ontemCaruaru = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Recife", year: "numeric", month: "2-digit", day: "2-digit" })
+    .format(new Date(Date.now() - 864e5));
+  r = await admin("/restrito/api/fichas", "POST",
+    { cliente_id: cliA, desenho_id: desA1, aberta_em: ontemCaruaru + "T22:30", maquina_token: tokenSepties });
+  eq(r.status, 201, "o administrador lança um bordado de ontem às 22h30", JSON.stringify(r.dados));
+  CRIADO.fichas.push(r.dados.id);
+  eq((await Q.get("SELECT jornada_id FROM fichas WHERE id = ?", r.dados.id)).jornada_id, null,
+     "ele é RETROATIVO (dia de Caruaru): não entra em jornada nenhuma");
+  await admin("/restrito/api/fichas/" + r.dados.id + "/cancelar", "PUT");
+
+  /* --- a janela velha não tira o que outra pessoa juntou ---------------- */
+  r = await admin("/restrito/api/lotes", "POST", { cliente_id: cliA, descricao: "ZZ QA Lote janela velha" });
+  const loteJV = r.dados.id; CRIADO.lotes.push(loteJV);
+  const j1 = await fichaFechada(1), j2 = await fichaFechada(1), j3 = await fichaFechada(1);
+  await compor(loteJV, [j1, j2]);
+  const vistoPelaJanelaA = [j1, j2];                 // a janela A abriu aqui
+  await compor(loteJV, [j1, j2, j3]);                // outra pessoa junta a j3
+  r = await admin("/restrito/api/lotes/" + loteJV + "/fichas", "PUT", { fichas: [j1], antes: vistoPelaJanelaA });
+  eq(r.status, 200, "a janela velha salva (desmarcou só a j2)");
+  const noLoteJV = async () => (await Q.all("SELECT id FROM fichas WHERE lote_id = ? ORDER BY id", loteJV)).map((x) => Number(x.id));
+  eq(JSON.stringify(await noLoteJV()), JSON.stringify([j1, j3]),
+     "sai SÓ a que ela desmarcou — a j3, juntada por outra pessoa, FICA no lote");
+  eq(r.dados.mantidas, 1, "e a resposta diz que uma ficha de outra pessoa foi mantida");
+  eq(r.dados.sairam, 1, "e quantas saíram");
+
+  r = await admin("/restrito/api/lotes/" + loteJV + "/fichas", "PUT", { fichas: [j1] });
+  eq(r.status, 409, "sem `antes` (aba com a tela antiga) é recusado, pedindo para recarregar");
+  eq(JSON.stringify(await noLoteJV()), JSON.stringify([j1, j3]), "e nada mudou no lote");
+
+  /* --- não puxa ficha de outro lote ------------------------------------- */
+  r = await admin("/restrito/api/lotes", "POST", { cliente_id: cliA, descricao: "ZZ QA Lote vizinho" });
+  const loteViz = r.dados.id; CRIADO.lotes.push(loteViz);
+  r = await admin("/restrito/api/lotes/" + loteViz + "/fichas", "PUT", { fichas: [j1, j2], antes: [] });
+  eq(r.status, 200, "o lote vizinho salva");
+  ok((r.dados.recusadas || []).includes(j1), "a j1, que está em OUTRO lote, é recusada — e a resposta diz qual",
+     JSON.stringify(r.dados.recusadas));
+  eq(Number((await Q.get("SELECT lote_id FROM fichas WHERE id = ?", j1)).lote_id), loteJV,
+     "e continua no lote dela");
+  eq(Number((await Q.get("SELECT lote_id FROM fichas WHERE id = ?", j2)).lote_id), loteViz,
+     "a j2, que estava solta, entra normalmente");
+  await compor(loteViz, []);
+
+  /* --- o histórico ------------------------------------------------------ */
+  const hist = async (id) => (await admin("/restrito/api/historico-fichas?ficha=" + id)).dados;
+  let h = await hist(j3);
+  const acoesDe = (x) => x.eventos.map((e) => e.acao);
+  ok(["aberta", "fechada", "entrou_no_lote"].every((a) => acoesDe(h).includes(a)),
+     "o histórico registra abrir, fechar e entrar no lote", JSON.stringify(acoesDe(h)));
+  eq(h.eventos.find((e) => e.acao === "fechada").usuario_nome, "ZZ QA Operador", "com quem fechou");
+  eq(h.eventos.find((e) => e.acao === "entrou_no_lote").usuario_nome, "ZZ QA Admin", "e quem juntou ao lote");
+  h = await hist(j2);
+  const saiu = h.eventos.find((e) => e.acao === "saiu_do_lote");
+  ok(saiu && saiu.detalhe && saiu.detalhe.lote, "tirar do lote fica registrado, com o lote", JSON.stringify(saiu));
+
+  r = await admin("/restrito/api/fichas/" + j1, "PUT", { quantidade: 2 });
+  eq(r.status, 200, "o administrador corrige a quantidade");
+  const corr = (await hist(j1)).eventos.find((e) => e.acao === "corrigida");
+  ok(corr && corr.detalhe.mudou && Number(corr.detalhe.mudou.quantidade.de) === 1 && Number(corr.detalhe.mudou.quantidade.para) === 2,
+     "a correção registra o valor de ANTES e o de depois", JSON.stringify(corr && corr.detalhe));
+
+  const fCanc = (await oper("/restrito/api/fichas", "POST", { cliente_id: cliA, desenho_id: desA1, maquina_token: tokenSepties })).dados.id;
+  CRIADO.fichas.push(fCanc);
+  eq((await oper("/restrito/api/fichas/" + fCanc + "/cancelar", "PUT")).status, 200, "o operador cancela a ficha aberta");
+  ok(acoesDe(await hist(fCanc)).includes("cancelada"), "cancelar fica registrado");
+  ok(acoesDe(await hist(fpa)).includes("somada"), "somar fica registrado na parcela");
+  /* A parcela não tem lote próprio: o dela é o da soma. Uma soma só desta
+     prova, posta num lote. */
+  const pq1 = await fichaFechada(1), pq2 = await fichaFechada(1);
+  const somaQ = (await admin("/restrito/api/fichas/somar", "POST", { ids: [pq1, pq2] })).dados.id;
+  CRIADO.fichas.push(somaQ);
+  await compor(loteViz, [somaQ]);
+  const loteVizCod = (await Q.get("SELECT codigo FROM lotes WHERE id = ?", loteViz)).codigo;
+  eq((await hist(pq1)).ficha.lote, loteVizCod, "com a soma num lote, a parcela mostra o lote da SOMA no histórico");
+  eq(((await admin("/restrito/api/consulta-fichas?q=" + pq1)).dados.fichas[0] || {}).lote, loteVizCod,
+     "e a tabela da consulta diz o mesmo");
+  await compor(loteViz, []);
+  ok(acoesDe(await hist(fSoma2)).includes("soma_criada"), "e na ficha da soma");
+
+  r = await admin("/restrito/api/fichas/" + j3, "DELETE");
+  eq(r.status, 200, "o administrador remove a j3");
+  h = await hist(j3);
+  eq(h.existe, false, "a ficha removida não existe mais…");
+  ok(h.ficha && h.ficha.cliente && h.ficha.lote, "…mas o histórico guarda como ela estava: cliente, lote", JSON.stringify(h.ficha));
+  eq(h.eventos[h.eventos.length - 1].acao, "removida", "e o último registro é a remoção");
+
+  /* --- a consulta: TODAS as fichas, inclusive a removida e o número sem ficha */
+  const consulta = async (qs) => (await admin("/restrito/api/consulta-fichas?" + qs)).dados;
+  let c = await consulta("q=" + j3);
+  eq(c.fichas.length, 1, "a consulta acha a ficha removida pelo número");
+  eq(c.fichas[0].situacao, "removida", "como REMOVIDA");
+  eq(c.fichas[0].removida_por, "ZZ QA Admin", "com quem removeu");
+  ok(c.fichas[0].lote && c.fichas[0].cliente && c.fichas[0].operador, "e o lote, o cliente e o operador de quando foi removida",
+     JSON.stringify(c.fichas[0]));
+  c = await consulta("q=" + fCanc);
+  eq(c.fichas[0] && c.fichas[0].situacao, "cancelada", "a cancelada aparece, como cancelada");
+
+  /* O número que não tem ficha: o que foi removido ANTES do histórico existir
+     (aqui, apagado direto no banco) — entre duas fichas que existem. */
+  const gap = await fichaFechada(1);
+  const depoisGap = await fichaFechada(1);
+  await Q.run("DELETE FROM fichas_historico WHERE ficha_id = ?", gap);
+  await Q.run("DELETE FROM fichas WHERE id = ?", gap);
+  c = await consulta("q=" + gap);
+  eq(c.fichas[0] && c.fichas[0].situacao, "sem_registro", "o número sem ficha aparece, como 'sem ficha'");
+  c = await consulta("situacao=sem_registro&por=500");
+  ok(c.fichas.some((f) => Number(f.id) === gap) && c.porSituacao.sem_registro >= 1,
+     "e entra na aba de números sem ficha, com a contagem");
+  ok(depoisGap > gap, "(a prova do buraco precisa de uma ficha depois dele)");
+  c = await consulta("por=500");
+  ok(c.fichas.length && !c.fichas.some((f) => f.situacao === "sem_registro"),
+     "a aba Todas mostra as FICHAS — os números sem ficha ficam na aba deles");
+  ok(c.fichas.some((f) => f.situacao === "removida" && Number(f.id) === j3), "e a removida está em Todas");
+  c = await consulta("q=ZZ QA&situacao=fechada&por=500");
+  ok(c.fichas.length && c.fichas.every((f) => f.situacao === "fechada"), "o filtro por situação mostra só aquela situação");
+  eq((await oper("/restrito/api/consulta-fichas")).status, 403, "o operador não abre a consulta");
+  eq((await oper("/restrito/api/historico-fichas?ficha=" + j1)).status, 403, "nem o histórico");
 
   /* ==================================================== 13. SAIR ========= */
   console.log("  13. sair");

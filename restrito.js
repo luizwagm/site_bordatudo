@@ -501,7 +501,14 @@ function emIso(d) {
     String(x.getMonth() + 1).padStart(2, "0") + "-" +
     String(x.getDate()).padStart(2, "0");
 }
-const hojeIso = () => emIso(new Date());
+/* "HOJE" É O DE CARUARU (1.28.0), e não o do relógio do processo: o Node de
+   produção roda em UTC, e das 21h em diante `emIso(new Date())` já devolvia o
+   dia seguinte — nota que vence hoje aparecia vencida à noite, e o caixa abria
+   no dia errado. O fuso é o mesmo que a conexão do banco usa (pg.js). */
+const FUSO_IANA_FABRICA = "America/Recife";
+const hojeIso = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: FUSO_IANA_FABRICA, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const anoDaFabrica = () => Number(hojeIso().slice(0, 4));
 
 /* O detalhe do lote é montado UMA vez e serve à tela e ao recibo. Se cada um
    somasse por conta própria, o papel que o cliente leva embora poderia
@@ -1443,6 +1450,31 @@ const SQL_TRABALHO = "f.situacao IN ('fechada','somada') AND f.soma_de IS NULL";
 const SQL_SEM_LOTE =
   "(f.lote_id IS NULL AND (f.somada_em_id IS NULL" +
   " OR (SELECT s.lote_id FROM fichas s WHERE s.id = f.somada_em_id) IS NULL))";
+
+/* ==========================================================================
+   HISTÓRICO DA FICHA (1.28.0) — ver sql/13-historico-das-fichas.sql
+
+   Chamado DENTRO da mesma transação da mudança, quando há uma: se a mudança
+   desfaz, o registro desfaz junto, e nunca fica um "removida" de uma ficha que
+   continua lá. O nome de quem fez é copiado na hora, e diz quando o
+   administrador está na conta de outra pessoa.
+   ========================================================================== */
+function quemFez(sessao) {
+  if (!sessao) return { id: null, nome: "" };
+  if (sessao.como) return { id: sessao.como.adminId, nome: `${sessao.como.adminNome} (na conta de ${sessao.nome})` };
+  return { id: sessao.usuarioId, nome: sessao.nome || sessao.usuario || "" };
+}
+async function registrarFicha(fichaId, acao, sessao, detalhe = {}) {
+  const q = quemFez(sessao);
+  await Q.run(
+    `INSERT INTO fichas_historico (ficha_id, acao, detalhe, usuario_id, usuario_nome)
+     VALUES (?, ?, ?::jsonb, ?, ?)`,
+    fichaId, acao, JSON.stringify(detalhe), q.id, q.nome);
+}
+/* O dia de um instante NO FUSO DA FÁBRICA ("AAAA-MM-DD"). `iso.slice(0, 10)`
+   dá o dia em UTC: o bordado de ontem às 22h em Caruaru já é "hoje" lá. */
+const diaNaFabrica = (instante) => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Recife", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(instante));
 
 const FUSO_FABRICA = "-03:00";
 function instanteDe(bruto) {
@@ -2790,7 +2822,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       if (d.getTime() > Date.now() + 864e5)
         return responder(res, 400, { error: "a data do bordado não pode ser no futuro" });
       abertaEm = iso;
-      retroativa = iso.slice(0, 10) < new Date().toISOString().slice(0, 10);
+      retroativa = diaNaFabrica(iso) < hojeIso();   // (1.28.0) o dia de CARUARU, e não o de UTC
     }
 
     /* A PONTUAÇÃO É COPIADA DO DESENHO, e nunca vem do corpo da requisição.
@@ -2860,6 +2892,9 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
        VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?::timestamptz, now())) RETURNING id`,
       donoId, jornada ? jornada.id : null, maquinaId, clienteId, desenhoId,
       pontuacao, precoUnitario, abertaEm);
+    await registrarFicha(id, "aberta", sessao, {
+      cliente_id: clienteId, desenho_id: desenhoId, operador_id: donoId, para_outro: !!paraOutro,
+      retroativa, aberta_em: abertaEm || undefined });
     /* A produção do dia mudou — a tela do escritório se atualiza sozinha. */
     avisar("fichas");
     /* `sem_jornada` volta para a tela poder avisar. Ficha sem jornada conta
@@ -3005,6 +3040,8 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
         `UPDATE fichas SET situacao = 'somada', lote_id = NULL, somada_em_id = ?
           WHERE id = ANY(?::bigint[])`,
         novaId, "{" + ids.join(",") + "}");
+      await registrarFicha(novaId, "soma_criada", sessao, { parcelas: ids, lote_id: loteId });
+      for (const pid of ids) await registrarFicha(pid, "somada", sessao, { soma: novaId, lote_id_anterior: loteId });
     });
 
     avisar("fichas");
@@ -3066,6 +3103,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
         sanitizarHtml(String(corpo.observacao || "")),
         id);
       const r = await Q.get("SELECT quantidade, pontuacao, total_pontos, aberta_em, fechada_em FROM fichas WHERE id = ?", id);
+      await registrarFicha(id, "fechada", sessao, { quantidade: qtd, fechada_em: r && r.fechada_em });
       avisar("fichas");
       return responder(res, 200, { ok: true, ficha: r });
     }
@@ -3082,7 +3120,11 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
           somada_em_id: f.somada_em_id,
         });
       }
-      await Q.run("UPDATE fichas SET situacao = 'cancelada' WHERE id = ?", id);
+      await Q.tx(async () => {
+        await Q.run("UPDATE fichas SET situacao = 'cancelada' WHERE id = ?", id);
+        await registrarFicha(id, "cancelada", sessao, {
+          situacao_anterior: f.situacao, quantidade: f.quantidade, lote_id: f.lote_id, operador_id: f.usuario_id });
+      });
       avisar("fichas");
       return responder(res, 200, { ok: true });
     }
@@ -3241,6 +3283,15 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       } catch (e) {
         return responder(res, 400, { error: "a correção não foi aceita: confira as horas e a quantidade" });
       }
+      /* Só o que MUDOU, com o valor de antes: "corrigiu a ficha" não explica
+         nada; "quantidade de 120 para 12" explica. */
+      const mudou = {};
+      for (const c of cols) {
+        const de = f[c] instanceof Date ? f[c].toISOString() : f[c];
+        const para = campos[c] instanceof Date ? campos[c].toISOString() : campos[c];
+        if (String(de ?? "") !== String(para ?? "")) mudou[c] = { de: de ?? null, para: para ?? null };
+      }
+      if (Object.keys(mudou).length) await registrarFicha(id, "corrigida", sessao, { mudou });
       avisar("fichas");
       return responder(res, 200, { ok: true, ficha: await Q.get("SELECT * FROM fichas WHERE id = ?", id) });
     }
@@ -3293,7 +3344,11 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
             `UPDATE fichas SET situacao = 'fechada', somada_em_id = NULL
               WHERE somada_em_id = ? RETURNING id`, id);
           devolvidas = r.length;
+          for (const p of r) await registrarFicha(p.id, "devolvida", sessao, { soma_removida: id });
         }
+        /* O RETRATO da ficha vai junto: depois do DELETE, esta linha é tudo
+           o que sobra dela. */
+        await registrarFicha(id, "removida", sessao, { ficha: f });
         await Q.run("DELETE FROM fichas WHERE id = ?", id);
       });
 
@@ -3332,6 +3387,154 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
   }
 
   if (!ehAdmin(sessao)) return responder(res, 403, { error: "área do administrador" });
+
+  /* ========================================================================
+     HISTÓRICO DAS FICHAS (1.28.0) — "para onde foi a ficha 123?"
+
+     Duas perguntas na mesma rota:
+       ?ficha=123                   tudo o que aconteceu com ESTA ficha, e como
+                                    ela está agora (ou que foi removida);
+       ?acoes=removida,cancelada…   as ocorrências recentes desses tipos — o
+                                    que tira uma ficha das listas.
+     A ficha removida não existe mais em `fichas`: o que se sabe dela sai do
+     retrato gravado no próprio histórico (detalhe.ficha).
+     ======================================================================== */
+  if (caminho === "/restrito/api/historico-fichas" && req.method === "GET") {
+    const url = new URL(req.url, "http://localhost");
+    const resumoDe = async (fichaId, retrato) => {
+      const f = retrato || await Q.get("SELECT * FROM fichas WHERE id = ?", fichaId);
+      if (!f) return null;
+      const nomes = await Q.get(
+        `SELECT (SELECT nome FROM clientes WHERE id = ?) AS cliente,
+                (SELECT nome FROM desenhos WHERE id = ?) AS desenho,
+                (SELECT COALESCE(nome, usuario) FROM usuarios WHERE id = ?) AS operador,
+                (SELECT codigo FROM lotes WHERE id = COALESCE(?, (SELECT s.lote_id FROM fichas s WHERE s.id = ?))) AS lote`,
+        /* A parcela de uma soma não tem lote próprio: o lote dela é o da soma
+           — a mesma regra da tabela da consulta. */
+        f.cliente_id || null, f.desenho_id || null, f.usuario_id || null, f.lote_id || null, f.somada_em_id || null);
+      return { id: Number(f.id), situacao: f.situacao, quantidade: f.quantidade, total_pontos: f.total_pontos,
+        aberta_em: f.aberta_em, fechada_em: f.fechada_em, ...nomes };
+    };
+
+    const fichaId = Number(url.searchParams.get("ficha")) || 0;
+    if (fichaId) {
+      const eventos = await Q.all(
+        "SELECT id, ficha_id, acao, detalhe, usuario_nome, em FROM fichas_historico WHERE ficha_id = ? ORDER BY em, id", fichaId);
+      const atual = await resumoDe(fichaId);
+      const removida = eventos.slice().reverse().find((e) => e.acao === "removida");
+      return responder(res, 200, {
+        ficha: atual || (removida ? await resumoDe(fichaId, removida.detalhe && removida.detalhe.ficha) : null),
+        existe: !!atual, eventos,
+      });
+    }
+
+    return responder(res, 400, { error: "informe o número da ficha" });
+  }
+
+  /* ========================================================================
+     CONSULTAR FICHAS (1.28.0) — TODAS, em qualquer situação
+
+     Pedido do dono (19/11/2026): uma tabela com todas as fichas — nome,
+     operador, horários, se foi removida, a que lote pertence — para procurar
+     as fichas perdidas. As outras telas mostram RECORTES (a Produção só as
+     fechadas e somadas; o lote só as dele; o operador só as de hoje); esta é
+     a única que não esconde nada. Três origens:
+
+       · as que EXISTEM, em qualquer situação (aberta, fechada, somada,
+         cancelada). A parcela de uma soma mostra o lote da soma;
+       · as REMOVIDAS a partir desta versão — o retrato guardado no histórico
+         no momento da remoção, com quem removeu e quando;
+       · os NÚMEROS SEM FICHA: buracos na numeração. São as removidas ANTES do
+         histórico existir — ou uma abertura recusada, que gasta um número sem
+         criar ficha (o operador que tenta abrir com outra já aberta). Não há
+         como saber qual das duas: a tela diz isso em vez de afirmar.
+     ======================================================================== */
+  if (caminho === "/restrito/api/consulta-fichas" && req.method === "GET") {
+    const url = new URL(req.url, "http://localhost");
+    const SITUACOES = ["aberta", "fechada", "somada", "cancelada", "removida", "sem_registro"];
+    const situacao = SITUACOES.includes(url.searchParams.get("situacao")) ? url.searchParams.get("situacao") : "";
+    const q = String(url.searchParams.get("q") || "").trim().slice(0, 80);
+    const de = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("de") || "") ? url.searchParams.get("de") : null;
+    const ate = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("ate") || "") ? url.searchParams.get("ate") : null;
+    const rec = recorteDaPagina(url, 50);
+
+    /* A união das três origens. `aberta_em::date` é o dia de CARUARU (a
+       conexão fixa o fuso — ver pg.js). */
+    const TODAS = `
+      WITH existentes AS (
+        SELECT f.id, f.situacao, f.quantidade, f.total_pontos, f.aberta_em, f.fechada_em,
+               f.cliente_id, f.desenho_id, f.usuario_id, COALESCE(f.lote_id, sm.lote_id) AS lote_id,
+               f.somada_em_id, (f.soma_de IS NOT NULL) AS e_soma,
+               NULL::timestamptz AS removida_em, NULL::text AS removida_por
+          FROM fichas f LEFT JOIN fichas sm ON sm.id = f.somada_em_id
+      ), removidas AS (
+        SELECT DISTINCT ON (h.ficha_id) h.ficha_id AS id, 'removida'::text AS situacao,
+               NULLIF(h.detalhe->'ficha'->>'quantidade', '')::int AS quantidade,
+               NULLIF(h.detalhe->'ficha'->>'total_pontos', '')::bigint AS total_pontos,
+               NULLIF(h.detalhe->'ficha'->>'aberta_em', '')::timestamptz AS aberta_em,
+               NULLIF(h.detalhe->'ficha'->>'fechada_em', '')::timestamptz AS fechada_em,
+               NULLIF(h.detalhe->'ficha'->>'cliente_id', '')::bigint AS cliente_id,
+               NULLIF(h.detalhe->'ficha'->>'desenho_id', '')::bigint AS desenho_id,
+               NULLIF(h.detalhe->'ficha'->>'usuario_id', '')::bigint AS usuario_id,
+               NULLIF(h.detalhe->'ficha'->>'lote_id', '')::bigint AS lote_id,
+               NULL::bigint AS somada_em_id, false AS e_soma,
+               h.em AS removida_em, h.usuario_nome AS removida_por
+          FROM fichas_historico h
+         WHERE h.acao = 'removida' AND NOT EXISTS (SELECT 1 FROM fichas f WHERE f.id = h.ficha_id)
+         ORDER BY h.ficha_id, h.em DESC
+      ), faltando AS (
+        SELECT g::bigint AS id, 'sem_registro'::text AS situacao, NULL::int AS quantidade, NULL::bigint AS total_pontos,
+               NULL::timestamptz AS aberta_em, NULL::timestamptz AS fechada_em, NULL::bigint AS cliente_id,
+               NULL::bigint AS desenho_id, NULL::bigint AS usuario_id, NULL::bigint AS lote_id,
+               NULL::bigint AS somada_em_id, false AS e_soma, NULL::timestamptz AS removida_em, NULL::text AS removida_por
+          FROM generate_series((SELECT MIN(id) FROM fichas), (SELECT MAX(id) FROM fichas)) g
+         WHERE NOT EXISTS (SELECT 1 FROM fichas f WHERE f.id = g)
+           AND NOT EXISTS (SELECT 1 FROM removidas r WHERE r.id = g)
+      ), todas AS (
+        SELECT * FROM existentes UNION ALL SELECT * FROM removidas UNION ALL SELECT * FROM faltando
+      )
+      SELECT t.*, c.nome AS cliente, d.nome AS desenho, COALESCE(u.nome, u.usuario) AS operador, l.codigo AS lote
+        FROM todas t
+        LEFT JOIN clientes c ON c.id = t.cliente_id
+        LEFT JOIN desenhos d ON d.id = t.desenho_id
+        LEFT JOIN usuarios u ON u.id = t.usuario_id
+        LEFT JOIN lotes l ON l.id = t.lote_id`;
+
+    /* Os filtros que valem para a tabela E para a contagem de cada aba —
+       menos a própria situação, senão as abas só contariam a escolhida. */
+    const onde = [], args = [];
+    if (q) {
+      if (/^\d+$/.test(q)) { onde.push("x.id = ?"); args.push(Number(q)); }
+      else {
+        onde.push("(x.cliente ILIKE ? OR x.desenho ILIKE ? OR x.operador ILIKE ? OR x.lote ILIKE ?)");
+        const like = "%" + q.replace(/[%_\\]/g, (m) => "\\" + m) + "%";
+        args.push(like, like, like, like);
+      }
+    }
+    if (de) { onde.push("x.aberta_em::date >= ?::date"); args.push(de); }
+    if (ate) { onde.push("x.aberta_em::date <= ?::date"); args.push(ate); }
+    const filtro = onde.length ? " WHERE " + onde.join(" AND ") : "";
+
+    const porSituacao = Object.fromEntries(SITUACOES.map((s) => [s, 0]));
+    for (const r of await Q.all(`SELECT x.situacao, COUNT(*) n FROM (${TODAS}) x${filtro} GROUP BY x.situacao`, ...args))
+      porSituacao[r.situacao] = Number(r.n);
+
+    /* "Todas" são as FICHAS — inclusive as removidas. Os números sem ficha
+       têm aba própria: misturados, eles enchem a lista de linhas vazias (no
+       banco de teste eram 2.639 contra 11 fichas). A exceção é procurar um
+       número exato: "cadê a 123?" tem de responder mesmo que ela seja um
+       número sem ficha. */
+    const numeroExato = /^\d+$/.test(q);
+    let ondeLista = filtro, argsLista = args;
+    if (situacao) { ondeLista = (filtro ? filtro + " AND" : " WHERE") + " x.situacao = ?"; argsLista = [...args, situacao]; }
+    else if (!numeroExato) ondeLista = (filtro ? filtro + " AND" : " WHERE") + " x.situacao <> 'sem_registro'";
+    const fichasDeVerdade = Object.entries(porSituacao).filter(([s]) => s !== "sem_registro").reduce((a, [, n]) => a + n, 0);
+    const total = situacao ? porSituacao[situacao] : numeroExato ? Object.values(porSituacao).reduce((a, n) => a + n, 0) : fichasDeVerdade;
+    const fichas = await Q.all(
+      `SELECT x.* FROM (${TODAS}) x${ondeLista} ORDER BY x.id DESC LIMIT ${rec.por} OFFSET ${rec.offset}`, ...argsLista);
+    const inicio = await Q.get("SELECT MIN(em) em FROM fichas_historico");
+    return responder(res, 200, { fichas, porSituacao, historico_desde: inicio && inicio.em, ...envelope(total, rec) });
+  }
 
   /* ========================================================================
      AS GAVETAS DO CLIENTE
@@ -3725,7 +3928,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
         error: "já está em nota: " + jaEm.map((x) => `${x.codigo} (${x.nota})`).join(", ") });
     }
 
-    const ano = new Date().getFullYear();
+    const ano = anoDaFabrica();
     const r = await Q.get(
       `SELECT COALESCE(MAX(split_part(codigo, '-', 3)::int), 0) AS n
          FROM notas WHERE codigo ~ ?`, `^NOTA-${ano}-[0-9]+$`);
@@ -3896,7 +4099,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
                  "Não dá para devolver mais que isso." });
       }
 
-      const ano = new Date().getFullYear();
+      const ano = anoDaFabrica();
       const r = await Q.get(
         `SELECT COALESCE(MAX(split_part(recibo, '-', 3)::int), 0) AS n
            FROM lancamentos WHERE recibo ~ ?`, `^RC-${ano}-[0-9]+$`);
@@ -4064,7 +4267,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
         return;
       }
       const { partes } = distribuir(valor, contas);
-      const ano = new Date().getFullYear();
+      const ano = anoDaFabrica();
       const g = await Q.get(
         `SELECT COALESCE(MAX(split_part(grupo, '-', 3)::int), 0) AS n FROM lancamentos WHERE grupo ~ ?`,
         `^PG-${ano}-[0-9]+$`);
@@ -4100,8 +4303,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
        mês é construído na meia-noite LOCAL, e converter para UTC devolveria o
        último dia do mês anterior a oeste de Greenwich — o caixa abriria com um
        dia a mais e um dia a menos. */
-    const hoje = new Date();
-    const de = url.searchParams.get("de") || emIso(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
+    const de = url.searchParams.get("de") || hojeIso().slice(0, 8) + "01";   // dia 1 do mês, em Caruaru
     const ate = url.searchParams.get("ate") || hojeIso();
     const tipo = url.searchParams.get("tipo");
 
@@ -4307,7 +4509,7 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     /* O código nasce do BANCO, não da tela: duas pessoas criando ao mesmo
        tempo escolheriam o mesmo número, e a UNIQUE recusaria a segunda com um
        erro de driver. */
-    const ano = new Date().getFullYear();
+    const ano = anoDaFabrica();
     const r = await Q.get(
       `SELECT COALESCE(MAX(split_part(codigo, '-', 3)::int), 0) AS n
          FROM lotes WHERE codigo ~ ?`, `^LOTE-${ano}-[0-9]+$`);
@@ -4337,26 +4539,74 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
          solta as que saíram, prende as que entraram. Mandar a lista inteira, e
          não "adicione esta", torna a operação idempotente — repetir o mesmo
          pedido dá o mesmo resultado, e um clique duplo não duplica nada. */
+      /* ------------------------------------------------------------------
+         SÓ MEXE NO QUE A PESSOA VIU E MUDOU (1.28.0)
+
+         Até a 1.27 esta rota SOLTAVA TODAS as fichas do lote e prendia de
+         volta as marcadas. Dois estragos saíam disso, e foram a investigação
+         de "fichas sumindo" (19/11/2026):
+
+         · janela velha: enquanto a janela de uma pessoa ficava aberta, outra
+           juntava uma ficha ao lote; quem salvasse depois a tirava, sem ter
+           desmarcado nada — a ficha "sumia" do lote e da nota;
+         · a ficha marcada era presa SEM conferir se já estava em OUTRO lote —
+           inclusive faturado: a nota emitida de outro serviço mudava calada.
+
+         Agora a tela manda também `antes` — as fichas que estavam no lote
+         quando a janela abriu. Sai só o que estava em `antes` e foi
+         desmarcado; entra só ficha SOLTA (lote_id nulo). O que outra pessoa
+         pôs no lote nesse meio-tempo fica, e a resposta diz quantas.
+         Sem `antes` (aba aberta com a tela antiga), recusa e pede para
+         recarregar — adivinhar seria repetir o defeito.
+         ------------------------------------------------------------------ */
       const corpo = (await lerCorpo(req)) || {};
-      const ids = (Array.isArray(corpo.fichas) ? corpo.fichas : []).map(Number).filter(Boolean);
+      const numeros = (v) => [...new Set((Array.isArray(v) ? v : []).map(Number).filter((x) => Number.isInteger(x) && x > 0))];
+      const ids = numeros(corpo.fichas);
+      if (!Array.isArray(corpo.antes))
+        return responder(res, 409, {
+          error: "Esta tela está desatualizada. Recarregue a página (F5) e abra “Juntar fichas” de novo.",
+          recarregar: true });
+      const antes = new Set(numeros(corpo.antes));
 
       if (lote.situacao === "faturado")
         return responder(res, 409, { error: "lote já faturado — não dá para mexer nas fichas" });
 
+      const quer = new Set(ids);
+      let entraram = [], sairam = [], mantidas = 0, recusadas = [];
       await Q.tx(async () => {
-        await Q.run("UPDATE fichas SET lote_id = NULL WHERE lote_id = ?", id);
-        if (ids.length) {
-          /* Só ficha FECHADA e do MESMO cliente entra. Ficha aberta ainda não
-             tem quantidade, e de outro cliente somaria peça de um no corte de
-             outro — o erro que a amálgama existe para evitar. */
-          await Q.run(
-            `UPDATE fichas SET lote_id = ?
-              WHERE id = ANY(?) AND situacao = 'fechada' AND cliente_id = ?`,
-            id, ids, lote.cliente_id);
+        /* Uma composição por vez neste lote: duas janelas salvando juntas
+           esperam uma pela outra, em vez de se atropelarem. */
+        await Q.get("SELECT id FROM lotes WHERE id = ? FOR UPDATE", id);
+        const atuais = (await Q.all("SELECT id FROM fichas WHERE lote_id = ?", id)).map((r) => Number(r.id));
+
+        const tirar = atuais.filter((x) => antes.has(x) && !quer.has(x));
+        mantidas = atuais.filter((x) => !antes.has(x) && !quer.has(x)).length;
+        if (tirar.length) {
+          sairam = (await Q.all(
+            `UPDATE fichas SET lote_id = NULL WHERE id = ANY(?) AND lote_id = ? RETURNING id`,
+            tirar, id)).map((r) => Number(r.id));
         }
+        const colocar = ids.filter((x) => !atuais.includes(x));
+        if (colocar.length) {
+          /* Só ficha FECHADA, do MESMO cliente e SOLTA entra. Ficha aberta
+             ainda não tem quantidade; de outro cliente somaria peça de um no
+             corte de outro; e ficha de OUTRO lote está na conta de outro
+             serviço — tirá-la de lá é decisão daquele lote, não deste. */
+          entraram = (await Q.all(
+            `UPDATE fichas SET lote_id = ?
+              WHERE id = ANY(?) AND situacao = 'fechada' AND cliente_id = ? AND lote_id IS NULL
+              RETURNING id`,
+            id, colocar, lote.cliente_id)).map((r) => Number(r.id));
+        }
+        recusadas = colocar.filter((x) => !entraram.includes(x));
+        for (const x of sairam) await registrarFicha(x, "saiu_do_lote", sessao, { lote_id: id, lote: lote.codigo });
+        for (const x of entraram) await registrarFicha(x, "entrou_no_lote", sessao, { lote_id: id, lote: lote.codigo });
       });
-      const n = await Q.get("SELECT COUNT(*) c FROM fichas WHERE lote_id = ?", id);
-      return responder(res, 200, { ok: true, anexadas: Number(n.c), pedidas: ids.length });
+      const n = await Q.get("SELECT COUNT(*) c FROM fichas WHERE lote_id = ? AND situacao = 'fechada'", id);
+      if (entraram.length || sairam.length) avisar("fichas");
+      return responder(res, 200, {
+        ok: true, anexadas: Number(n.c), pedidas: ids.length,
+        entraram: entraram.length, sairam: sairam.length, recusadas, mantidas });
     }
 
     if (req.method === "GET") return responder(res, 200, await detalheDoLote(lote));

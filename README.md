@@ -3,7 +3,7 @@
 Site institucional + **controle de produção** (`/restrito`) da Borda Tudo —
 Bordados Computadorizados, Caruaru-PE.
 
-**Versão 1.27.0** · Node ≥ 20 · porta 5193 · `npm test` → **752 conferências**.
+**Versão 1.28.0** · Node ≥ 20 · porta 5193 · `npm test` → **794 conferências**.
 
 São duas coisas no mesmo processo, com bancos separados:
 
@@ -241,6 +241,30 @@ porque o lote já diz de quem é o serviço) e no topo da lista de **Fichas**, n
 tela de Produção (com o cliente livre — é o sentido de "avulsa" ali: a ficha
 nasce fora de lote e só entra depois de fechada, pela amálgama). Nos dois casos
 a tela volta para onde estava, e não para a do operador.
+
+### Fichas sumindo: o fuso, o "Juntar fichas" e a consulta de todas as fichas (1.28.0)
+
+Investigação de 19/11/2026 ("tem fichas sumindo — é um problema sério"). Três defeitos reais:
+
+- **O fuso.** O PostgreSQL de produção está em `Etc/UTC`. "Hoje", `::date` e o padrão das
+  datas são decididos pelo fuso da sessão: das 21h de Caruaru em diante o banco já vivia no dia
+  seguinte — as fichas do dia **sumiam da tela do operador**, a ficha fechada às 22h caía no
+  dia seguinte nos filtros, a nota emitida à noite saía com a data de amanhã. Agora toda conexão
+  fala `America/Recife` (`pg.js`), e o "hoje" do Node também (`hojeIso`, `diaNaFabrica`).
+  O banco local fica no fuso de Brasília: as provas nunca viam o defeito.
+- **O "Juntar fichas".** A rota soltava TODAS as fichas do lote e prendia de volta as marcadas.
+  Janela aberta numa tela velha tirava do lote a ficha que outra pessoa tinha acabado de
+  juntar; e a ficha marcada era presa sem conferir se já estava em **outro** lote — até
+  faturado. Agora a tela manda `antes` (o que estava no lote quando a janela abriu): sai só o
+  que foi desmarcado, entra só ficha solta, o que outra pessoa juntou fica. Sem `antes`, 409.
+- **Nenhum rastro.** Tabela nova `fichas_historico` (`sql/13`): aberta, fechada, corrigida
+  (de → para), cancelada, removida (com o retrato da ficha), somada, entrou/saiu do lote — com
+  quem fez e quando. Sem FK para a ficha, de propósito: a linha da removida sobrevive.
+
+**Consultar fichas** (menu Administrativo): todas as fichas em qualquer situação, inclusive as
+removidas e os **números sem ficha** (buracos na numeração: removidas antes do histórico, ou
+abertura recusada). Clicar no número abre o histórico. Removidas de antes da 1.28.0 não têm
+registro — a tela diz isso.
 
 ### Os papéis do financeiro e o pagamento pelo cliente (1.27.0)
 

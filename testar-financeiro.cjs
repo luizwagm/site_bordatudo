@@ -700,6 +700,11 @@ function conferirTela() {
       await Q.run("DELETE FROM lancamentos WHERE nota_id = ?", id).catch(() => {});
       await Q.run("DELETE FROM notas WHERE id = ?", id).catch(() => {});
     }
+    /* (1.28.0) O histórico das fichas não tem FK (sobrevive à remoção) e não
+       sai sozinho: pelo id das fichas desta suíte e por quem fez — só os
+       usuários dela. Sem isto, cada rodada deixava as linhas do "somar". */
+    for (const id of CRIADO.fichas) await Q.run("DELETE FROM fichas_historico WHERE ficha_id = ?", id).catch(() => {});
+    for (const id of CRIADO.usuarios) await Q.run("DELETE FROM fichas_historico WHERE usuario_id = ?", id).catch(() => {});
     for (const id of CRIADO.fichas) await Q.run("DELETE FROM fichas WHERE id = ?", id).catch(() => {});
     for (const id of CRIADO.lotes) await Q.run("DELETE FROM lotes WHERE id = ?", id).catch(() => {});
     for (const id of CRIADO.desenhos) await Q.run("DELETE FROM desenhos WHERE id = ?", id).catch(() => {});

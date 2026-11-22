@@ -142,6 +142,17 @@ function obterPool() {
          dizendo "o sistema travou", dá para ver no servidor quem está segurando
          conexão sem precisar adivinhar. */
       application_name: "bordatudo-restrito",
+      /* O FUSO DA FÁBRICA, em toda conexão (1.28.0). "Hoje", `::date`,
+         `current_date` e o padrão das datas das notas são decididos pelo
+         fuso da SESSÃO do Postgres — e o do servidor de produção é Etc/UTC
+         (conferido em 19/11/2026). Em UTC, das 21h de Caruaru em diante o
+         banco já vive no dia seguinte: as fichas do dia SUMIAM da tela do
+         operador, a ficha fechada às 22h caía no dia seguinte nos filtros, e
+         a nota emitida à noite saía com a data de amanhã. Na máquina de
+         desenvolvimento (fuso de Brasília) nada disso aparecia.
+         Fixo aqui, e não no postgresql.conf: o conserto viaja com o código
+         e vale em qualquer servidor. America/Recife não tem horário de verão. */
+      options: "-c timezone=America/Recife",
     });
     /* Um erro num cliente OCIOSO do pool (o Postgres reiniciou, a rede caiu)
        chega como evento 'error'. Sem este listener o Node derruba o processo

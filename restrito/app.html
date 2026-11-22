@@ -436,6 +436,8 @@ tfoot td { font-weight: 800; background: #fafaFC; border-top: 2px solid var(--ti
 .etiqueta--laranja { background: #fdece2; color: var(--laranja); }
 .etiqueta--cinza { background: var(--prata-fundo); color: #5c5c70; }
 .etiqueta--vermelha { background: var(--vermelho-fundo); color: var(--vermelho); }
+/* Texto de apoio (1.28.0, Consultar fichas): explica sem competir com o dado. */
+.fraco { color: #5c5c70; }
 
 /* ------------------------------------------- a ficha que está na máquina ---
    Fundo âmbar de baixa saturação e uma faixa da MESMA cor à esquerda. A faixa
@@ -680,6 +682,10 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
       <button data-tela="minhas-horas">Minhas horas</button>
       <div class="menu__grupo">Administrativo</div>
       <button data-tela="producao">Produção</button>
+      <!-- (1.28.0) TODAS as fichas, em qualquer situação — inclusive a
+           removida, que não aparece em lista nenhuma. Pedido do dono, para
+           procurar fichas perdidas. -->
+      <button data-tela="historico">Consultar fichas</button>
       <button data-tela="horarios">Horários</button>
       <button data-tela="lotes">Lotes</button>
       <button data-tela="financeiro">Financeiro</button>
@@ -902,6 +908,7 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     operar:   ["clientes", "desenhos", "maquinas"],
     producao: ["fichas", "clientes", "desenhos"],
     horarios: ["horarios"],
+    historico: ["fichas"],
     lotes:    ["lotes", "fichas", "clientes"],
     /* O detalhe do lote quer as MESMAS notícias que a lista: as fichas dele
        mudam justamente enquanto ele está aberto na tela. */
@@ -1875,6 +1882,153 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           "</tbody></table></div>"
         : '<div class="bloco__corpo"><p class="vazio">Nenhum operador com jornada ou expediente no período.</p></div>') +
     "</div>";
+  }
+
+  /* ==========================================================================
+     CONSULTAR FICHAS (1.28.0) — todas, em qualquer situação
+
+     Pedido do dono: uma tabela para procurar as fichas perdidas. As outras
+     telas mostram recortes (a Produção só as fechadas e somadas, o lote só as
+     dele, o operador só as de hoje); esta não esconde nada — e mostra também
+     a REMOVIDA e o NÚMERO QUE NÃO TEM FICHA, que nenhuma outra tela mostra.
+     Clicar no número abre o histórico daquela ficha.
+     ========================================================================== */
+  var CONSULTA = { q: "", situacao: "", de: "", ate: "" };
+  const SITUACAO_CONSULTA = {
+    "": ["Todas", ""],
+    aberta: ["Em produção", "etiqueta--azul"],
+    fechada: ["Fechadas", "etiqueta--verde"],
+    somada: ["Somadas", "etiqueta--ambar"],
+    cancelada: ["Canceladas", "etiqueta--cinza"],
+    removida: ["Removidas", "etiqueta--vermelha"],
+    sem_registro: ["Números sem ficha", "etiqueta--laranja"],
+  };
+  function situacaoDaFicha(f) {
+    if (f.situacao === "aberta") return '<span class="etiqueta etiqueta--azul">em produção</span>';
+    if (f.situacao === "fechada") return '<span class="etiqueta etiqueta--verde">fechada</span>' +
+      (f.e_soma ? ' <small class="fraco">(soma)</small>' : "");
+    if (f.situacao === "somada") return '<span class="etiqueta etiqueta--ambar">somada</span>' +
+      (f.somada_em_id ? ' <small class="fraco">na nº ' + num(f.somada_em_id) + "</small>" : "");
+    if (f.situacao === "cancelada") return '<span class="etiqueta etiqueta--cinza">cancelada</span>';
+    if (f.situacao === "removida") return '<span class="etiqueta etiqueta--vermelha">removida</span>' +
+      '<br><small class="fraco">' + dataHora(f.removida_em) + " — " + esc(f.removida_por || "?") + "</small>";
+    return '<span class="etiqueta etiqueta--laranja">sem ficha</span>';
+  }
+
+  async function pintarHistorico() {
+    const alvo = document.getElementById("principal");
+    alvo.innerHTML = '<div class="carregando">carregando…</div>';
+    const q = new URLSearchParams();
+    if (CONSULTA.q) q.set("q", CONSULTA.q);
+    if (CONSULTA.situacao) q.set("situacao", CONSULTA.situacao);
+    if (CONSULTA.de) q.set("de", CONSULTA.de);
+    if (CONSULTA.ate) q.set("ate", CONSULTA.ate);
+    q.set("pagina", pag("historico").pagina);
+    q.set("por", pag("historico").por);
+    const r = await api("/restrito/api/consulta-fichas?" + q.toString());
+    if (r.pagina !== pag("historico").pagina) pag("historico").pagina = r.pagina;
+    /* "Todas" conta as FICHAS (inclusive removidas); os números sem ficha têm aba própria. */
+    const todas = Object.entries(r.porSituacao || {}).filter(([s]) => s !== "sem_registro").reduce((a, [, n]) => a + n, 0);
+
+    alvo.innerHTML =
+      '<h1 class="titulo-tela">Consultar fichas</h1>' +
+      '<p class="subtitulo-tela">Todas as fichas do sistema, em qualquer situação — inclusive as removidas. ' +
+      "Clique no número para ver tudo o que aconteceu com a ficha.</p>" +
+
+      '<div class="bloco"><div class="bloco__corpo">' +
+        '<div class="filtros">' +
+          '<label class="campo" style="min-width:240px"><span>Procurar</span><input id="cf-q" type="search" ' +
+            'placeholder="nº da ficha, cliente, desenho, operador ou lote" value="' + esc(CONSULTA.q) + '"></label>' +
+          '<label class="campo"><span>Aberta de</span><input type="date" id="cf-de" value="' + esc(CONSULTA.de) + '"></label>' +
+          '<label class="campo"><span>até</span><input type="date" id="cf-ate" value="' + esc(CONSULTA.ate) + '"></label>' +
+          '<button class="btn" data-acao="consulta-filtrar">Procurar</button>' +
+          '<button class="btn btn--fantasma" data-acao="consulta-limpar">Limpar</button>' +
+        "</div>" +
+        '<div class="abas-periodo" style="margin-top:12px">' +
+          Object.keys(SITUACAO_CONSULTA).map((s) =>
+            '<button class="aba' + (CONSULTA.situacao === s ? " on" : "") + '" data-acao="consulta-situacao" data-situacao="' + s + '">' +
+            SITUACAO_CONSULTA[s][0] + " (" + num(s ? (r.porSituacao || {})[s] : todas) + ")</button>").join("") +
+        "</div>" +
+        /* O que esta tela NÃO consegue saber, dito na própria tela: sem isto,
+           "nenhuma removida" pareceria "nunca houve remoção". */
+        '<p class="fraco" style="margin:12px 0 0;font-size:.85rem">' +
+          "<b>Removidas:</b> só as removidas a partir de " +
+          (r.historico_desde ? dataHora(r.historico_desde) : "hoje (versão 1.28.0)") +
+          " têm registro de quem removeu e quando. <b>Números sem ficha:</b> números da sequência que não estão mais no " +
+          "banco — ficha removida antes do registro existir, ou uma abertura recusada (por exemplo, o operador tentou abrir " +
+          "uma ficha com outra ainda aberta), que gasta um número sem criar ficha. Não dá para saber qual das duas." +
+          (CONSULTA.de || CONSULTA.ate ? " Com período escolhido, os números sem ficha não aparecem (não têm data)." : "") +
+        "</p>" +
+      "</div></div>" +
+
+      '<div class="bloco">' +
+        (r.fichas.length
+          ? '<div class="rolagem"><table><thead><tr>' +
+              "<th>Nº</th><th>Situação</th><th>Cliente</th><th>Desenho</th><th>Operador</th>" +
+              '<th>Aberta</th><th>Fechada</th><th class="num">Peças</th><th>Lote</th>' +
+            "</tr></thead><tbody>" +
+            r.fichas.map((f) => "<tr>" +
+              '<td><button class="btn btn--fantasma btn--mini" data-acao="ficha-historico" data-ficha="' + f.id +
+                '" title="Ver o histórico desta ficha">' + num(f.id) + "</button></td>" +
+              "<td>" + situacaoDaFicha(f) + "</td>" +
+              "<td>" + esc(f.cliente || "—") + "</td>" +
+              "<td>" + esc(f.desenho || "—") + "</td>" +
+              "<td>" + esc(f.operador || "—") + "</td>" +
+              "<td>" + (f.aberta_em ? dataHora(f.aberta_em) : "—") + "</td>" +
+              "<td>" + (f.fechada_em ? dataHora(f.fechada_em) : "—") + "</td>" +
+              '<td class="num">' + (f.quantidade == null ? "—" : num(f.quantidade)) + "</td>" +
+              "<td>" + esc(f.lote || "—") + "</td>" +
+            "</tr>").join("") +
+            "</tbody></table></div>" + paginacao(r, "historico")
+          : '<div class="bloco__corpo"><p class="fraco" style="margin:0">Nenhuma ficha com esse filtro.</p></div>') +
+      "</div>";
+
+    const campo = document.getElementById("cf-q");
+    campo.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") { ev.preventDefault(); document.querySelector('[data-acao="consulta-filtrar"]').click(); }
+    });
+  }
+
+  /* A linha do tempo de UMA ficha. Para a removida, mostra também o retrato
+     de como ela estava no momento da remoção. */
+  const ACAO_HIST = {
+    aberta: (d) => "Aberta" + (d.retroativa ? " com data do bordado no passado" : "") + (d.para_outro ? " para outra pessoa" : ""),
+    fechada: (d) => "Fechada com " + num(d.quantidade) + " peça(s)",
+    corrigida: (d) => "Corrigida: " + Object.keys(d.mudou || {}).map((c) =>
+      esc(c) + " de “" + esc(String(d.mudou[c].de ?? "—")) + "” para “" + esc(String(d.mudou[c].para ?? "—")) + "”").join("; "),
+    cancelada: (d) => "Cancelada" + (d.situacao_anterior ? " (estava " + esc(d.situacao_anterior) + ")" : ""),
+    removida: () => "<b>Removida</b> — apagada do sistema",
+    devolvida: (d) => "Voltou a contar: a soma nº " + num(d.soma_removida) + " foi removida",
+    somada: (d) => "Somada na ficha nº " + num(d.soma),
+    soma_criada: (d) => "Criada somando as fichas nº " + (d.parcelas || []).map(num).join(", "),
+    entrou_no_lote: (d) => "Entrou no lote " + esc(d.lote || ""),
+    saiu_do_lote: (d) => "<b>Saiu do lote " + esc(d.lote || "") + "</b>",
+  };
+  async function abrirHistoricoFicha(n) {
+    if (!n) return;
+    const r = await api("/restrito/api/historico-fichas?ficha=" + n);
+    const f = r.ficha;
+    abrirModal({
+      titulo: "Ficha nº " + num(n),
+      leitura: true,
+      corpo:
+        (f
+          ? '<p style="margin:0 0 12px">' + (r.existe ? "" : '<span class="etiqueta etiqueta--vermelha">removida</span> ') +
+            "<b>" + esc(f.cliente || "—") + "</b> · " + esc(f.desenho || "—") + " · " + esc(f.operador || "—") +
+            "<br><small class=\"fraco\">aberta " + (f.aberta_em ? dataHora(f.aberta_em) : "—") +
+            " · fechada " + (f.fechada_em ? dataHora(f.fechada_em) : "—") +
+            " · " + (f.quantidade == null ? "sem quantidade" : num(f.quantidade) + " peça(s)") +
+            (f.lote ? " · lote " + esc(f.lote) : " · fora de lote") + "</small></p>"
+          : '<p class="aviso aviso--azul" style="margin:0 0 12px">Não há ficha com este número no sistema, nem registro ' +
+            "de remoção. Ou ela foi removida antes do histórico existir, ou o número foi gasto por uma abertura recusada.</p>") +
+        (r.eventos.length
+          ? '<table><thead><tr><th>Quando</th><th>O que aconteceu</th><th>Quem</th></tr></thead><tbody>' +
+            r.eventos.map((e) => "<tr><td>" + dataHora(e.em) + "</td><td>" +
+              (ACAO_HIST[e.acao] ? ACAO_HIST[e.acao](e.detalhe || {}) : esc(e.acao)) + "</td><td>" +
+              esc(e.usuario_nome || "—") + "</td></tr>").join("") + "</tbody></table>"
+          : '<p class="fraco" style="margin:0">Nenhum registro no histórico. O histórico começou na versão 1.28.0; ' +
+            "o que aconteceu com esta ficha antes disso não foi gravado.</p>"),
+    });
   }
 
   async function pintarHorarios() {
@@ -3978,14 +4132,19 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
       aoConfirmar: async function (caixa) {
         const ids = Array.prototype.map.call(
           caixa.querySelectorAll("#am-lista input:checked"), (c) => Number(c.value));
-        const r = await enviar("/restrito/api/lotes/" + id + "/fichas", "PUT", { fichas: ids });
-        /* O servidor recusa ficha de outro cliente e ficha ainda aberta. Se
-           recusou alguma, DIZ — "3 fichas no lote" depois de marcar 5 pareceria
-           sucesso, e a diferença só apareceria na hora de conferir a nota. */
-        if (r.anexadas < r.pedidas)
-          recado(r.anexadas + " de " + r.pedidas + " entraram — as outras não são deste cliente " +
-                 "ou não estão fechadas.", true);
-        else recado(r.anexadas + " ficha(s) no lote.");
+        /* `antes` (1.28.0): o que estava no lote quando ESTA janela abriu. O
+           servidor só tira do lote o que estava aqui e foi desmarcado — a ficha
+           que outra pessoa juntou enquanto esta janela estava aberta fica. */
+        const r = await enviar("/restrito/api/lotes/" + id + "/fichas", "PUT", { fichas: ids, antes: dentro });
+        /* Recusada não é sucesso parcial calado: "3 fichas no lote" depois de
+           marcar 5 pareceria certo, e a diferença só apareceria na nota. */
+        const avisos = [];
+        if (r.recusadas && r.recusadas.length)
+          avisos.push(r.recusadas.length + " ficha(s) não entraram: já estão em outro lote, não são deste cliente " +
+                      "ou não estão fechadas (nº " + r.recusadas.join(", ") + ").");
+        if (r.mantidas)
+          avisos.push(r.mantidas + " ficha(s) foram juntadas a este lote por outra pessoa enquanto a janela estava aberta e foram mantidas.");
+        recado(r.anexadas + " ficha(s) no lote." + (avisos.length ? " " + avisos.join(" ") : ""), !!avisos.length);
         pintarLote(id);
       },
     });
@@ -4217,6 +4376,7 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     /* Jornada aberta ou fechada em outro aparelho aparece aqui sozinha — é a
        tela onde a informação vale por minuto, não por hora. */
     horarios: () => pintarHorarios(),
+    historico: () => pintarHistorico(),
     lotes: () => pintarLotes(),
     lote: () => pintarLote(LOTE_ABERTO),
     /* Pagamento lançado noutro aparelho aparece aqui sozinho: o saldo de uma
@@ -5409,6 +5569,7 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
       else if (tela === "minhas-horas") await pintarMinhasHoras();
       else if (tela === "producao") await pintarProducao();
       else if (tela === "horarios") await pintarHorarios();
+      else if (tela === "historico") await pintarHistorico();
       else if (tela === "lotes") await pintarLotes();
       /* Repintar o DETALHE, não a lista. Sem estas duas linhas o aviso de
          tempo real caía no `else` vazio e a tela ficava congelada — ou, pior,
@@ -5633,6 +5794,21 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         pag("horarios").pagina = 1;
         await pintarHorarios();
       }
+      else if (acao === "consulta-filtrar") {
+        CONSULTA.q = document.getElementById("cf-q").value.trim();
+        CONSULTA.de = document.getElementById("cf-de").value;
+        CONSULTA.ate = document.getElementById("cf-ate").value;
+        pag("historico").pagina = 1; await pintarHistorico();
+      }
+      else if (acao === "consulta-limpar") {
+        CONSULTA = { q: "", situacao: "", de: "", ate: "" };
+        pag("historico").pagina = 1; await pintarHistorico();
+      }
+      else if (acao === "consulta-situacao") {
+        CONSULTA.situacao = b.getAttribute("data-situacao") || "";
+        pag("historico").pagina = 1; await pintarHistorico();
+      }
+      else if (acao === "ficha-historico") await abrirHistoricoFicha(Number(b.getAttribute("data-ficha")));
       else if (acao === "filtrar-horarios") {
         const de = document.getElementById("fh-de").value;
         const ate = document.getElementById("fh-ate").value;
