@@ -297,6 +297,9 @@ textarea { min-height: 74px; resize: vertical; }
   border-radius: 12px; padding: 20px; margin-bottom: 16px;
   background: var(--papel); border: 2px solid var(--tinta); box-shadow: var(--sombra);
 }
+/* (1.29.0) Várias fichas abertas: cada uma com o seu cartão e os seus botões,
+   separadas o bastante para o dedo não acertar o "Fechar" da vizinha. */
+.ficha-aberta + .ficha-aberta { margin-top: 26px; padding-top: 22px; border-top: 1px dashed var(--prata); }
 .emcurso__marcador { font-size: 11px; font-weight: 800; letter-spacing: .12em;
   text-transform: uppercase; color: var(--linha); }
 .emcurso__linha { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
@@ -1005,7 +1008,10 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
     const alvo = document.getElementById("principal");
     if (!DIA) { alvo.innerHTML = '<div class="carregando">carregando…</div>'; return; }
 
-    const j = DIA.jornada, f = DIA.ficha;
+    /* `abertas` (1.29.0): todas as fichas em curso. `DIA.ficha` só existe
+       quando o servidor é anterior — aí vira uma lista de uma. */
+    const j = DIA.jornada;
+    const abertas = DIA.abertas || (DIA.ficha ? [DIA.ficha] : []);
     const batidas = (DIA && DIA.periodos) || [];
     const voltando = !j && batidas.length > 0;    /* já trabalhou hoje e parou */
     let html = '<div class="palco">';
@@ -1026,26 +1032,39 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         (voltando ? "Voltar para a produção" : "Início de produção") +
         "<small>agora são " + hora(new Date().toISOString()) + "</small></button>";
     } else {
-      /* --- c) ficha aberta ------------------------------------------ */
-      if (f) {
-        html +=
-          '<div class="emcurso">' +
-            '<div class="emcurso__marcador">Ficha aberta</div>' +
-            '<div class="emcurso__linha">' +
-              '<span class="emcurso__cliente">' + esc(f.cliente_nome) + "</span>" +
-              '<span class="emcurso__desenho">' + esc(f.desenho_nome) + "</span>" +
+      /* --- c) fichas abertas (1.29.0: quantas forem) ----------------
+         Cada ficha é um cartão com o PRÓPRIO "Fechar" e "Cancelar" — o botão
+         leva o número da ficha, e não "a ficha aberta": com duas em curso,
+         um botão genérico fecharia a errada. A mais antiga vem primeiro (é a
+         que corre o risco de ser esquecida). Abrir outra fica logo abaixo. */
+      if (abertas.length) {
+        if (abertas.length > 1)
+          html += '<p class="subtitulo-tela" style="margin:0 0 10px"><b>' + abertas.length +
+            " fichas abertas.</b> Feche cada uma quando o bordado dela terminar.</p>";
+        abertas.forEach(function (fa) {
+          html +=
+            '<div class="ficha-aberta">' +
+            '<div class="emcurso">' +
+              '<div class="emcurso__marcador">Ficha aberta · nº ' + num(fa.id) + "</div>" +
+              '<div class="emcurso__linha">' +
+                '<span class="emcurso__cliente">' + esc(fa.cliente_nome) + "</span>" +
+                '<span class="emcurso__desenho">' + esc(fa.desenho_nome) + "</span>" +
+              "</div>" +
+              '<div class="emcurso__dados">' +
+                '<div class="dado"><b>' + num(fa.pontuacao) + "</b><span>pontos/peça</span></div>" +
+                '<div class="dado"><b>' + hora(fa.aberta_em) + "</b><span>aberta às</span></div>" +
+                '<div class="dado"><b>' + decorrido(fa.aberta_em) + "</b><span>tempo</span></div>" +
+                (fa.maquina_nome ? '<div class="dado"><b>' + esc(fa.maquina_nome) + "</b><span>máquina</span></div>" : "") +
+              "</div>" +
             "</div>" +
-            '<div class="emcurso__dados">' +
-              '<div class="dado"><b>' + num(f.pontuacao) + "</b><span>pontos/peça</span></div>" +
-              '<div class="dado"><b>' + hora(f.aberta_em) + "</b><span>aberta às</span></div>" +
-              '<div class="dado"><b>' + decorrido(f.aberta_em) + "</b><span>tempo</span></div>" +
-              (f.maquina_nome ? '<div class="dado"><b>' + esc(f.maquina_nome) + "</b><span>máquina</span></div>" : "") +
-            "</div>" +
-          "</div>" +
-          '<button class="gigante gigante--verde" data-acao="fechar-ficha">Fechar ficha' +
-          "<small>informe quantas peças saíram</small></button>" +
-          '<p style="text-align:center;margin:14px 0 0">' +
-          '<button class="btn btn--fantasma btn--mini" data-acao="cancelar-ficha">Cancelar esta ficha</button></p>';
+            '<button class="gigante gigante--verde" data-acao="fechar-ficha" data-id="' + fa.id + '">Fechar ficha' +
+            "<small>" + esc(fa.desenho_nome) + " — informe quantas peças saíram</small></button>" +
+            '<p style="text-align:center;margin:10px 0 0">' +
+            '<button class="btn btn--fantasma btn--mini" data-acao="cancelar-ficha" data-id="' + fa.id + '">Cancelar esta ficha</button></p>' +
+            "</div>";
+        });
+        html += '<button class="gigante" data-acao="abrir-ficha" style="margin-top:18px">Abrir outra ficha' +
+          "<small>pode ter quantas precisar ao mesmo tempo</small></button>";
       } else {
         /* --- b) em produção, sem ficha ------------------------------ */
         html +=
@@ -1113,7 +1132,7 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
         "</div>";
     }
 
-    if (j && !f) {
+    if (j && !abertas.length) {
       html += '<p style="text-align:center;margin:20px 0 0">' +
         '<button class="btn btn--fantasma" data-acao="encerrar-jornada">Sair (intervalo ou fim do dia)</button>' +
         '<br><small style="color:#6b6b78">Pode voltar depois — as horas do dia somam.</small></p>';
@@ -1509,9 +1528,12 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
   /* ---- fechar ficha ----------------------------------------------- */
   /* A ficha aberta do operador logado. Continua sendo o caminho do chão de
      fábrica: o botão gigante verde da tela Operar. */
-  async function modalFecharFicha() {
-    const f = DIA && DIA.ficha;
-    if (!f) return;
+  async function modalFecharFicha(id) {
+    /* Pelo NÚMERO da ficha (1.29.0): com várias abertas, "a ficha aberta"
+       não diz qual. */
+    const lista = (DIA && (DIA.abertas || (DIA.ficha ? [DIA.ficha] : []))) || [];
+    const f = lista.filter((x) => String(x.id) === String(id))[0];
+    if (!f) { recado("Essa ficha não está mais aberta. A tela foi atualizada.", true); await carregarDia(); pintarOperar(); return; }
     await modalFecharFichaDe(f, { aoTerminar: async function () {
       await carregarDia(); pintarOperar();
     } });
@@ -1955,8 +1977,8 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
           "<b>Removidas:</b> só as removidas a partir de " +
           (r.historico_desde ? dataHora(r.historico_desde) : "hoje (versão 1.28.0)") +
           " têm registro de quem removeu e quando. <b>Números sem ficha:</b> números da sequência que não estão mais no " +
-          "banco — ficha removida antes do registro existir, ou uma abertura recusada (por exemplo, o operador tentou abrir " +
-          "uma ficha com outra ainda aberta), que gasta um número sem criar ficha. Não dá para saber qual das duas." +
+          "banco — quase sempre ficha removida antes do registro existir. Até a versão 1.28 também podia ser uma abertura " +
+          "recusada (o operador tentou abrir uma ficha com outra ainda aberta), que gastava um número sem criar ficha. Não dá para saber qual das duas." +
           (CONSULTA.de || CONSULTA.ate ? " Com período escolhido, os números sem ficha não aparecem (não têm data)." : "") +
         "</p>" +
       "</div></div>" +
@@ -5739,10 +5761,13 @@ tbody tr:has([data-ficha]:checked) > td { background: var(--azul-fundo); }
       }
       else if (acao === "ver-dia") modalDoDia(b.getAttribute("data-dia"));
       else if (acao === "abrir-ficha") await modalAbrirFicha();
-      else if (acao === "fechar-ficha") await modalFecharFicha();
+      else if (acao === "fechar-ficha") await modalFecharFicha(b.getAttribute("data-id"));
       else if (acao === "cancelar-ficha") {
-        if (!confirm("Cancelar a ficha aberta? Ela não será contada na produção.")) return;
-        await enviar("/restrito/api/fichas/" + DIA.ficha.id + "/cancelar", "PUT");
+        const idCanc = b.getAttribute("data-id");
+        const fc = (DIA.abertas || []).filter((x) => String(x.id) === String(idCanc))[0];
+        if (!confirm("Cancelar a ficha nº " + idCanc + (fc ? " (" + fc.desenho_nome + ")" : "") +
+                     "? Ela não será contada na produção.")) return;
+        await enviar("/restrito/api/fichas/" + idCanc + "/cancelar", "PUT");
         await carregarDia(); pintarOperar();
         recado("Ficha cancelada.");
       }

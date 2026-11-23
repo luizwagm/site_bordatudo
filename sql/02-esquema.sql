@@ -209,10 +209,14 @@ CREATE INDEX IF NOT EXISTS ix_fichas_cliente  ON fichas (cliente_id, aberta_em D
 CREATE INDEX IF NOT EXISTS ix_fichas_lote     ON fichas (lote_id);
 CREATE INDEX IF NOT EXISTS ix_fichas_situacao ON fichas (situacao, aberta_em DESC);
 
--- Uma ficha aberta por operador. Mesmo motivo da jornada: sem isto, abrir a
--- ficha duas vezes sem fechar deixa duas em aberto e o operador fecha a errada.
-CREATE UNIQUE INDEX IF NOT EXISTS ux_ficha_aberta
-  ON fichas (usuario_id) WHERE situacao = 'aberta';
+-- VÁRIAS FICHAS ABERTAS POR OPERADOR (1.29.0, pedido da fábrica em 23/11/2026).
+-- Até a 1.28 havia aqui um índice único — uma ficha aberta por pessoa —, e a
+-- fábrica trabalha com mais de um bordado em curso ao mesmo tempo. O índice SAI
+-- AQUI, e não numa migração nova: este arquivo roda de novo a cada entrega, e
+-- recriá-lo com um operador já tendo duas abertas quebraria a entrega nesse passo.
+-- Cada ficha continua sendo fechada pelo próprio id; encerrar a produção do dia
+-- com ficha aberta continua barrado (na rota de encerrar a jornada).
+DROP INDEX IF EXISTS ux_ficha_aberta;
 
 -- Ficha fechada TEM de ter quantidade e hora de fim. Sem esta trava, um fechar
 -- que falhasse no meio deixaria a ficha "fechada" valendo zero peça — e ela

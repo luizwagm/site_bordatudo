@@ -487,8 +487,33 @@ async function limparRestos() {
   eq(Number(linha.maquina_id), maq, "o QR ligou a ficha à máquina certa");
   eq(Number(linha.jornada_id), jor, "a ficha entrou na jornada aberta");
 
+  /* VÁRIAS FICHAS ABERTAS (1.29.0). Até a 1.28 a segunda era recusada; a
+     fábrica borda mais de um serviço ao mesmo tempo. */
   r = await oper("/restrito/api/fichas", "POST", { cliente_id: cliA, desenho_id: desA2 });
-  eq(r.status, 409, "duas fichas abertas ao mesmo tempo: recusado");
+  eq(r.status, 201, "uma segunda ficha aberta ao mesmo tempo: aceita");
+  const fDupla = r.dados.id; CRIADO.fichas.push(fDupla);
+  ok(!(await Q.get("SELECT 1 FROM pg_indexes WHERE indexname = 'ux_ficha_aberta'")),
+     "e o banco não tem mais o índice de UMA ficha aberta por pessoa");
+  r = await oper("/restrito/api/meu-dia");
+  eq((r.dados.abertas || []).map((x) => Number(x.id)).join(","), [f1, fDupla].join(","),
+     "a tela do operador recebe as DUAS, a mais antiga primeiro");
+  eq(Number(r.dados.ficha && r.dados.ficha.id), f1, "e `ficha` (formato antigo) continua sendo a mais antiga");
+
+  r = await oper("/restrito/api/jornadas/" + jor + "/encerrar", "PUT");
+  eq(r.status, 409, "encerrar a produção com fichas abertas: recusado");
+  ok(/2 fichas/.test(r.dados.error || "") && (r.dados.fichasAbertas || []).length === 2,
+     "e a recusa diz QUANTAS estão abertas", r.dados.error);
+
+  /* Cada uma fecha pelo próprio número: fechar a segunda não mexe na primeira. */
+  r = await oper("/restrito/api/fichas/" + fDupla + "/fechar", "PUT",
+    { quantidade: "3", mercadoria_id: merc, cor_id: corBranca });
+  eq(r.status, 200, "fecha a SEGUNDA ficha primeiro, pelo número dela");
+  eq((await Q.get("SELECT situacao FROM fichas WHERE id = ?", f1)).situacao, "aberta", "a primeira continua aberta");
+  eq(((await oper("/restrito/api/meu-dia")).dados.abertas || []).length, 1, "e a tela passa a ter uma aberta");
+  /* Ela sai do banco: a suíte confere somas fixas mais adiante, e esta ficha
+     existe só para esta prova. */
+  await Q.run("DELETE FROM fichas_historico WHERE ficha_id = ?", fDupla);
+  await Q.run("DELETE FROM fichas WHERE id = ?", fDupla);
 
   r = await oper("/restrito/api/jornadas/" + jor + "/encerrar", "PUT");
   eq(r.status, 409, "encerrar a produção com ficha aberta: recusado");
@@ -1993,14 +2018,15 @@ async function limparRestos() {
      "e o admin NÃO criou expediente para ele — isso seria bater o ponto de outra pessoa");
   await admin("/restrito/api/fichas/" + fSemTurno + "/cancelar", "PUT");
 
-  /* UMA FICHA ABERTA POR PESSOA, e a conferência é do ALVO. Abrindo para o
-     João, quem não pode ter ficha aberta é o João — olhar a de quem clicou
-     deixaria o índice único do banco estourar com erro cru na cara do admin. */
+  /* VÁRIAS FICHAS ABERTAS TAMBÉM NO NOME DE OUTRO (1.29.0). Até a 1.28, a
+     segunda ficha para o mesmo operador era recusada. */
   r = await admin("/restrito/api/fichas", "POST",
     { cliente_id: cliA, desenho_id: desA1, usuario_id: idOper2 });
-  eq(r.status, 409, "segunda ficha para o mesmo operador é recusada");
-  ok(String(r.dados.error || "").toLowerCase().includes("operador"),
-     "e a mensagem diz que a ficha aberta é DELE, não minha", r.dados.error);
+  eq(r.status, 201, "segunda ficha aberta para o mesmo operador: aceita");
+  const fDoOutro2 = r.dados.id; CRIADO.fichas.push(fDoOutro2);
+  eq(Number((await Q.get("SELECT COUNT(*) c FROM fichas WHERE usuario_id = ? AND situacao = 'aberta'", idOper2)).c), 2,
+     "e ele fica com as duas abertas");
+  await admin("/restrito/api/fichas/" + fDoOutro2 + "/cancelar", "PUT");
   await admin("/restrito/api/fichas/" + fDoOutro + "/cancelar", "PUT");
 
   /* O OPERADOR NÃO ESCOLHE. Se pudesse, penduraria a própria produção em

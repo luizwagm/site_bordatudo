@@ -3,7 +3,7 @@
 Site institucional + **controle de produção** (`/restrito`) da Borda Tudo —
 Bordados Computadorizados, Caruaru-PE.
 
-**Versão 1.28.0** · Node ≥ 20 · porta 5193 · `npm test` → **794 conferências**.
+**Versão 1.29.0** · Node ≥ 20 · porta 5193 · `npm test` → **802 conferências**.
 
 São duas coisas no mesmo processo, com bancos separados:
 
@@ -73,8 +73,9 @@ Três operações manuais viraram impossíveis de errar:
 3. **FECHAR FICHA** — quantidade de peças, mercadoria e cor. O total em pontos
    aparece **enquanto se digita**, antes de confirmar.
 
-Só existe uma ficha aberta por operador, e a produção não encerra com ficha
-aberta.
+O operador pode ter **quantas fichas abertas precisar** ao mesmo tempo (1.29.0) — cada uma
+aparece num cartão com o próprio “Fechar ficha” e “Cancelar”. A produção do dia não encerra
+com ficha aberta.
 
 ### O dia do administrativo
 
@@ -241,6 +242,17 @@ porque o lote já diz de quem é o serviço) e no topo da lista de **Fichas**, n
 tela de Produção (com o cliente livre — é o sentido de "avulsa" ali: a ficha
 nasce fora de lote e só entra depois de fechada, pela amálgama). Nos dois casos
 a tela volta para onde estava, e não para a do operador.
+
+### Várias fichas abertas ao mesmo tempo (1.29.0)
+
+Pedido da fábrica (23/11/2026): com uma ficha aberta o operador não conseguia abrir outra, e
+a fábrica borda mais de um serviço ao mesmo tempo. Saiu a recusa da rota de abrir e o índice
+único `ux_ficha_aberta` — removido no próprio `sql/02-esquema.sql`, e não numa migração nova:
+o 02 roda a cada entrega e recriaria o índice (e quebraria a entrega se alguém já tivesse duas
+abertas). O `meu-dia` devolve `abertas` (a mais antiga primeiro; `ficha` continua, para a
+aba com a tela antiga). Na tela do operador, cada ficha aberta é um cartão com o seu número e
+os seus botões — um "Fechar" genérico fecharia a errada. Encerrar a produção do dia continua
+barrado com ficha aberta, e a recusa diz quantas.
 
 ### Fichas sumindo: o fuso, o "Juntar fichas" e a consulta de todas as fichas (1.28.0)
 

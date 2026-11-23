@@ -2567,11 +2567,13 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
 
     /* Encerrar com ficha aberta é o erro que faz o dia sair errado: a ficha
        fica pendurada e o operador vai embora. Barra e diz o que fazer. */
-    const ficha = await Q.get(
-      "SELECT id FROM fichas WHERE usuario_id = ? AND situacao = 'aberta'", j.usuario_id);
-    if (ficha) return responder(res, 409, {
-      error: "Feche a ficha que está aberta antes de encerrar a produção.",
-      fichaAberta: ficha.id,
+    const abertasDoDia = await Q.all(
+      "SELECT id FROM fichas WHERE usuario_id = ? AND situacao = 'aberta' ORDER BY aberta_em", j.usuario_id);
+    if (abertasDoDia.length) return responder(res, 409, {
+      error: abertasDoDia.length === 1
+        ? "Feche a ficha que está aberta antes de encerrar a produção."
+        : `Feche as ${abertasDoDia.length} fichas que estão abertas antes de encerrar a produção.`,
+      fichaAberta: abertasDoDia[0].id, fichasAbertas: abertasDoDia.map((x) => Number(x.id)),
     });
 
     await Q.run("UPDATE jornadas SET fim = now() WHERE id = ?", id);
@@ -2593,13 +2595,16 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     const uid = sessao.usuarioId;
     const jornada = await Q.get(
       "SELECT id, inicio FROM jornadas WHERE usuario_id = ? AND fim IS NULL", uid);
-    const ficha = await Q.get(
+    /* TODAS as abertas (1.29.0) — o operador pode ter várias em curso. A mais
+       antiga primeiro: é a que corre o risco de ser esquecida. */
+    const abertas = await Q.all(
       `SELECT f.*, c.nome AS cliente_nome, d.nome AS desenho_nome, m.nome AS maquina_nome
          FROM fichas f
          JOIN clientes c ON c.id = f.cliente_id
          JOIN desenhos d ON d.id = f.desenho_id
          LEFT JOIN maquinas m ON m.id = f.maquina_id
-        WHERE f.usuario_id = ? AND f.situacao = 'aberta'`, uid);
+        WHERE f.usuario_id = ? AND f.situacao = 'aberta'
+        ORDER BY f.aberta_em, f.id`, uid);
 
     /* "Hoje" é do fuso do SERVIDOR, não do navegador: dois operadores em
        máquinas com relógio diferente veriam dias diferentes. */
@@ -2634,7 +2639,9 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
       (s, p) => s + (p.fim ? Number(p.segundos) : 0), 0);
 
     return responder(res, 200, {
-      jornada: jornada || null, ficha: ficha || null, fechadas, soma, periodos, trabalhado });
+      /* `ficha` (a mais antiga) continua na resposta para quem ainda lê o
+         formato de uma ficha só — uma aba aberta com a tela antiga. */
+      jornada: jornada || null, abertas, ficha: abertas[0] || null, fechadas, soma, periodos, trabalhado });
   }
 
   /* ======================================================================
@@ -2775,17 +2782,10 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
     }
     const paraOutro = Number(donoId) !== Number(sessao.usuarioId);
 
-    /* O índice único parcial garante UMA ficha aberta por pessoa. A conferência
-       é do ALVO, e não de quem está clicando: abrindo para o João, quem não pode
-       ter ficha aberta é o João. */
-    const jaAberta = await Q.get(
-      "SELECT id FROM fichas WHERE usuario_id = ? AND situacao = 'aberta'", donoId);
-    if (jaAberta) return responder(res, 409, {
-      error: paraOutro
-        ? "Esse operador já tem uma ficha aberta. Feche a dele antes de abrir outra."
-        : "Você já tem uma ficha aberta. Feche-a antes de abrir outra.",
-      fichaAberta: jaAberta.id,
-    });
+    /* VÁRIAS FICHAS ABERTAS (1.29.0). Até a 1.28, ter uma ficha aberta impedia
+       abrir outra — e a fábrica borda mais de um serviço ao mesmo tempo. Cada
+       ficha se fecha pelo próprio número; o que continua barrado é encerrar a
+       produção do dia com alguma aberta (rota de encerrar a jornada). */
 
     const desenho = await Q.get("SELECT id, pontuacao, preco, cliente_id FROM desenhos WHERE id = ? AND ativo", desenhoId);
     if (!desenho) return responder(res, 400, { error: "desenho não encontrado" });
@@ -3445,8 +3445,9 @@ async function rotas(req, res, caminho, limitador, ipDoCliente, empresa) {
        · as REMOVIDAS a partir desta versão — o retrato guardado no histórico
          no momento da remoção, com quem removeu e quando;
        · os NÚMEROS SEM FICHA: buracos na numeração. São as removidas ANTES do
-         histórico existir — ou uma abertura recusada, que gasta um número sem
-         criar ficha (o operador que tenta abrir com outra já aberta). Não há
+         histórico existir — ou, até a 1.28, uma abertura recusada, que gastava
+         um número sem criar ficha (o operador que tentava abrir com outra já
+         aberta; desde a 1.29 isso é permitido). Não há
          como saber qual das duas: a tela diz isso em vez de afirmar.
      ======================================================================== */
   if (caminho === "/restrito/api/consulta-fichas" && req.method === "GET") {
